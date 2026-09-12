@@ -45,15 +45,22 @@ _ITEM_RENDER_TIMEOUT_MS = 5000
 
 @dataclass
 class RunResult:
-    """Outcome of a run: the extracted records plus what politeness skipped.
+    """Outcome of a run: the extracted records plus run-observability facts (§2d).
 
     `blocked` holds URLs that robots.txt disallowed (ROADMAP.md §2d/§6) — these
-    are recorded, never fetched. This is deliberately minimal; the full §2d run
-    observability summary is Phase 3.5 work.
+    are recorded, never fetched. `tier` is the tier that produced these records
+    and `pages_fetched` counts pages actually fetched (blocked URLs excluded);
+    both are stamped by the resolver. `tiers_attempted` is the dispatcher's
+    escalation path (set by `run_report`), so it stays empty for a resolver
+    invoked directly. `spoor/operational/observability.py` turns these into the
+    operator-facing summary.
     """
 
     records: list[dict[str, object]] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
+    tier: int | None = None
+    pages_fetched: int = 0
+    tiers_attempted: list[int] = field(default_factory=list)
 
 
 def _first_text(root: Selector, css: str) -> str | None:
@@ -189,7 +196,7 @@ class Tier1Resolver:
         owns_client = client is None
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
         gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
-        result = RunResult()
+        result = RunResult(tier=self.tier)
         seen: set[str] = set()
         url: str | None = config.target
         try:
@@ -201,6 +208,7 @@ class Tier1Resolver:
                 gate.before_fetch(url)
                 response = client.get(url)
                 response.raise_for_status()
+                result.pages_fetched += 1
                 result.records.extend(extract_records(response.text, config))
                 url = _next_url(response.text, url, config)
         finally:
@@ -266,7 +274,7 @@ class Tier2Resolver:
         owns_client = client is None
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
         gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
-        result = RunResult()
+        result = RunResult(tier=self.tier)
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
@@ -303,6 +311,7 @@ class Tier2Resolver:
                 html = page.content()
             finally:
                 page.close()
+            result.pages_fetched += 1
             result.records.extend(extract_records(html, config))
             url = _next_url(html, url, config)
 
@@ -380,10 +389,15 @@ def run_report(
         # The last (most capable) tier always accepts; reaching here is defensive.
         raise TierUnavailableError("no resolution tier can handle this config")
     result = RunResult()
+    attempted: list[int] = []
     for resolver in candidates:
         result = resolver.run(config, client, sleep=sleep)
+        attempted.append(resolver.tier)
         if not _should_escalate(result):
             break
+    # Record the escalation path on the resolving tier's result, for §2d
+    # observability (a directly-invoked resolver leaves this empty).
+    result.tiers_attempted = attempted
     return result
 
 
