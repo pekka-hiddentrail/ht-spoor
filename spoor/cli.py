@@ -1,9 +1,9 @@
 """Spoor CLI entry point (ROADMAP.md §2a).
 
 The whole product surface on top of the resolution/extraction machinery:
-`spoor run config.yaml -o output.json`. The `run` command drives a tier-1
-extraction and writes the chosen output format; later phases add their own
-commands as they land.
+`spoor run config.yaml -o output.json`. The `run` command dispatches the config
+through the resolution ladder (§2), writes the chosen output format, and prints a
+run summary (§2d observability); later phases add their own commands as they land.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import typer
 
 from spoor.core import extract
 from spoor.core.config import load_config
+from spoor.operational.observability import RunSummary
 from spoor.operational.output import resolve_format, write_records
 
 app = typer.Typer(
@@ -56,9 +57,10 @@ def run(
         fmt = resolve_format(output, output_format)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
-    records = extract.run(cfg)
-    write_records(records, cfg, output, fmt)
-    typer.echo(f"Wrote {len(records)} record(s) to {output} ({fmt})")
+    result = extract.run_report(cfg)
+    write_records(result.records, cfg, output, fmt)
+    typer.echo(f"Wrote {len(result.records)} record(s) to {output} ({fmt})")
+    typer.echo(RunSummary.from_result(result).render())
 
 
 if __name__ == "__main__":  # pragma: no cover

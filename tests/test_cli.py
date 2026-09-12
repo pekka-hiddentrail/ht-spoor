@@ -1,7 +1,8 @@
 """End-to-end CLI tests for `spoor run` output wiring (ROADMAP.md §2a, §2d).
 
-`extract.run` is monkeypatched to fixed records so the CLI surface — format
-selection and the output pipeline — is exercised without any network.
+`extract.run_report` is monkeypatched to a fixed `RunResult` so the CLI surface —
+format selection, the output pipeline, and the run summary — is exercised without
+any network.
 """
 
 from __future__ import annotations
@@ -14,8 +15,18 @@ from typer.testing import CliRunner
 
 from spoor import cli
 from spoor.core import extract
+from spoor.core.extract import RunResult
 
 runner = CliRunner()
+
+
+def _stub_result() -> RunResult:
+    return RunResult(
+        records=[{"title": "A", "price": 1.0}],
+        tier=1,
+        pages_fetched=1,
+        tiers_attempted=[1],
+    )
 
 _CONFIG = """
 target: http://localhost:8000/x.html
@@ -34,7 +45,7 @@ def _config_file(tmp_path: Path) -> Path:
 def test_run_infers_csv_from_extension(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(extract, "run", lambda cfg: [{"title": "A", "price": 1.0}])
+    monkeypatch.setattr(extract, "run_report", lambda cfg: _stub_result())
     out = tmp_path / "out.csv"
     result = runner.invoke(
         cli.app, ["run", str(_config_file(tmp_path)), "-o", str(out)]
@@ -46,7 +57,7 @@ def test_run_infers_csv_from_extension(
 def test_run_format_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(extract, "run", lambda cfg: [{"title": "A", "price": 1.0}])
+    monkeypatch.setattr(extract, "run_report", lambda cfg: _stub_result())
     out = tmp_path / "out.dat"
     result = runner.invoke(
         cli.app,
@@ -63,11 +74,11 @@ def test_bad_format_aborts_before_extraction(
 ) -> None:
     calls = {"n": 0}
 
-    def _record_call(cfg: object) -> list[dict[str, object]]:
+    def _record_call(cfg: object) -> RunResult:
         calls["n"] += 1
-        return []
+        return RunResult()
 
-    monkeypatch.setattr(extract, "run", _record_call)
+    monkeypatch.setattr(extract, "run_report", _record_call)
     out = tmp_path / "out.dat"  # unknown extension, no --format
     result = runner.invoke(
         cli.app, ["run", str(_config_file(tmp_path)), "-o", str(out)]
