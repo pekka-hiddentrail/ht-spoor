@@ -12,7 +12,8 @@ description = "Give your agents a map of the web — a local-first crawler that 
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Hidden Trail" }]
+authors = [{ name = "Pekka Marjamäki", email = "pekka@hiddentrail.com" }]
+maintainers = [{ name = "Pekka Marjamäki", email = "pekka@hiddentrail.com" }]
 keywords = ["scraping", "crawler", "playwright", "mcp", "api-discovery"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
