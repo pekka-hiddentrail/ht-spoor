@@ -266,6 +266,8 @@ The full §2e system: state-abstraction tuning, the sandbox-only destructive-act
 
 **Explicitly out of scope as a test target:** a real company's live production site (e.g. Netflix's actual service) — it teaches the suite nothing the self-hosted clone doesn't already cover, and ties CI health to a target nobody controls.
 
+**Decision — Phase-1 in-vivo bench (Juice Shop only).** The `docker-compose.yml` bench (`fixtures/docker-compose.yml`) is introduced in Phase 1 with **only OWASP Juice Shop** stood up, not the full four-app matrix. Juice Shop is an Angular SPA whose product listing renders client-side, so it exercises exactly what Phase 1 built end-to-end against a real, uncontrolled app: tier 1 finds nothing, the dispatcher escalates, tier 2 renders in a browser and extracts. The other three archetypes gate on capabilities that do not exist yet — Sauce Demo and ERPNext/Odoo need auth (Phase 2+), Juice Shop's API surface needs §2b discovery (Phase 2.5), and destructive-action exploration needs §2e (Phase 6) — so standing them up now would be scaffolding, not validation; they join the same bench as their phases arrive. Per §5.2 the docker E2E smoke is a **pre-merge gate**, so CI boots the container and runs it on every PR; locally the integration test **skips gracefully** when the container isn't reachable, keeping the fast unit gate network- and Docker-free. Juice Shop is pinned to a specific image tag for determinism. The `sandbox: true` declaration §5.1 calls for is recorded as a compose label until the §2e registry consumes it.
+
 ### 5.2 Test types, mapped to what each actually validates
 
 | Test type | Tool | What it catches |

@@ -70,4 +70,5 @@ testpaths = ["tests"]
 bdd_features_base_dir = "features"
 markers = [
     "mutation: tier-3 mutation corpus (ROADMAP.md §5.3) — success rate must stay >= 95%",
+    "integration: end-to-end run against a live docker archetype (ROADMAP.md §5.1) — skips when the container isn't reachable",
 ]

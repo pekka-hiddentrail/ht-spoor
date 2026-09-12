@@ -1,0 +1,14 @@
+# ROADMAP.md §5.1 archetype-bench config.
+#
+# Extracts the product listing from a live OWASP Juice Shop, an Angular SPA
+# whose products render client-side — so this config only resolves under the
+# tier-2 browser tier, never tier 1 (which sees the empty app shell). Validates
+# the generic tiers against a real, uncontrolled app.
+#
+# Site-specific selectors are fine here: this is a fixture config, not core
+# code (§0 applies to spoor/core/, not to configs pointed at a target).
+target: http://127.0.0.1:3000/#/search
+item: "mat-card"
+fields:
+  name: { selector: ".item-name" }
+  price: { selector: ".item-price", type: number }

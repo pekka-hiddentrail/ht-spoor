@@ -17,11 +17,23 @@ jobs:
         run: python -m pip install -e ".[dev]"
       - name: Install browser (tier 2)
         run: python -m playwright install --with-deps chromium
+      - name: Start archetype bench (Juice Shop, §5.1)
+        run: docker compose -f fixtures/docker-compose.yml up -d
+      - name: Wait for Juice Shop to be ready
+        # Poll the port from outside (the image is distroless — no in-container
+        # probe), so the integration test finds a ready app instead of racing
+        # the boot. Juice Shop takes a while to come up on a cold runner.
+        run: timeout 180 bash -c 'until curl -sf http://127.0.0.1:3000/ >/dev/null; do sleep 3; done'
       - name: Lint (ruff)
         run: ruff check .
       - name: Type check (mypy)
         run: mypy .
-      - name: Tests (unit, .feature scenarios, golden-master)
+      - name: Tests (unit, .feature scenarios, golden-master, integration)
+        # The integration test skips when the container is unreachable; here it
+        # is up, so the Juice Shop end-to-end (§5.1) runs as part of the gate.
         run: pytest
       - name: Genericity (§0)
         run: python scripts/check_genericity.py
+      - name: Stop archetype bench
+        if: always()
+        run: docker compose -f fixtures/docker-compose.yml down
