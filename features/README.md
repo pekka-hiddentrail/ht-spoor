@@ -19,9 +19,11 @@ are authored when their phase begins, not up front.
 | `operational.feature` | Politeness & rate limiting | §2d | `spoor/operational` | 1 |
 | `output.feature` | Output pipeline (pluggable sinks) | §2d | `spoor/operational` | 1 / 3.5 |
 | `interaction.feature` | Interaction execution (native/jittered) | §2 | `spoor/core` | 2 |
-| `api_discovery.feature` | API surface discovery | §2b | `spoor/api_discovery` | 2.5 |
-| `signals.feature` | Client-side signals catalog | §2c | `spoor/signals` | 2.5 |
-| `security.feature` | Data handling, redaction, sandbox registry | §2h | `spoor/security` | 2.5 |
+| `api_discovery.feature` | API surface discovery (spec + GraphQL introspection) | §2b | `spoor/api_discovery` | 2.5 |
+| `capture.feature` | Raw network capture (HAR) to local-only cache | §2b/§2c/§2h | `spoor/core`, `spoor/security` | 2.5 |
+| `signals.feature`, `accessibility.feature`, `response_headers.feature`, `storage_state.feature` | Client-side signals catalog (console, a11y tree, response headers, storage state) | §2c | `spoor/signals` | 2.5 |
+| `redaction.feature` | Data handling: secret redaction before shared output (sandbox registry later) | §2h | `spoor/security` | 2.5 |
+| `observability.feature` | Run summary / observability | §2d | `spoor/operational` | 1 |
 | `resolution.feature` | Tier dispatcher / escalation, then tier-3 self-healing | §2 | `spoor/core` | 1 / 3 |
 | `serving.feature` | MCP server & REST API (read-only) | §2f | `spoor/serving` | 5 |
 | `exploration.feature` | Exploration mode + safety | §2e | `spoor/exploration` | 6 |
@@ -39,5 +41,16 @@ observability) are authored when those turns come. `resolution.feature` (§2)
 has its Phase-1 dispatcher slice authored and green — the escalation seam that
 picks a resolution tier and, for a browser-only capability (infinite scroll),
 routes past the static tier 1 to the browser-backed tier 2; tier-3 self-healing
-behaviour is authored when that tier is built. The remaining feature files are
-authored when their phase begins.
+behaviour is authored when that tier is built. `observability.feature` (§2d) is
+authored and green — a structured, operator-facing run summary.
+
+Phase-2.5 is under way: `api_discovery.feature` (§2b) covers published-spec
+discovery and GraphQL introspection; `capture.feature` records the browser
+tier's HAR to a local-only, git-ignored cache (§2h); and the §2c signals catalog
+is landing signal-by-signal — console output/JS errors, the accessibility tree,
+response-header fingerprints, and client-side storage state — each opt-in,
+browser-tier-only, with raw captures kept local-only and only safe/derived facts
+(or, for storage state, redacted entries) surfaced to shared output. The §2h
+secret-redaction pipeline (`redaction.feature`) is authored and green and backs
+that storage-state surfacing. The sandbox registry (§2e/§2h) and the remaining
+feature files are authored when their phase begins.

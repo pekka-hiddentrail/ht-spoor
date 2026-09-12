@@ -32,6 +32,10 @@ ACCESSIBILITY_FILENAME = "accessibility.json"
 # The filename a run's raw response headers are written under (§2c).
 HEADERS_FILENAME = "headers.json"
 
+# The filename a run's raw, unredacted client-side storage state is written
+# under (§2c/§2h) — cookies + localStorage, all values.
+STORAGE_STATE_FILENAME = "storage_state.json"
+
 
 def new_run_id() -> str:
     """A sortable, collision-resistant id for one run's cache subdirectory.

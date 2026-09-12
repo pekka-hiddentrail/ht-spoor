@@ -23,6 +23,7 @@ from spoor.core.extract import RunResult
 from spoor.signals.accessibility import AccessibilitySignal
 from spoor.signals.console import ConsoleSignal
 from spoor.signals.headers import HeaderSignal
+from spoor.signals.storage_state import StorageStateSignal
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,11 @@ class RunSummary:
     # file at `headers_path` (some headers are secret shapes, §2h).
     headers: HeaderSignal | None
     headers_path: str | None
+    # Redacted, shareable view of the browser context's client-side storage, if
+    # captured (§2c). Names + secret-redacted values only; the raw unredacted
+    # state stays in the local-only file at `storage_state_path` (§2h).
+    storage_state: StorageStateSignal | None
+    storage_state_path: str | None
 
     @classmethod
     def from_result(cls, result: RunResult) -> RunSummary:
@@ -93,6 +99,12 @@ class RunSummary:
             headers_path=(
                 str(result.headers_path)
                 if result.headers_path is not None
+                else None
+            ),
+            storage_state=result.storage_state,
+            storage_state_path=(
+                str(result.storage_state_path)
+                if result.storage_state_path is not None
                 else None
             ),
         )
@@ -169,6 +181,16 @@ class RunSummary:
                 f"    security:    CSP {yn[h.csp]}, HSTS {yn[h.hsts]}, "
                 f"X-Frame-Options {yn[h.x_frame_options]}"
             )
+        # Client-side storage-state summary, only when captured (§2c). Counts of
+        # cookies / localStorage entries / origins; the redacted entries ride on
+        # the structured signal object, and raw values stay local-only (§2h).
+        if self.storage_state is not None:
+            s = self.storage_state
+            lines.append(
+                f"  storage:       {s.cookie_count} cookies, "
+                f"{s.local_storage_count} localStorage entries "
+                f"({s.origin_count} origins)"
+            )
         # Capture lines: only shown when something was captured, so an ordinary run
         # stays quiet; named raw + local so it's clear this isn't shared output (§2h).
         if self.har_path is not None:
@@ -184,5 +206,10 @@ class RunSummary:
         if self.headers_path is not None:
             lines.append(
                 f"  captured:      raw headers (local-only) {self.headers_path}"
+            )
+        if self.storage_state_path is not None:
+            lines.append(
+                "  captured:      raw storage state (local-only) "
+                f"{self.storage_state_path}"
             )
         return "\n".join(lines)

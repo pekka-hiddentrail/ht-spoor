@@ -25,6 +25,7 @@ from urllib.parse import urljoin
 import httpx
 from parsel import Selector
 from playwright.sync_api import BrowserContext, Page, sync_playwright
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from spoor.api_discovery.discovery import DiscoveredSpec, discover_spec
@@ -35,6 +36,7 @@ from spoor.security import storage
 from spoor.signals.accessibility import AccessibilityCollector, AccessibilitySignal
 from spoor.signals.console import ConsoleCollector, ConsoleSignal
 from spoor.signals.headers import HeaderCollector, HeaderSignal
+from spoor.signals.storage_state import StorageStateCollector, StorageStateSignal
 
 # Guard against a pagination cycle running forever on a self-linking page.
 _MAX_PAGES = 1000
@@ -74,7 +76,10 @@ class RunResult:
     captured. `headers`, when set, is the non-sensitive derived summary of the
     browser tier's response headers (§2c) and `headers_path` the local-only file
     the raw headers (all values) were written to (§2h) — both None when not
-    captured. `spoor/operational/observability.py` turns these into the
+    captured. `storage_state`, when set, is the redacted, shareable view of the
+    browser context's client-side storage (§2c) and `storage_state_path` the
+    local-only file the raw, unredacted state was written to (§2h) — both None
+    when not captured. `spoor/operational/observability.py` turns these into the
     operator-facing summary.
     """
 
@@ -92,6 +97,8 @@ class RunResult:
     accessibility_path: Path | None = None
     headers: HeaderSignal | None = None
     headers_path: Path | None = None
+    storage_state: StorageStateSignal | None = None
+    storage_state_path: Path | None = None
 
 
 def _first_text(root: Selector, css: str) -> str | None:
@@ -307,11 +314,12 @@ class Tier2Resolver:
         A single browser context spans the whole run's pages. When the config
         opts into capture, that context records a HAR of every request it makes,
         a console collector observes its console output and errors, an
-        accessibility collector snapshots each rendered page's a11y tree, and/or a
-        header collector records each page's response headers — all written to one
-        fresh local-only run cache directory (ROADMAP.md §2b/§2c/§2h); the HAR is
-        flushed on `context.close()`, the rest after. Without capture, nothing is
-        recorded and the paths stay None.
+        accessibility collector snapshots each rendered page's a11y tree, a
+        header collector records each page's response headers, and/or a
+        storage-state collector captures the context's cookies + localStorage —
+        all written to one fresh local-only run cache directory (ROADMAP.md
+        §2b/§2c/§2h); the HAR is flushed on `context.close()`, the rest after.
+        Without capture, nothing is recorded and the paths stay None.
         """
         owns_client = client is None
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
@@ -322,10 +330,11 @@ class Tier2Resolver:
         want_console = bool(capture and capture.console)
         want_a11y = bool(capture and capture.accessibility)
         want_headers = bool(capture and capture.headers)
+        want_storage = bool(capture and capture.storage)
         # One run directory shared by every capture this run produces.
         run_dir = (
             storage.new_run_cache_dir()
-            if (want_har or want_console or want_a11y or want_headers)
+            if (want_har or want_console or want_a11y or want_headers or want_storage)
             else None
         )
         har_path = run_dir / storage.HAR_FILENAME if (run_dir and want_har) else None
@@ -334,6 +343,7 @@ class Tier2Resolver:
         console = ConsoleCollector() if want_console else None
         a11y = AccessibilityCollector() if want_a11y else None
         headers = HeaderCollector() if want_headers else None
+        storage_state = StorageStateCollector() if want_storage else None
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
@@ -349,6 +359,18 @@ class Tier2Resolver:
                         self._crawl(
                             context, config, gate, result, console, a11y, headers
                         )
+                        # Storage state is a context-level capture (cookies +
+                        # localStorage span pages), taken once after the crawl and
+                        # before close. Opportunistic like every signal: a capture
+                        # failure must never fail the extraction it rode along with.
+                        if storage_state is not None:
+                            try:
+                                # dict(...) coerces Playwright's StorageState
+                                # TypedDict to a plain dict, keeping the signals
+                                # module free of any Playwright type dependency.
+                                storage_state.capture(dict(context.storage_state()))
+                            except PlaywrightError:
+                                pass
                     finally:
                         context.close()  # flushes the HAR to disk, if recording
                 finally:
@@ -370,6 +392,11 @@ class Tier2Resolver:
                 headers.write(headers_path)
                 result.headers = headers.signal
                 result.headers_path = headers_path
+            if storage_state is not None and run_dir is not None:
+                storage_state_path = run_dir / storage.STORAGE_STATE_FILENAME
+                storage_state.write(storage_state_path)
+                result.storage_state = storage_state.signal
+                result.storage_state_path = storage_state_path
         finally:
             if owns_client:
                 client.close()

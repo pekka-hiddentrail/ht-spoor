@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Client-side rendered listing that writes client-side storage</title>
+    <!-- Like js-rendered.html, the list is empty in the served HTML and is
+         populated by JS on load, so a tier-1 fetch extracts zero records and the
+         dispatcher escalates to the browser tier. Additionally this page writes
+         client-side storage — a secret-shaped session cookie, a token-shaped
+         localStorage entry, and a plain non-secret one — so the §2c storage-state
+         capture has something to record and the §2h redaction split is exercised:
+         the raw values reach only the local-only cache, and shared output shows
+         the entries with secrets redacted. Exercised by storage_state.feature. -->
+  </head>
+  <body>
+    <ul id="list"></ul>
+    <script>
+      // Secret-shaped session cookie: a recognized cookie name with an opaque
+      // value. Redaction keys off the name, so shared output shows the name and
+      // a redacted value; the raw value lives only in the local-only cache.
+      document.cookie = "sessionid=8f9a1b2c3d4e5f60718293a4b5c6d7e8; path=/";
+      // A token-shaped value under an auth-ish key (caught by both the key-name
+      // and the JWT rules) and a plainly non-secret entry (left intact).
+      localStorage.setItem(
+        "access_token",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhYmMifQ.s1gnatur3-x_Y"
+      );
+      localStorage.setItem("theme", "dark");
+
+      const TOTAL = 5;
+      const list = document.getElementById("list");
+      for (let i = 1; i <= TOTAL; i++) {
+        const item = document.createElement("li");
+        item.className = "card";
+        item.innerHTML = '<span class="title">Product ' + i + "</span>";
+        list.appendChild(item);
+      }
+    </script>
+  </body>
+</html>
