@@ -40,6 +40,15 @@ Feature: Polite crawling — robots.txt and crawl-delay
     When I run the config with politeness
     Then the output contains one item
 
+  Scenario: A server error from robots.txt is treated as disallowed, not open
+    Given a site whose robots.txt fails with a 503 error
+    And a page at "/products.html" with title "Ceramic Mug"
+    And a config targeting "http://localhost:8000/products.html"
+    When I run the config with politeness
+    Then no request is made to "/products.html"
+    And the output contains no items
+    And the run reports "http://localhost:8000/products.html" as blocked by robots.txt
+
   Scenario: The crawl-delay from robots.txt is honored between fetches
     Given a site whose robots.txt sets a crawl-delay of 2 seconds
     And a 3-page catalog linked by "a.next-page"

@@ -59,10 +59,17 @@ class Politeness:
             response = self._client.get(robots_url)
         except httpx.HTTPError:
             response = None
-        # An empty ruleset (absent/unreadable robots.txt) allows everything.
         if response is not None and response.status_code == 200:
             parser.parse(response.text.splitlines())
+        elif response is not None and response.status_code >= 500:
+            # RFC 9309: a server error means the rules are unavailable, so be
+            # conservative and treat the whole origin as disallowed rather than
+            # crawling it as if unrestricted. A transport failure (no response)
+            # falls through to allow-all — a transient client-side hiccup should
+            # not silently lock out an otherwise-open site.
+            parser.parse(["User-agent: *", "Disallow: /"])
         else:
+            # Absent robots.txt (404) or otherwise unreadable: nothing to obey.
             parser.parse([])
         self._robots[origin] = parser
         return parser

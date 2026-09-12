@@ -67,6 +67,11 @@ def no_robots(context: dict[str, Any]) -> None:
     pass
 
 
+@given("a site whose robots.txt fails with a 503 error")
+def robots_503(context: dict[str, Any]) -> None:
+    context["routes"]["/robots.txt"] = (503, "service unavailable")
+
+
 @given(parsers.parse('a page at "{path}" with title "{title}"'))
 def page_with_title(context: dict[str, Any], path: str, title: str) -> None:
     context["routes"][path] = (200, _product_page(title))

@@ -53,7 +53,8 @@ class PolitenessPolicy(BaseModel):
 
 
 class ExtractionConfig(BaseModel):
-    """A whole extraction job: target, optional repeating `item`, fields."""
+    """A whole extraction job: target, fields, and optional repeating `item`,
+    pagination, and politeness policy."""
 
     model_config = ConfigDict(extra="forbid")
 
