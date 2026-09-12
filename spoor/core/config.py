@@ -64,14 +64,18 @@ class Capture(BaseModel):
 
     `har`, when true, tells the browser tier to record every request/response it
     makes as a HAR, written to the local-only run cache (§2h) — never to shared
-    output. It has no effect on a run that resolves without a browser (tier 1),
-    which has no network capture to record. Default-off here; §2c's default-on
-    capture is the full Phase-2.5 target (see the ROADMAP decision note).
+    output. `console`, when true, tells the browser tier to record the page's
+    console output and uncaught errors (§2c) to the same local-only cache; only
+    non-sensitive counts of those reach shared output. Neither has any effect on
+    a run that resolves without a browser (tier 1), which has no browser session
+    to observe. Default-off here; §2c's default-on capture is the full Phase-2.5
+    target (see the ROADMAP decision note).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     har: bool = False
+    console: bool = False
 
 
 class ExtractionConfig(BaseModel):

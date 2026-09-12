@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Noisy client-side page</title>
+    <!-- Like js-rendered.html, the list is empty in the served HTML and filled
+         by JS on load, so a tier-1 fetch extracts zero and the dispatcher
+         escalates to the browser tier. Unlike it, this page is deliberately
+         noisy: it logs to the console at several levels and then throws an
+         uncaught error, so the §2c console-signal capture has real console
+         output and a page error to observe. The throw is the last statement, so
+         nothing after it is lost. Exercised by signals.feature. -->
+  </head>
+  <body>
+    <ul id="list"></ul>
+    <script>
+      console.log("boot: rendering list");
+      console.warn("heads up: using a fallback code path");
+      console.error("recoverable: one widget failed to load");
+      const list = document.getElementById("list");
+      for (let i = 1; i <= 3; i++) {
+        const item = document.createElement("li");
+        item.className = "card";
+        item.innerHTML = '<span class="title">Item ' + i + "</span>";
+        list.appendChild(item);
+      }
+      // Uncaught synchronous error -> fires page.on("pageerror"). Last statement,
+      // so the list above is fully populated before the script aborts here.
+      throw new Error("boom: unhandled failure on load");
+    </script>
+  </body>
+</html>
