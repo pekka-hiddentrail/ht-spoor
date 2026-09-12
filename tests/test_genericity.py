@@ -57,6 +57,16 @@ def test_conventional_paths_and_module_paths_not_flagged() -> None:
     assert _check(source) == []
 
 
+def test_domain_inside_a_url_is_flagged() -> None:
+    violations = _check('BASE = "https://api.stripe.com/v1/charges"\n')
+    assert [v.match for v in violations] == ["api.stripe.com"]
+
+
+def test_filename_like_extensions_not_flagged() -> None:
+    # `.sh`/`.so`/`.csv` collide with file extensions and are not treated as TLDs.
+    assert _check('FILES = ["build.sh", "lib.so", "data.csv"]\n') == []
+
+
 def test_docstring_mention_is_not_flagged() -> None:
     source = '"""Handles the shopify.com convention."""\nX = 1\n'
     assert _check(source) == []

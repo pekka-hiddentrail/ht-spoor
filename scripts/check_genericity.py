@@ -45,19 +45,27 @@ ALLOWED_HOSTS = {
     "::",
 }
 
-# TLDs that are reserved for examples/testing (RFC 2606) — safe placeholders.
-ALLOWED_TLDS = {"example", "test", "invalid", "localhost"}
-
 # Reserved second-level example domains (RFC 2606) allowed as placeholders.
+# (RFC 2606 example/test/invalid/localhost TLDs are simply absent from
+# KNOWN_TLDS below, so they never register as domains in the first place.)
 ALLOWED_DOMAINS = {"example.com", "example.org", "example.net"}
 
-# "TLDs" that are really file extensions or dotted module paths — not domains.
-# Keeps `openapi.json`, `robots.txt`, `spoor.core`, `page.py` from tripping.
-NON_DOMAIN_SUFFIXES = {
-    "py", "pyi", "json", "txt", "yml", "yaml", "toml", "md", "rst", "cfg",
-    "ini", "in", "so", "html", "htm", "css", "js", "ts", "jsx", "tsx", "xml",
-    "csv", "har", "sqlite", "db", "parquet", "png", "jpg", "jpeg", "svg",
-    "lock", "env", "sh", "log", "core",
+# A dotted string is only treated as a domain if its final label is a real,
+# registrable TLD. This is the key to not flagging dotted module paths
+# (`spoor.core.dispatcher`), config keys, or filenames (`openapi.json`,
+# `robots.txt`). File-extension-colliding TLDs (`.sh`, `.so`, `.io` is fine but
+# `.py`/`.js` etc.) are deliberately omitted: the tiny cost is that a target on
+# such a TLD could slip past this check, caught instead by review and the §0
+# rule itself. Extend this set (via PR) if a real domain uses a TLD not listed.
+KNOWN_TLDS = {
+    # generic
+    "com", "org", "net", "io", "co", "dev", "app", "ai", "info", "biz",
+    "xyz", "me", "tv", "cloud", "tech", "store", "online", "site", "shop",
+    "gov", "edu", "mil", "int",
+    # country-code (common; ambiguous file-ext collisions like "sh"/"so" omitted)
+    "uk", "us", "ca", "de", "fr", "jp", "cn", "ru", "au", "nl", "se", "no",
+    "fi", "es", "it", "ch", "br", "eu", "kr", "tw", "hk", "sg", "nz", "za",
+    "mx", "pl", "cz", "dk", "pt", "ie", "ar", "cl",
 }
 
 _DOMAIN_RE = re.compile(
@@ -96,8 +104,8 @@ def _check_string(value: str) -> list[tuple[str, str]]:
     for m in _DOMAIN_RE.finditer(value):
         host = m.group(0)
         tld = host.rsplit(".", 1)[-1].lower()
-        if tld in NON_DOMAIN_SUFFIXES or tld in ALLOWED_TLDS:
-            continue
+        if tld not in KNOWN_TLDS:
+            continue  # dotted module path, config key, or filename — not a host
         if host.lower() in ALLOWED_HOSTS or host.lower() in ALLOWED_DOMAINS:
             continue
         hits.append((host, "domain"))

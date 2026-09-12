@@ -9,6 +9,7 @@ from Phase 0, not the behaviour.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -22,10 +23,10 @@ app = typer.Typer(
 
 @app.command()
 def run(
-    config: Path = typer.Argument(..., help="Path to a declarative §2a config file."),
-    output: Path = typer.Option(
-        Path("output.json"), "-o", "--output", help="Where to write structured output."
-    ),
+    config: Annotated[Path, typer.Argument(help="Path to a §2a config file.")],
+    output: Annotated[
+        Path, typer.Option("-o", "--output", help="Where to write output.")
+    ] = Path("output.json"),
 ) -> None:
     """Run an extraction config against its target (Phase 1)."""
     raise NotImplementedError(
