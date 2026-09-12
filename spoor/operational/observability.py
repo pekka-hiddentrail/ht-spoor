@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from spoor.api_discovery.discovery import DiscoveredSpec
 from spoor.core.extract import RunResult
 
 
@@ -32,6 +33,9 @@ class RunSummary:
     # The local-only HAR the browser tier captured, if any (ROADMAP.md §2b/§2h).
     # A string (not a Path) so the summary stays trivially serializable (§2d).
     har_path: str | None
+    # An official API spec observed at a conventional path, if any (ROADMAP.md
+    # §2b) — reported as *observed*, never as a complete API census.
+    api_spec: DiscoveredSpec | None
 
     @classmethod
     def from_result(cls, result: RunResult) -> RunSummary:
@@ -50,12 +54,24 @@ class RunSummary:
             tiers_attempted=list(attempted),
             blocked=list(result.blocked),
             har_path=str(result.har_path) if result.har_path is not None else None,
+            api_spec=result.api_spec,
         )
 
     @property
     def escalated(self) -> bool:
         """Whether the run had to advance past its first attempted tier."""
         return len(self.tiers_attempted) > 1
+
+    def _render_api_spec(self) -> str:
+        """The API-spec line: the observed spec, or that none was discovered.
+
+        Worded as *observed* to hold §2b's bounded claim — a discovered spec is
+        one Spoor saw published, never a promise of the complete API surface.
+        """
+        if self.api_spec is None:
+            return "none discovered"
+        spec = self.api_spec
+        return f"{spec.kind} {spec.version} observed at {spec.url}"
 
     def render(self) -> str:
         """A compact, human-readable rendering for the CLI."""
@@ -75,6 +91,7 @@ class RunSummary:
             f"  pages fetched: {self.pages_fetched}",
             f"  resolved by:   {resolved}",
             f"  escalation:    {escalation}",
+            f"  api spec:      {self._render_api_spec()}",
             f"  blocked:       {len(self.blocked)}",
         ]
         lines.extend(f"    - {url} (robots.txt)" for url in self.blocked)
