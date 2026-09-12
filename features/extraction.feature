@@ -5,7 +5,7 @@
 # new code). Each field's `selector` is only the tier-1 starting point; the
 # escalation dispatcher (§2) walks it through later tiers automatically, so a
 # config author never writes tier-specific logic. Escalation internals are
-# specified in resolution.feature; output-sink details in operational.feature.
+# specified in resolution.feature; output-sink details in output.feature.
 
 Feature: Declarative extraction from a config file
   As someone who knows what they want from a target

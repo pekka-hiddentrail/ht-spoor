@@ -8,7 +8,6 @@ from Phase 0, not the behaviour.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Annotated
 
@@ -16,6 +15,7 @@ import typer
 
 from spoor.core import extract
 from spoor.core.config import load_config
+from spoor.operational.output import resolve_format, write_records
 
 app = typer.Typer(
     name="spoor",
@@ -41,12 +41,24 @@ def run(
     output: Annotated[
         Path, typer.Option("-o", "--output", help="Where to write output.")
     ] = Path("output.json"),
+    output_format: Annotated[
+        str | None,
+        typer.Option(
+            "-f",
+            "--format",
+            help="Output format (json, jsonl, csv); inferred from -o if omitted.",
+        ),
+    ] = None,
 ) -> None:
     """Run an extraction config against its target (Phase 1)."""
     cfg = load_config(config.read_text(encoding="utf-8"))
+    try:
+        fmt = resolve_format(output, output_format)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     records = extract.run(cfg)
-    output.write_text(json.dumps(records, indent=2), encoding="utf-8")
-    typer.echo(f"Wrote {len(records)} record(s) to {output}")
+    write_records(records, cfg, output, fmt)
+    typer.echo(f"Wrote {len(records)} record(s) to {output} ({fmt})")
 
 
 if __name__ == "__main__":  # pragma: no cover

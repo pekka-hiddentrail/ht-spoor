@@ -16,7 +16,8 @@ are authored when their phase begins, not up front.
 | Feature file | Capability | ROADMAP | Package | Phase |
 |---|---|---|---|---|
 | `extraction.feature` | Declarative extraction configs | §2a | `spoor/core`, CLI | 1 |
-| `operational.feature` | Operational essentials | §2d | `spoor/operational` | 1 / 3.5 |
+| `operational.feature` | Politeness & rate limiting | §2d | `spoor/operational` | 1 |
+| `output.feature` | Output pipeline (pluggable sinks) | §2d | `spoor/operational` | 1 / 3.5 |
 | `interaction.feature` | Interaction execution (native/jittered) | §2 | `spoor/core` | 2 |
 | `api_discovery.feature` | API surface discovery | §2b | `spoor/api_discovery` | 2.5 |
 | `signals.feature` | Client-side signals catalog | §2c | `spoor/signals` | 2.5 |
@@ -30,7 +31,9 @@ Status: `extraction.feature` (§2a) is authored and its tier-1 scenarios are
 implemented and green; its infinite-scroll scenario is tagged `@tier2` and
 skipped until tier-2 browser rendering lands. `operational.feature` (§2d) has
 its Phase-1 politeness slice authored and green — respect `robots.txt` (default
-on) and honor the crawl-delay; its output-pipeline and Phase-3.5 scenarios
-(retry/error classification, CAPTCHA detection, change detection, run
+on) and honor the crawl-delay. `output.feature` (§2d) has its Phase-1 output
+pipeline authored and green — schema-validated JSON/JSON Lines/CSV sinks with
+format chosen by extension or `--format`; SQLite/Parquet sinks and the Phase-3.5
+items (retry/error classification, CAPTCHA detection, change detection, run
 observability) are authored when those turns come. The remaining feature files
 are authored when their phase begins.
