@@ -28,8 +28,22 @@ Every named capability in ROADMAP.md (§2a extraction, §2d operational essentia
 2. Add or update step definitions (`pytest-bdd`).
 3. Implement.
 4. Run the full local gate (below) before considering the feature done.
+5. Self-review the diff before opening a PR — see "Self-review" below. This is not optional and not something to wait to be asked for; a green gate is necessary but not sufficient.
 
 BDD scenarios sit *above* the rest of the test pyramid, not instead of it. Property-based/mutation testing (`hypothesis`, §5.3) and golden-master diffing (§5.4) stay in place for tier 3's internals and regression safety — those validate "generate hundreds of variants and check a statistical property," which isn't a shape Gherkin scenarios are suited for.
+
+## Self-review — before every PR, not only when asked
+
+A passing gate proves the happy paths run; it does not prove the code is correct, honest, or free of regressions. After the gate is green and before opening the PR, read your own diff end to end as if reviewing someone else's work — adversarially, trying to *break* it, not to confirm it works. Hunt specifically for:
+
+- **Edge cases and boundaries** — empty / `None` / zero / negative / very large inputs, off-by-one, unicode and whitespace, duplicate or cyclic data, the first and last iteration. Probe the new logic with concrete values (a throwaway script is fine), don't just eyeball it.
+- **Regressions from a "fix"** — did the change narrow, widen, or alter existing behavior as a side effect? Re-check it against the scenarios that already exercised that path. (A real example: a coercion fix whose lookbehind also silently rejected a previously-handled input.)
+- **Naming and contract honesty** — does every name mean what the thing does? A predicate that returns `True` on a path that always raises, a `get_` that mutates, a docstring describing behavior that no longer exists — each is a defect, not a nitpick.
+- **Error and cleanup paths** — exceptions, early returns, resource release (files, clients, locks) on both success and failure.
+- **Docs and text in step with code** — docstrings, `README.md`, `docs/ROADMAP.md` decision notes, and `.feature` comments must describe what actually shipped. Stale scaffolding language ("raises NotImplementedError until…") is a reportable finding, not cosmetic.
+- **§0 and the non-negotiables** — nothing site-specific leaked into `spoor/core/`, and no non-negotiable above was weakened without a recorded ROADMAP decision.
+
+Report what you find honestly — in the working summary and the PR description — and surface real issues rather than reassure. "Nothing found" is a valid outcome only after actually looking; say what you checked. Fixing a defect you found in your own diff before merge is the goal, not a failure.
 
 ## Local gate — run all of this before calling a feature done
 
