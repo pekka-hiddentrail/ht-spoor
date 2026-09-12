@@ -29,6 +29,9 @@ CONSOLE_FILENAME = "console.jsonl"
 # The filename a run's accessibility-tree snapshots are written under (§2c).
 ACCESSIBILITY_FILENAME = "accessibility.json"
 
+# The filename a run's raw response headers are written under (§2c).
+HEADERS_FILENAME = "headers.json"
+
 
 def new_run_id() -> str:
     """A sortable, collision-resistant id for one run's cache subdirectory.

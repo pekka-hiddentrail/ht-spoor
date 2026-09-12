@@ -155,6 +155,13 @@ The accessibility-tree snapshot follows the same pattern as the console signal, 
 - **Raw trees local-only, node count shared.** The raw per-page trees (potentially large) go to the local-only cache (`accessibility.json`); the run summary carries only the total accessible-node count. The tree's accessible *names* are visible-label text (the same class of data the DOM already exposes to extraction), not credentials, so this isn't a secret-bearing capture like storage state — but the aggregate-only-in-shared-output rule is kept uniform across all signals regardless.
 - **Node count as a resilience signal.** §2c frames the tree as doubling as a tier-1/3 resilience signal: a near-zero node count (e.g. a canvas-rendered UI) is an early warning that selector-based extraction will struggle, which is why the count — not just the raw tree — is the surfaced aggregate.
 
+### Decision note — §2c third signal: response headers (implemented)
+
+The response-header fingerprint (CSP, HSTS, X-Frame-Options, `Server`, `X-Powered-By`, CORS) follows the same opt-in, browser-tier, one-run-directory pattern. It forced the first §2c §2h fork the count-only signals (console, accessibility) had sidestepped, because for headers the *values* are the intelligence — and some headers (`set-cookie`, `authorization`) are known secret shapes. **Decision (user-confirmed): presence/counts only in shared output.**
+
+- **Header values are never surfaced to shared output.** The raw full headers — all values, `set-cookie` included — are written to the local-only run cache (`headers.json`). The run summary carries only non-sensitive *derived* facts: the count of distinct header names, and presence booleans for the key security headers (CSP / HSTS / X-Frame-Options). This keeps the count-only line the earlier signals held and needs no secret-pattern redaction yet.
+- **Value-surfacing is deferred to the §2h redaction slice.** Surfacing useful non-secret header values (e.g. `Server`, CSP contents) to shared output is worth doing, but it's exactly a redaction decision — an allowlist/denylist of header names is a form of the redaction pipeline — so it waits until that pipeline is built rather than being decided ad hoc here. The alternatives weighed were a curated fingerprint allowlist (rejected: makes the §2h call prematurely) and all-local-only (rejected: needlessly hides the posture signal).
+
 ## 2d. Operational essentials (the gap between "extracts data" and "usable tool")
 
 These didn't come up earlier because they're not about *finding* an element — they're what makes the difference between a tiered-cascade demo and something people actually run unattended. All of them lean on existing libraries, same as everywhere else in the plan:

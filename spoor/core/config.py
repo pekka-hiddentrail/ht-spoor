@@ -68,10 +68,12 @@ class Capture(BaseModel):
     console output and uncaught errors (§2c) to the same local-only cache; only
     non-sensitive counts of those reach shared output. `accessibility`, when
     true, snapshots the page's accessibility tree (§2c) to the local-only cache,
-    surfacing only a node count. None of these has any effect on a run that
-    resolves without a browser (tier 1), which has no browser session to observe.
-    Default-off here; §2c's default-on capture is the full Phase-2.5 target (see
-    the ROADMAP decision note).
+    surfacing only a node count. `headers`, when true, records the browser tier's
+    response headers (§2c) to the local-only cache; only non-sensitive derived
+    facts (a count and security-header presence) reach shared output. None of
+    these has any effect on a run that resolves without a browser (tier 1), which
+    has no browser session to observe. Default-off here; §2c's default-on capture
+    is the full Phase-2.5 target (see the ROADMAP decision note).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -79,6 +81,7 @@ class Capture(BaseModel):
     har: bool = False
     console: bool = False
     accessibility: bool = False
+    headers: bool = False
 
 
 class ExtractionConfig(BaseModel):
