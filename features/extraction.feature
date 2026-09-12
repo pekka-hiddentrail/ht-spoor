@@ -29,6 +29,20 @@ Feature: Declarative extraction from a config file
     And the item field "title" equals "Ceramic Mug"
     And the item field "availability" equals "In stock"
 
+  Scenario: Extract many records from a listing page via an item selector
+    Given a fixture listing page with 5 product cards at "http://localhost:8000/listing.html"
+    And a config:
+      """
+      target: http://localhost:8000/listing.html
+      item: "li.product-card"
+      fields:
+        title: { selector: "h2.title" }
+        price: { selector: ".price", type: number }
+      """
+    When I run the config
+    Then the output contains 5 items
+    And every item has non-null fields "title" and "price"
+
   Scenario: A field declared as number is coerced to a numeric type
     Given a config:
       """
@@ -65,6 +79,7 @@ Feature: Declarative extraction from a config file
     Then items are extracted from all 3 pages
     And the run stops after the page with no "a.next-page" link
 
+  @tier2
   Scenario: Infinite-scroll pagination is driven by a flag
     Given a fixture page that loads more items on scroll
     And a config:
