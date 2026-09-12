@@ -1,9 +1,12 @@
-"""Tier-1 extraction: fast selectors over fetched HTML, no browser (ROADMAP.md §2).
+"""Extraction and the resolution-tier dispatcher (ROADMAP.md §2).
 
-This is the tier-1 rung only — `httpx` fetch + `parsel` selectors. Escalation to
-tiers 2–3 (JS rendering, self-healing) and infinite-scroll pagination require a
-browser session and are not handled here; they arrive with later Phase 1/2 work.
-Per §0 there is no site-specific logic: everything is driven by the config.
+Holds the escalation seam — an ordered ladder of `Resolver` rungs that a config
+is dispatched through, never chosen by the config author (§2a, §0). Tier 1
+(`httpx` fetch + `parsel` selectors) is implemented here; tier 2 (JS rendering)
+is a declared stub that escalation reaches for browser-only capabilities
+(infinite scroll) and that raises until its real implementation lands. Tier 3
+(self-healing) joins the ladder later. Per §0 there is no site-specific logic:
+everything is driven by the config.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 from urllib.parse import urljoin
 
 import httpx
@@ -105,43 +109,146 @@ def _next_url(html: str, current_url: str, config: ExtractionConfig) -> str | No
     return urljoin(current_url, href) if href else None
 
 
+class TierUnavailableError(RuntimeError):
+    """The dispatcher escalated to a resolution tier that is not yet implemented.
+
+    Raised (not returned) so a config needing an unbuilt tier fails loudly with a
+    clear reason, rather than silently returning partial or empty data.
+    """
+
+
+class Resolver(Protocol):
+    """One rung of the resolution ladder (ROADMAP.md §2).
+
+    The dispatcher picks the first resolver that `accepts` a config and delegates
+    to its `run`. A config author never selects a tier (§2a, §0) — tier choice
+    and escalation are entirely this seam's concern. `accepts` answers routing
+    ("does this tier claim this config?"), which is distinct from whether the run
+    then succeeds — a declared-but-stubbed tier can accept and still raise.
+    """
+
+    tier: int
+    name: str
+
+    def accepts(self, config: ExtractionConfig) -> bool: ...
+
+    def run(
+        self,
+        config: ExtractionConfig,
+        client: httpx.Client | None = None,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> RunResult: ...
+
+
+def _requires_browser(config: ExtractionConfig) -> bool:
+    """Whether the config needs a browser tier (JS-driven infinite scroll)."""
+    return bool(config.pagination and config.pagination.infinite_scroll)
+
+
+class Tier1Resolver:
+    """Tier 1: `httpx` fetch + `parsel` selectors, no browser (ROADMAP.md §2)."""
+
+    tier = 1
+    name = "tier-1 (static fetch + selectors)"
+
+    def accepts(self, config: ExtractionConfig) -> bool:
+        # Tier 1 handles anything achievable without a browser; JS-only
+        # capabilities (infinite scroll) are left for tier 2 to pick up.
+        return not _requires_browser(config)
+
+    def run(
+        self,
+        config: ExtractionConfig,
+        client: httpx.Client | None = None,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> RunResult:
+        """Fetch and extract, following next-link pagination to the end.
+
+        Honors the politeness policy (ROADMAP.md §2d/§6): robots.txt disallowed
+        URLs are recorded as `blocked` and never fetched, and the crawl-delay is
+        applied between fetches. `sleep` is injectable so timing can be asserted.
+        """
+        owns_client = client is None
+        client = client or httpx.Client(follow_redirects=True, timeout=10.0)
+        gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
+        result = RunResult()
+        seen: set[str] = set()
+        url: str | None = config.target
+        try:
+            while url and url not in seen and len(seen) < _MAX_PAGES:
+                seen.add(url)
+                if not gate.can_fetch(url):
+                    result.blocked.append(url)
+                    break
+                gate.before_fetch(url)
+                response = client.get(url)
+                response.raise_for_status()
+                result.records.extend(extract_records(response.text, config))
+                url = _next_url(response.text, url, config)
+        finally:
+            if owns_client:
+                client.close()
+        return result
+
+
+class Tier2Resolver:
+    """Tier 2: JS-rendered pages via a browser (ROADMAP.md §2) — not yet built.
+
+    The declared-but-stubbed rung of the seam. It accepts anything tier 1 hands
+    up (it is the escalation target), but running it raises until the browser
+    implementation lands in a later Phase-1 slice.
+    """
+
+    tier = 2
+    name = "tier-2 (JS rendering)"
+
+    def accepts(self, config: ExtractionConfig) -> bool:
+        return True
+
+    def run(
+        self,
+        config: ExtractionConfig,
+        client: httpx.Client | None = None,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> RunResult:
+        raise TierUnavailableError(
+            f"this config needs {self.name}, which is not yet available "
+            "(browser-based rendering lands in a later Phase-1 slice)"
+        )
+
+
+# The resolution ladder, tried in order (ROADMAP.md §2). Tier 3 (self-healing)
+# joins this tuple when it is built.
+DEFAULT_TIERS: tuple[Resolver, ...] = (Tier1Resolver(), Tier2Resolver())
+
+
+def select_resolver(
+    config: ExtractionConfig, tiers: tuple[Resolver, ...] = DEFAULT_TIERS
+) -> Resolver:
+    """The dispatcher core: the first tier that can handle `config`."""
+    for resolver in tiers:
+        if resolver.accepts(config):
+            return resolver
+    # The last (most capable) tier always accepts; reaching here is defensive.
+    raise TierUnavailableError("no resolution tier can handle this config")
+
+
 def run_report(
     config: ExtractionConfig,
     client: httpx.Client | None = None,
     *,
     sleep: Callable[[float], None] = time.sleep,
+    tiers: tuple[Resolver, ...] = DEFAULT_TIERS,
 ) -> RunResult:
-    """Run a tier-1 extraction, following next-link pagination to the end.
-
-    Honors the politeness policy (ROADMAP.md §2d/§6): robots.txt disallowed URLs
-    are recorded as `blocked` and never fetched, and the crawl-delay is applied
-    between fetches. `sleep` is injectable so timing can be asserted in tests.
-    """
-    owns_client = client is None
-    client = client or httpx.Client(follow_redirects=True, timeout=10.0)
-    gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
-    result = RunResult()
-    seen: set[str] = set()
-    url: str | None = config.target
-    try:
-        while url and url not in seen and len(seen) < _MAX_PAGES:
-            seen.add(url)
-            if not gate.can_fetch(url):
-                result.blocked.append(url)
-                break
-            gate.before_fetch(url)
-            response = client.get(url)
-            response.raise_for_status()
-            result.records.extend(extract_records(response.text, config))
-            url = _next_url(response.text, url, config)
-    finally:
-        if owns_client:
-            client.close()
-    return result
+    """Resolve `config` through the dispatcher and return the full run report."""
+    return select_resolver(config, tiers).run(config, client, sleep=sleep)
 
 
 def run(
     config: ExtractionConfig, client: httpx.Client | None = None
 ) -> list[dict[str, object]]:
-    """Run a tier-1 extraction and return just the records (see `run_report`)."""
+    """Resolve `config` and return just the records (see `run_report`)."""
     return run_report(config, client).records
