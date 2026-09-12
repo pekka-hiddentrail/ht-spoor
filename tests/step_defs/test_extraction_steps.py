@@ -203,13 +203,16 @@ def output_file_is_structured(context: dict[str, Any]) -> None:
 
 @then("the config declares no tier-2, tier-3, or tier-3.5 logic")
 def config_has_no_tier_logic(context: dict[str, Any]) -> None:
-    # The schema has no per-tier knobs at all — only extraction intent.
+    # The schema has no per-tier knobs at all — only extraction/capture intent.
+    # `capture` says *what to record* (opt-in HAR, §2b/§2h), not which tier runs
+    # or when to escalate; no field names or selects a tier (§2a, §0).
     assert set(ExtractionConfig.model_fields) == {
         "target",
         "item",
         "fields",
         "pagination",
         "politeness",
+        "capture",
     }
     assert set(FieldSpec.model_fields) == {"selector", "attr", "type"}
 
