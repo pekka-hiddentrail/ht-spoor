@@ -27,6 +27,7 @@ from parsel import Selector
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from spoor.api_discovery.discovery import DiscoveredSpec, discover_spec
 from spoor.core.config import ExtractionConfig, FieldSpec, PolitenessPolicy
 from spoor.operational.politeness import Politeness
 from spoor.security import storage
@@ -57,8 +58,10 @@ class RunResult:
     invoked directly. `har_path`, when set, is the local-only HAR the browser
     tier captured for this run (ROADMAP.md §2b/§2h) — a path into the local
     cache, never shared output; it stays None for a run that captured nothing.
-    `spoor/operational/observability.py` turns these into the operator-facing
-    summary.
+    `api_spec`, when set, is an official API spec discovery observed at a
+    conventional path alongside the run (ROADMAP.md §2b); None means none was
+    found. `spoor/operational/observability.py` turns these into the
+    operator-facing summary.
     """
 
     records: list[dict[str, object]] = field(default_factory=list)
@@ -67,6 +70,7 @@ class RunResult:
     pages_fetched: int = 0
     tiers_attempted: list[int] = field(default_factory=list)
     har_path: Path | None = None
+    api_spec: DiscoveredSpec | None = None
 
 
 def _first_text(root: Selector, css: str) -> str | None:
@@ -410,7 +414,9 @@ def run_report(
     Walks the tiers that accept the config in order, running the first and
     escalating to the next only while the result is empty (`_should_escalate`).
     A tier that returns records ends the walk; if every tier comes up empty, the
-    most capable tier's (empty) result is returned.
+    most capable tier's (empty) result is returned. Alongside extraction, the run
+    also probes the target's origin for a published API spec (§2b layer 1) and
+    stamps any it observes on the result.
     """
     candidates = [resolver for resolver in tiers if resolver.accepts(config)]
     if not candidates:
@@ -426,7 +432,25 @@ def run_report(
     # Record the escalation path on the resolving tier's result, for §2d
     # observability (a directly-invoked resolver leaves this empty).
     result.tiers_attempted = attempted
+    result.api_spec = _discover_api_spec(config, client)
     return result
+
+
+def _discover_api_spec(
+    config: ExtractionConfig, client: httpx.Client | None
+) -> DiscoveredSpec | None:
+    """Probe the target for a published API spec, reusing the caller's client.
+
+    §2b makes discovery a companion of every run, not a separate crawl. When the
+    caller supplied a client we probe with it (so tests' mock transports and any
+    connection reuse apply); otherwise we open and close a throwaway one, mirroring
+    how the resolvers manage their own. The bounded probe is not crawl-delay-spaced
+    (see `discover_spec`), so it adds no sleep to the run. Never raises.
+    """
+    if client is not None:
+        return discover_spec(config.target, client, policy=config.politeness)
+    with httpx.Client(follow_redirects=True, timeout=10.0) as owned:
+        return discover_spec(config.target, owned, policy=config.politeness)
 
 
 def run(
