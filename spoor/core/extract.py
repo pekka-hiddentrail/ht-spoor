@@ -28,6 +28,7 @@ from playwright.sync_api import BrowserContext, Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from spoor.api_discovery.discovery import DiscoveredSpec, discover_spec
+from spoor.api_discovery.graphql import DiscoveredGraphQL, discover_graphql
 from spoor.core.config import ExtractionConfig, FieldSpec, PolitenessPolicy
 from spoor.operational.politeness import Politeness
 from spoor.security import storage
@@ -60,8 +61,9 @@ class RunResult:
     cache, never shared output; it stays None for a run that captured nothing.
     `api_spec`, when set, is an official API spec discovery observed at a
     conventional path alongside the run (ROADMAP.md §2b); None means none was
-    found. `spoor/operational/observability.py` turns these into the
-    operator-facing summary.
+    found. `graphql`, when set, is an introspectable GraphQL endpoint observed
+    the same way (§2b layer 2). `spoor/operational/observability.py` turns these
+    into the operator-facing summary.
     """
 
     records: list[dict[str, object]] = field(default_factory=list)
@@ -71,6 +73,7 @@ class RunResult:
     tiers_attempted: list[int] = field(default_factory=list)
     har_path: Path | None = None
     api_spec: DiscoveredSpec | None = None
+    graphql: DiscoveredGraphQL | None = None
 
 
 def _first_text(root: Selector, css: str) -> str | None:
@@ -432,25 +435,34 @@ def run_report(
     # Record the escalation path on the resolving tier's result, for §2d
     # observability (a directly-invoked resolver leaves this empty).
     result.tiers_attempted = attempted
-    result.api_spec = _discover_api_spec(config, client)
+    _discover_api_surface(config, client, result)
     return result
 
 
-def _discover_api_spec(
-    config: ExtractionConfig, client: httpx.Client | None
-) -> DiscoveredSpec | None:
-    """Probe the target for a published API spec, reusing the caller's client.
+def _discover_api_surface(
+    config: ExtractionConfig, client: httpx.Client | None, result: RunResult
+) -> None:
+    """Probe the target for a published spec and a GraphQL endpoint (§2b).
 
     §2b makes discovery a companion of every run, not a separate crawl. When the
     caller supplied a client we probe with it (so tests' mock transports and any
     connection reuse apply); otherwise we open and close a throwaway one, mirroring
-    how the resolvers manage their own. The bounded probe is not crawl-delay-spaced
-    (see `discover_spec`), so it adds no sleep to the run. Never raises.
+    how the resolvers manage their own — a single client for both probes. Neither
+    probe is crawl-delay-spaced (see the discovery modules), so they add no sleep
+    to the run, and neither raises.
     """
     if client is not None:
-        return discover_spec(config.target, client, policy=config.politeness)
+        _probe_surface(config, client, result)
+        return
     with httpx.Client(follow_redirects=True, timeout=10.0) as owned:
-        return discover_spec(config.target, owned, policy=config.politeness)
+        _probe_surface(config, owned, result)
+
+
+def _probe_surface(
+    config: ExtractionConfig, client: httpx.Client, result: RunResult
+) -> None:
+    result.api_spec = discover_spec(config.target, client, policy=config.politeness)
+    result.graphql = discover_graphql(config.target, client, policy=config.politeness)
 
 
 def run(

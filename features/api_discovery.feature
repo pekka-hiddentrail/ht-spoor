@@ -44,3 +44,22 @@ Feature: A run discovers an official API spec when the target serves one
     And a robots.txt that disallows "/openapi.json"
     When I run the config and capture the summary
     Then the run reports no discovered API spec
+
+  # --- Layer 2: GraphQL introspection --------------------------------------
+
+  Scenario: A GraphQL endpoint with introspection enabled is discovered
+    Given a target with a GraphQL endpoint at "/graphql" answering introspection
+    When I run the config and capture the summary
+    Then the run reports a discovered GraphQL schema at "/graphql"
+    And the discovered GraphQL schema reports at least one type
+    And the summary describes the GraphQL schema as observed
+
+  Scenario: A GraphQL endpoint with introspection disabled is not discovered
+    Given a target with a "/graphql" endpoint that refuses introspection
+    When I run the config and capture the summary
+    Then the run reports no discovered GraphQL schema
+
+  Scenario: A target with no GraphQL endpoint reports none
+    Given a target that serves no spec at any conventional path
+    When I run the config and capture the summary
+    Then the run reports no discovered GraphQL schema

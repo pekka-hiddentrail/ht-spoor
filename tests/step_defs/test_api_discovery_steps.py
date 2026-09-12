@@ -32,6 +32,13 @@ _CONFIG = (
 
 _OPENAPI_DOC = json.dumps({"openapi": "3.0.1", "info": {"title": "X", "version": "1"}})
 _SWAGGER_DOC = json.dumps({"swagger": "2.0", "info": {"title": "X", "version": "1"}})
+_INTROSPECTION = json.dumps(
+    {"data": {"__schema": {"queryType": {"name": "Query"},
+                           "types": [{"name": "Query"}, {"name": "User"}]}}}
+)
+_INTROSPECTION_DISABLED = json.dumps(
+    {"errors": [{"message": "GraphQL introspection is not allowed"}]}
+)
 
 
 @pytest.fixture
@@ -62,6 +69,20 @@ def serves_no_spec(context: dict[str, Any]) -> None:
 @given(parsers.parse('a target whose "{path}" returns an HTML page, not a spec'))
 def serves_html_at_path(context: dict[str, Any], path: str) -> None:
     context["routes"][path] = (200, "<html><body>docs</body></html>", "text/html")
+
+
+@given(
+    parsers.parse(
+        'a target with a GraphQL endpoint at "{path}" answering introspection'
+    )
+)
+def serves_graphql(context: dict[str, Any], path: str) -> None:
+    context["routes"][path] = (200, _INTROSPECTION, "application/json")
+
+
+@given(parsers.parse('a target with a "{path}" endpoint that refuses introspection'))
+def serves_graphql_disabled(context: dict[str, Any], path: str) -> None:
+    context["routes"][path] = (200, _INTROSPECTION_DISABLED, "application/json")
 
 
 @given(parsers.parse('a robots.txt that disallows "{path}"'))
@@ -126,3 +147,25 @@ def summary_observed(context: dict[str, Any]) -> None:
 @then("the summary says no API spec was discovered")
 def summary_none(context: dict[str, Any]) -> None:
     assert "none discovered" in context["summary"].render()
+
+
+@then(parsers.parse('the run reports a discovered GraphQL schema at "{path}"'))
+def reports_graphql(context: dict[str, Any], path: str) -> None:
+    gql = context["result"].graphql
+    assert gql is not None
+    assert gql.url.endswith(path)
+
+
+@then("the discovered GraphQL schema reports at least one type")
+def graphql_has_types(context: dict[str, Any]) -> None:
+    assert context["result"].graphql.types >= 1
+
+
+@then("the summary describes the GraphQL schema as observed")
+def summary_graphql_observed(context: dict[str, Any]) -> None:
+    assert "introspection observed at" in context["summary"].render()
+
+
+@then("the run reports no discovered GraphQL schema")
+def reports_no_graphql(context: dict[str, Any]) -> None:
+    assert context["result"].graphql is None

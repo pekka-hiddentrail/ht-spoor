@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from spoor.api_discovery.discovery import DiscoveredSpec
+from spoor.api_discovery.graphql import DiscoveredGraphQL
 from spoor.core.extract import RunResult
 
 
@@ -36,6 +37,9 @@ class RunSummary:
     # An official API spec observed at a conventional path, if any (ROADMAP.md
     # §2b) — reported as *observed*, never as a complete API census.
     api_spec: DiscoveredSpec | None
+    # An introspectable GraphQL endpoint observed at a conventional path, if any
+    # (ROADMAP.md §2b layer 2) — likewise *observed*, never a complete census.
+    graphql: DiscoveredGraphQL | None
 
     @classmethod
     def from_result(cls, result: RunResult) -> RunSummary:
@@ -55,6 +59,7 @@ class RunSummary:
             blocked=list(result.blocked),
             har_path=str(result.har_path) if result.har_path is not None else None,
             api_spec=result.api_spec,
+            graphql=result.graphql,
         )
 
     @property
@@ -72,6 +77,18 @@ class RunSummary:
             return "none discovered"
         spec = self.api_spec
         return f"{spec.kind} {spec.version} observed at {spec.url}"
+
+    def _render_graphql(self) -> str:
+        """The GraphQL line: an observed introspectable endpoint, or none.
+
+        Worded as *observed* to hold §2b's bounded claim; a "none" means not
+        observed / not exposed (introspection is often disabled), never proof no
+        GraphQL exists.
+        """
+        if self.graphql is None:
+            return "none discovered"
+        gql = self.graphql
+        return f"introspection observed at {gql.url} ({gql.types} types)"
 
     def render(self) -> str:
         """A compact, human-readable rendering for the CLI."""
@@ -92,6 +109,7 @@ class RunSummary:
             f"  resolved by:   {resolved}",
             f"  escalation:    {escalation}",
             f"  api spec:      {self._render_api_spec()}",
+            f"  graphql:       {self._render_graphql()}",
             f"  blocked:       {len(self.blocked)}",
         ]
         lines.extend(f"    - {url} (robots.txt)" for url in self.blocked)
