@@ -70,8 +70,12 @@ class Capture(BaseModel):
     true, snapshots the page's accessibility tree (§2c) to the local-only cache,
     surfacing only a node count. `headers`, when true, records the browser tier's
     response headers (§2c) to the local-only cache; only non-sensitive derived
-    facts (a count and security-header presence) reach shared output. None of
-    these has any effect on a run that resolves without a browser (tier 1), which
+    facts (a count and security-header presence) reach shared output. `storage`,
+    when true, captures the browser context's client-side storage state — cookies
+    and localStorage (§2c) — writing the raw unredacted state to the local-only
+    cache; shared output carries the entries with known secret shapes redacted
+    (§2h). None of these has any effect on a run that resolves without a browser
+    (tier 1), which
     has no browser session to observe. Default-off here; §2c's default-on capture
     is the full Phase-2.5 target (see the ROADMAP decision note).
     """
@@ -82,6 +86,7 @@ class Capture(BaseModel):
     console: bool = False
     accessibility: bool = False
     headers: bool = False
+    storage: bool = False
 
 
 class ExtractionConfig(BaseModel):

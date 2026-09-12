@@ -76,8 +76,13 @@ browser) — single or repeating (`item`) records, element text or attribute
 Lines/CSV output. Tier 2 (JS rendering via headless Chromium) also works for
 its first slice: the dispatcher escalates to it for infinite-scroll pages,
 which it renders and scrolls to exhaustion before reusing the same extraction.
-Self-healing (tier 3) and the API-surface/signals capture are still ahead on
-the roadmap.
+Every run also probes for a published API spec and an introspectable GraphQL
+endpoint (§2b), and reports a structured run summary (§2d). The browser tier can
+opt into capturing signals (§2c) — HAR, console output/JS errors, the
+accessibility tree, response-header fingerprints, and client-side storage state
+— written to a local-only, git-ignored cache; only safe derived facts reach
+shared output, with known secrets redacted first (§2h). Self-healing (tier 3),
+default-on capture, and the MCP/API serving layer are still ahead on the roadmap.
 
 ## Contributing
 
