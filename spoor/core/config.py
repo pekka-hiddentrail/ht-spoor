@@ -18,11 +18,18 @@ FieldType = Literal["string", "number"]
 
 
 class FieldSpec(BaseModel):
-    """One extracted field: a selector plus an optional value type."""
+    """One extracted field: a selector, an optional attribute, and a value type.
+
+    By default the selected element's normalized text is taken. When `attr` is
+    set, that attribute's value is taken instead (e.g. a link's `href`/`title`,
+    an `<img>` `src`) — an element's data often lives in an attribute, not its
+    text. `type` coercion (e.g. `number`) applies either way.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     selector: str
+    attr: str | None = None
     type: FieldType = "string"
 
 

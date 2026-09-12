@@ -43,6 +43,38 @@ Feature: Declarative extraction from a config file
     Then the output contains 5 items
     And every item has non-null fields "title" and "price"
 
+  Scenario: Extract an element attribute instead of its text
+    Given a config:
+      """
+      target: http://localhost:8000/products.html
+      fields:
+        url: { selector: "a.product-link", attr: href }
+        full_title: { selector: "a.product-link", attr: title }
+      """
+    When I run the config
+    Then the item field "url" equals "/products/ceramic-mug"
+    And the item field "full_title" equals "Ceramic Mug — 350ml stoneware"
+
+  Scenario: A number-typed attribute is coerced
+    Given a config:
+      """
+      target: http://localhost:8000/products.html
+      fields:
+        listed_price: { selector: "a.product-link", attr: data-price, type: number }
+      """
+    When I run the config
+    Then the item field "listed_price" is the number 42
+
+  Scenario: A missing attribute yields null, not an error
+    Given a config:
+      """
+      target: http://localhost:8000/products.html
+      fields:
+        colour: { selector: "a.product-link", attr: data-colour }
+      """
+    When I run the config
+    Then the item field "colour" is null
+
   Scenario: A field declared as number is coerced to a numeric type
     Given a config:
       """

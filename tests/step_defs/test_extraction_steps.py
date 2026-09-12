@@ -199,7 +199,7 @@ def config_has_no_tier_logic(context: dict[str, Any]) -> None:
         "pagination",
         "politeness",
     }
-    assert set(FieldSpec.model_fields) == {"selector", "type"}
+    assert set(FieldSpec.model_fields) == {"selector", "attr", "type"}
 
 
 @then("escalation across tiers is handled by the dispatcher, not the config")
