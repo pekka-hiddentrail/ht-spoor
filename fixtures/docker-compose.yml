@@ -1,0 +1,28 @@
+# ROADMAP.md §5.1 archetype bench.
+#
+# Phase 1 stands up OWASP Juice Shop only. It is an Angular SPA whose product
+# listing is rendered client-side, so it exercises exactly what Phase 1 built:
+# tier 1 (static fetch) finds nothing, the dispatcher escalates, and tier 2
+# renders the page in a real browser and extracts. This is the first time the
+# generic tiers meet a real, uncontrolled app rather than a checked-in fixture.
+#
+# Sauce Demo, a self-hosted ERPNext/Odoo, and a Netflix-clone join this bench
+# when the phases that can actually exercise them arrive (auth is Phase 2+, API
+# discovery Phase 2.5, exploration mode Phase 6). Standing them up now would be
+# scaffolding for capabilities that do not yet exist.
+
+services:
+  juice-shop:
+    image: bkimminich/juice-shop:v17.1.1
+    ports:
+      - "3000:3000"
+    # §5.1 declares each archetype `sandbox: true` so §2e exploration mode may
+    # exercise destructive actions safely against it. That is a Spoor-side
+    # registry concept (Phase 6); it is recorded here as a label so the bench is
+    # self-documenting until the registry consumes it.
+    labels:
+      spoor.sandbox: "true"
+    # Readiness is checked by polling the HTTP port from outside (CI step + the
+    # test fixture), not by a container healthcheck: the image is distroless
+    # (no shell, no `node`/`curl` on PATH for `docker exec`), so an in-container
+    # probe is brittle. Polling the port is image-agnostic and just as reliable.
