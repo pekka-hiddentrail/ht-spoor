@@ -9,9 +9,12 @@ Present:
 
 - **`static/`** — hand-built HTML fixtures for §2a extraction tests
   (`products.html`, `listing.html`, `catalog/page-{1,2,3}.html` for
-  pagination, `feed.html` for the tier-2 infinite-scroll case). Served
-  deterministically in tests via an `httpx.MockTransport` — no sockets, no
-  network. Deterministic unit-test inputs.
+  pagination, `feed.html` for the tier-2 infinite-scroll case, and
+  `js-rendered.html` — an empty shell populated by JS on load, for the
+  content-driven tier-1→tier-2 escalation case). The static ones are served
+  deterministically via an `httpx.MockTransport` (no sockets); the
+  browser-backed ones (`feed.html`, `js-rendered.html`) are served over a
+  loopback `http.server`, since a real browser can't use the mock transport.
 - **`docker-compose.yml`** — the §5.1 archetype bench. Phase 1 stands up only
   **OWASP Juice Shop** (an Angular SPA — a real, uncontrolled tier-2 target);
   the other three archetypes join when the phases that can exercise them arrive
@@ -23,8 +26,7 @@ Present:
 Planned (added as their phases need them):
 
 - **More static fixture pages** — one mechanism each (class name changes every
-  reload → tier-3 healing; JS-required field → tier-2 escalation; WebSocket
-  traffic → §2c capture).
+  reload → tier-3 healing; WebSocket traffic → §2c capture).
 - **The rest of the archetype matrix** — Sauce Demo, a self-hosted ERPNext/Odoo,
   and a self-hosted Netflix-clone, added to `docker-compose.yml` as their phases
   (auth, exploration) need them, each declared `sandbox: true`.

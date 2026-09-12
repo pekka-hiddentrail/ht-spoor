@@ -7,19 +7,18 @@ Phase 1 built:
 
 - tier 1 (static fetch) sees only the empty app shell -> zero records, which is
   *why* the browser tier exists;
-- tier 2 (headless render) resolves the same config against the rendered DOM and
-  extracts real products, including `number` coercion of a currency-tagged price,
-  matched against a committed golden master (§5.4 dogfooding).
+- the dispatcher then escalates on that empty result (content-driven escalation,
+  ROADMAP §2) to tier 2, which resolves the same config against the rendered DOM
+  and extracts real products, including `number` coercion of a currency-tagged
+  price, matched against a committed golden master (§5.4 dogfooding).
+
+This is the real end-to-end path: the second test drives the public dispatcher
+(`run_report`), not the tier-2 resolver directly, so it proves the empty-tier-1
+-> browser escalation fires against a genuine SPA, not just that tier 2 works.
 
 Marked `integration`: it needs the docker bench up
 (`docker compose -f fixtures/docker-compose.yml up -d`) and skips cleanly when
 the container isn't reachable, so the fast unit gate stays Docker-free.
-
-Note on routing: today the dispatcher escalates to tier 2 only for a browser-only
-*capability* (infinite scroll); "tier 1 came up empty, try rendering" is a
-separate capability deliberately deferred until tier 2 was real (see the
-dispatcher-seam decision in ROADMAP §2). Until it lands, this test exercises the
-tier-2 resolver directly rather than pretending the dispatcher auto-selected it.
 """
 
 from __future__ import annotations
@@ -80,10 +79,12 @@ def test_tier1_cannot_resolve_the_spa(
     assert result.records == []
 
 
-def test_tier2_matches_golden_master(
+def test_dispatcher_escalates_and_matches_golden_master(
     juice_shop: str, config: ExtractionConfig
 ) -> None:
-    result = extract.Tier2Resolver().run(config)
+    # The public dispatcher: tier 1 comes up empty on the SPA, so it escalates to
+    # the browser tier and returns the rendered products (ROADMAP §2).
+    result = extract.run_report(config)
     assert result.blocked == []
     records = _sorted_by_name(result.records)
 
