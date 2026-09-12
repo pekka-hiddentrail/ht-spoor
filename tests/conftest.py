@@ -7,6 +7,7 @@ through an httpx MockTransport — fully deterministic, no ports, no network.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
@@ -25,7 +26,7 @@ def _serve(request: httpx.Request) -> httpx.Response:
 
 
 @pytest.fixture
-def mock_client() -> httpx.Client:
+def mock_client() -> Iterator[httpx.Client]:
     """An httpx client that serves the static fixtures for any localhost URL."""
     with httpx.Client(transport=httpx.MockTransport(_serve)) as client:
         yield client
