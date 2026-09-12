@@ -1,0 +1,24 @@
+name: Nightly drift
+
+# Small nightly job against a handful of real-world sites (permissive
+# robots.txt) to catch drift before users hit it (ROADMAP.md §5.1). Stubbed
+# until Phase 1 gives it something to run; kept here so the schedule and intent
+# are wired from Phase 0.
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Drift check (placeholder)
+        run: echo "Drift suite lands with Phase 1 (ROADMAP.md §5.1)."
