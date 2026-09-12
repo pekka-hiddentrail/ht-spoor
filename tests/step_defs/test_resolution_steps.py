@@ -99,7 +99,7 @@ def tier2_is_stub(context: dict[str, Any]) -> None:
         "target: http://localhost:8000/products.html\n"
         'fields:\n  title: { selector: "h1" }\n'
     )
-    assert tier1.can_resolve(plain)
-    assert tier2.can_resolve(plain)
+    assert tier1.accepts(plain)
+    assert tier2.accepts(plain)
     with pytest.raises(extract.TierUnavailableError):
         tier2.run(plain, None)

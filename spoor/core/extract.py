@@ -120,15 +120,17 @@ class TierUnavailableError(RuntimeError):
 class Resolver(Protocol):
     """One rung of the resolution ladder (ROADMAP.md §2).
 
-    The dispatcher picks the first resolver whose `can_resolve` accepts a config
-    and delegates to its `run`. A config author never selects a tier (§2a, §0) —
-    tier choice and escalation are entirely this seam's concern.
+    The dispatcher picks the first resolver that `accepts` a config and delegates
+    to its `run`. A config author never selects a tier (§2a, §0) — tier choice
+    and escalation are entirely this seam's concern. `accepts` answers routing
+    ("does this tier claim this config?"), which is distinct from whether the run
+    then succeeds — a declared-but-stubbed tier can accept and still raise.
     """
 
     tier: int
     name: str
 
-    def can_resolve(self, config: ExtractionConfig) -> bool: ...
+    def accepts(self, config: ExtractionConfig) -> bool: ...
 
     def run(
         self,
@@ -150,7 +152,7 @@ class Tier1Resolver:
     tier = 1
     name = "tier-1 (static fetch + selectors)"
 
-    def can_resolve(self, config: ExtractionConfig) -> bool:
+    def accepts(self, config: ExtractionConfig) -> bool:
         # Tier 1 handles anything achievable without a browser; JS-only
         # capabilities (infinite scroll) are left for tier 2 to pick up.
         return not _requires_browser(config)
@@ -202,7 +204,7 @@ class Tier2Resolver:
     tier = 2
     name = "tier-2 (JS rendering)"
 
-    def can_resolve(self, config: ExtractionConfig) -> bool:
+    def accepts(self, config: ExtractionConfig) -> bool:
         return True
 
     def run(
@@ -228,7 +230,7 @@ def select_resolver(
 ) -> Resolver:
     """The dispatcher core: the first tier that can handle `config`."""
     for resolver in tiers:
-        if resolver.can_resolve(config):
+        if resolver.accepts(config):
             return resolver
     # The last (most capable) tier always accepts; reaching here is defensive.
     raise TierUnavailableError("no resolution tier can handle this config")
