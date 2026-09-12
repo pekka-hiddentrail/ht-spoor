@@ -18,16 +18,18 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 from urllib.parse import urljoin
 
 import httpx
 from parsel import Selector
-from playwright.sync_api import Browser, Page, sync_playwright
+from playwright.sync_api import BrowserContext, Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from spoor.core.config import ExtractionConfig, FieldSpec, PolitenessPolicy
 from spoor.operational.politeness import Politeness
+from spoor.security import storage
 
 # Guard against a pagination cycle running forever on a self-linking page.
 _MAX_PAGES = 1000
@@ -52,8 +54,11 @@ class RunResult:
     and `pages_fetched` counts pages actually fetched (blocked URLs excluded);
     both are stamped by the resolver. `tiers_attempted` is the dispatcher's
     escalation path (set by `run_report`), so it stays empty for a resolver
-    invoked directly. `spoor/operational/observability.py` turns these into the
-    operator-facing summary.
+    invoked directly. `har_path`, when set, is the local-only HAR the browser
+    tier captured for this run (ROADMAP.md §2b/§2h) — a path into the local
+    cache, never shared output; it stays None for a run that captured nothing.
+    `spoor/operational/observability.py` turns these into the operator-facing
+    summary.
     """
 
     records: list[dict[str, object]] = field(default_factory=list)
@@ -61,6 +66,7 @@ class RunResult:
     tier: int | None = None
     pages_fetched: int = 0
     tiers_attempted: list[int] = field(default_factory=list)
+    har_path: Path | None = None
 
 
 def _first_text(root: Selector, css: str) -> str | None:
@@ -248,7 +254,9 @@ class Tier2Resolver:
     so field/`item`/pagination semantics stay identical across tiers. The
     dispatcher reaches it for browser-only capabilities — today, JS-driven
     infinite scroll. It honors the same politeness gate as tier 1 (robots.txt +
-    crawl-delay); nothing here is site-specific (§0).
+    crawl-delay); nothing here is site-specific (§0). When the config opts into
+    capture (`capture.har`), the whole run's network traffic is recorded to a
+    local-only HAR (ROADMAP.md §2b/§2h) — see `run`.
     """
 
     tier = 2
@@ -270,16 +278,36 @@ class Tier2Resolver:
         separate from the browser: robots is a plain HTTP concern, and the check
         must happen *before* a page is ever navigated to. Infinite scroll is
         exhausted per page; next-link pagination still works via `_next_url`.
+
+        A single browser context spans the whole run's pages. When the config
+        opts into capture, that context records a HAR of every request it makes,
+        written to a fresh local-only run cache directory (ROADMAP.md §2b/§2h);
+        the file is flushed on `context.close()`. Without capture, no HAR is
+        recorded and `result.har_path` stays None.
         """
         owns_client = client is None
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
         gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
         result = RunResult(tier=self.tier)
+        har_path: Path | None = None
+        if config.capture and config.capture.har:
+            har_path = storage.new_run_cache_dir() / storage.HAR_FILENAME
+            result.har_path = har_path
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
                 try:
-                    self._crawl(browser, config, gate, result)
+                    # record_har_path is per-context; recording it on the context
+                    # (not per page) captures the whole run in one HAR.
+                    context = (
+                        browser.new_context(record_har_path=har_path)
+                        if har_path is not None
+                        else browser.new_context()
+                    )
+                    try:
+                        self._crawl(context, config, gate, result)
+                    finally:
+                        context.close()  # flushes the HAR to disk, if recording
                 finally:
                     browser.close()
         finally:
@@ -289,7 +317,7 @@ class Tier2Resolver:
 
     def _crawl(
         self,
-        browser: Browser,
+        context: BrowserContext,
         config: ExtractionConfig,
         gate: Politeness,
         result: RunResult,
@@ -302,7 +330,7 @@ class Tier2Resolver:
                 result.blocked.append(url)
                 break
             gate.before_fetch(url)
-            page = browser.new_page()
+            page = context.new_page()
             try:
                 page.goto(url, wait_until="networkidle")
                 self._await_items(page, config)

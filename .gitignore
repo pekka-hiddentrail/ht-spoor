@@ -210,6 +210,10 @@ tempCodeRunnerFile.py
 # artifact); the committed baseline lives in tests/golden/, not here.
 test-output/
 
+# Spoor local-only run cache — raw, unredacted captures (HAR, storage state)
+# live here (ROADMAP.md §2h) and must never be committed or shared.
+.spoor-cache/
+
 # PyPI configuration file
 .pypirc
 

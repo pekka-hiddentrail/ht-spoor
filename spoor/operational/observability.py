@@ -29,6 +29,9 @@ class RunSummary:
     resolved_tier: int | None
     tiers_attempted: list[int]
     blocked: list[str]
+    # The local-only HAR the browser tier captured, if any (ROADMAP.md §2b/§2h).
+    # A string (not a Path) so the summary stays trivially serializable (§2d).
+    har_path: str | None
 
     @classmethod
     def from_result(cls, result: RunResult) -> RunSummary:
@@ -46,6 +49,7 @@ class RunSummary:
             resolved_tier=result.tier,
             tiers_attempted=list(attempted),
             blocked=list(result.blocked),
+            har_path=str(result.har_path) if result.har_path is not None else None,
         )
 
     @property
@@ -74,4 +78,8 @@ class RunSummary:
             f"  blocked:       {len(self.blocked)}",
         ]
         lines.extend(f"    - {url} (robots.txt)" for url in self.blocked)
+        # Only shown when something was captured, so an ordinary run stays quiet;
+        # named as raw + local so it's clear this is not shared output (§2h).
+        if self.har_path is not None:
+            lines.append(f"  captured:      raw HAR (local-only) {self.har_path}")
         return "\n".join(lines)

@@ -59,6 +59,21 @@ class PolitenessPolicy(BaseModel):
     delay: float | None = None
 
 
+class Capture(BaseModel):
+    """Opt-in raw network capture for a run (ROADMAP.md §2b/§2c, §2h).
+
+    `har`, when true, tells the browser tier to record every request/response it
+    makes as a HAR, written to the local-only run cache (§2h) — never to shared
+    output. It has no effect on a run that resolves without a browser (tier 1),
+    which has no network capture to record. Default-off here; §2c's default-on
+    capture is the full Phase-2.5 target (see the ROADMAP decision note).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    har: bool = False
+
+
 class ExtractionConfig(BaseModel):
     """A whole extraction job: target, fields, and optional repeating `item`,
     pagination, and politeness policy."""
@@ -75,6 +90,9 @@ class ExtractionConfig(BaseModel):
     # Politeness is a first-class object (ROADMAP.md §2d), not a README promise;
     # omitted means the default policy (respect robots.txt, honor crawl-delay).
     politeness: PolitenessPolicy | None = None
+    # Opt-in raw network capture (ROADMAP.md §2b/§2c, §2h); omitted means no
+    # capture. Only the browser tier acts on it.
+    capture: Capture | None = None
 
 
 def load_config(text: str) -> ExtractionConfig:
