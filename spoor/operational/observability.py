@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from spoor.api_discovery.discovery import DiscoveredSpec
 from spoor.api_discovery.graphql import DiscoveredGraphQL
 from spoor.core.extract import RunResult
+from spoor.signals.accessibility import AccessibilitySignal
 from spoor.signals.console import ConsoleSignal
 
 
@@ -46,6 +47,10 @@ class RunSummary:
     # `console_log_path`, never surfaced here (§2h).
     console: ConsoleSignal | None
     console_log_path: str | None
+    # Node count of the browser tier's accessibility snapshots, if captured (§2c).
+    # A count only; the raw trees stay in the local-only file at `accessibility_path`.
+    accessibility: AccessibilitySignal | None
+    accessibility_path: str | None
 
     @classmethod
     def from_result(cls, result: RunResult) -> RunSummary:
@@ -70,6 +75,12 @@ class RunSummary:
             console_log_path=(
                 str(result.console_log_path)
                 if result.console_log_path is not None
+                else None
+            ),
+            accessibility=result.accessibility,
+            accessibility_path=(
+                str(result.accessibility_path)
+                if result.accessibility_path is not None
                 else None
             ),
         )
@@ -133,6 +144,9 @@ class RunSummary:
                 f"  console:       {c.messages} messages "
                 f"({c.errors} errors, {c.page_errors} uncaught)"
             )
+        # Accessibility node count, only when the a11y tree was captured (§2c).
+        if self.accessibility is not None:
+            lines.append(f"  a11y nodes:    {self.accessibility.nodes}")
         # Capture lines: only shown when something was captured, so an ordinary run
         # stays quiet; named raw + local so it's clear this isn't shared output (§2h).
         if self.har_path is not None:
@@ -140,5 +154,9 @@ class RunSummary:
         if self.console_log_path is not None:
             lines.append(
                 f"  captured:      raw console log (local-only) {self.console_log_path}"
+            )
+        if self.accessibility_path is not None:
+            lines.append(
+                f"  captured:      raw a11y tree (local-only) {self.accessibility_path}"
             )
         return "\n".join(lines)

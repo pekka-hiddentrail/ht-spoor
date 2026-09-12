@@ -146,6 +146,15 @@ The first signal built from this catalog is **console output & uncaught JS error
 - **`page_errors` counted separately from `errors`.** An uncaught exception (`pageerror`) is a stronger "this page broke" signal than a `console.error`, so the two are tallied separately rather than merged.
 - **One run directory per run.** All captures for a run (HAR, console log, and future signals) share a single `new_run_cache_dir()`, rather than each capture minting its own.
 
+### Decision note — §2c second signal: accessibility tree (implemented)
+
+The accessibility-tree snapshot follows the same pattern as the console signal, so the note above applies. Signal-specific decisions:
+
+- **Read over CDP, not the old snapshot API.** §2c named `page.accessibility.snapshot()`, but Playwright removed it (>=1.55). The tree is instead read over the Chromium DevTools Protocol (`Accessibility.getFullAXTree`), which returns the full flat node list. This is Chromium-only — exactly the browser the tier runs — so it stays generic (§0). This nudges the signal from §2c's "free" tier toward its "a bit of CDP wiring" tier, but the cost is one CDP call per page: negligible.
+- **Opt-in via `capture.accessibility`**, browser-tier only (a tier-1 fetch has no rendered tree to snapshot).
+- **Raw trees local-only, node count shared.** The raw per-page trees (potentially large) go to the local-only cache (`accessibility.json`); the run summary carries only the total accessible-node count. The tree's accessible *names* are visible-label text (the same class of data the DOM already exposes to extraction), not credentials, so this isn't a secret-bearing capture like storage state — but the aggregate-only-in-shared-output rule is kept uniform across all signals regardless.
+- **Node count as a resilience signal.** §2c frames the tree as doubling as a tier-1/3 resilience signal: a near-zero node count (e.g. a canvas-rendered UI) is an early warning that selector-based extraction will struggle, which is why the count — not just the raw tree — is the surfaced aggregate.
+
 ## 2d. Operational essentials (the gap between "extracts data" and "usable tool")
 
 These didn't come up earlier because they're not about *finding* an element — they're what makes the difference between a tiered-cascade demo and something people actually run unattended. All of them lean on existing libraries, same as everywhere else in the plan:

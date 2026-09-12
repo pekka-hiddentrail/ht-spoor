@@ -26,6 +26,9 @@ HAR_FILENAME = "network.har"
 # The filename a run's captured console log (JSON Lines) is written under (§2c).
 CONSOLE_FILENAME = "console.jsonl"
 
+# The filename a run's accessibility-tree snapshots are written under (§2c).
+ACCESSIBILITY_FILENAME = "accessibility.json"
+
 
 def new_run_id() -> str:
     """A sortable, collision-resistant id for one run's cache subdirectory.
