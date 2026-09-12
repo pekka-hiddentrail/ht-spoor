@@ -57,6 +57,15 @@ python scripts/check_genericity.py
 
 A change that touches tier 3 must report the mutation-corpus success rate in the PR description.
 
+**Docs consistency is part of the gate, not just self-review.** Before calling a feature done, confirm the whole documentation set still describes what actually ships — the automated checks above cannot catch a stale sentence. At every gate, re-read and reconcile, for anything the change touched:
+
+- `README.md` — the human-facing front door (hero sentence, quickstart, feature/capability claims). A capability that changed behavior, gained a flag, or shipped a new signal must not leave the README describing the old shape.
+- `docs/ROADMAP.md` — the *what/why* source of truth: decision notes for the slice, `§9` backlog items marked delivered when delivered, and no claim the code now contradicts.
+- `CLAUDE.md` — this file: if the workflow, layout, or non-negotiables actually changed, update it (and flag any conflict with ROADMAP.md, which wins).
+- `.feature` files and `features/README.md`, docstrings, and any `CONTRIBUTING.md`/config comments the change reached.
+
+Treat a doc that no longer matches the code as a gate failure to fix before the PR, exactly like a failing test — and say in the PR description what docs you checked and reconciled. "Docs unaffected" is a valid outcome only after actually looking.
+
 ## Expected repo layout
 
 ```
