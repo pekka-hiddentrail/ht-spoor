@@ -197,6 +197,7 @@ def config_has_no_tier_logic(context: dict[str, Any]) -> None:
         "item",
         "fields",
         "pagination",
+        "politeness",
     }
     assert set(FieldSpec.model_fields) == {"selector", "type"}
 

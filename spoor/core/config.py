@@ -35,6 +35,23 @@ class Pagination(BaseModel):
     infinite_scroll: bool = False
 
 
+class PolitenessPolicy(BaseModel):
+    """Operator-facing politeness knobs (ROADMAP.md §2d, §6).
+
+    Defaults respect `robots.txt` and any crawl-delay it declares (§6 commits to
+    this by default). `delay`, when set, is a minimum spacing in seconds applied
+    between fetches and overrides the robots.txt crawl-delay. `respect_robots`
+    may be set to false, but only as an explicit, deliberate opt-out — never the
+    default (§6). Concurrency caps and Retry-After honoring are deferred until a
+    request pool / retry mechanism exists (see the ROADMAP §2d decision note).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    respect_robots: bool = True
+    delay: float | None = None
+
+
 class ExtractionConfig(BaseModel):
     """A whole extraction job: target, optional repeating `item`, fields."""
 
@@ -47,6 +64,9 @@ class ExtractionConfig(BaseModel):
     item: str | None = None
     fields: dict[str, FieldSpec]
     pagination: Pagination | None = None
+    # Politeness is a first-class object (ROADMAP.md §2d), not a README promise;
+    # omitted means the default policy (respect robots.txt, honor crawl-delay).
+    politeness: PolitenessPolicy | None = None
 
 
 def load_config(text: str) -> ExtractionConfig:
