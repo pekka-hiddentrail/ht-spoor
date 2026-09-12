@@ -386,7 +386,7 @@ One thing worth noticing across this whole table: apart from the two API-vendor 
 
 ## 8. Immediate next steps
 
-1. ~~Pick a project name~~ — **Spoor**, confirmed. ~~Pick a PyPI distribution name~~ — **`ht-spoor`**, confirmed (plain `spoor` is taken). Confirm MIT license and register both the GitHub org/repo (`spoor`) and the PyPI name (`ht-spoor`).
+1. ~~Pick a project name~~ — **Spoor**, confirmed. ~~Pick a PyPI distribution name~~ — **`ht-spoor`**, confirmed (plain `spoor` is taken). Confirm MIT license and register the PyPI name (`ht-spoor`) and the GitHub repo (as `<org-or-username>/spoor` — the bare `github.com/spoor` username is taken by an unrelated account; see §9). Two dormant, different-domain namesakes exist (`microsoft/spoor`, a SourceForge wiki engine) — low collision risk, no trademark concern (§9).
 2. Scaffold the repo (Phase 0) and get Crawlee's adaptive crawler running against one real site end-to-end, driven by a single §2a config file and writing JSON output (Phase 1) — this is the fastest path to something demoable.
 3. Decide who else, if anyone, is working on this with you — affects how much process (CI, review) is worth setting up now vs. later.
 4. Run the mitmproxy2swagger/HAR spike (§2b, item 4) before scoping Phase 2.5 for real — it's the one open technical unknown that could change that phase's approach.
@@ -410,4 +410,5 @@ Tracked here so they don't get lost, sorted by whether they block anything:
 
 **Small, easy to close whenever:**
 - ~~Formally confirm MIT~~ — **done**, see §3.
-- Confirm the actual GitHub org/repo path is free (checked PyPI's `ht-spoor`; hasn't specifically checked the GitHub path you intend to use).
+- ~~Confirm the actual GitHub org/repo path is free~~ — **checked.** The bare top-level username `github.com/spoor` is taken (an individual account, no public repos, unrelated) — not a blocker: host as `<org-or-username>/spoor` instead, the same way every other project sharing this name does. PyPI's `ht-spoor` remains the distribution name (§3, §8.1).
+- ~~Check for name collisions / prior "Spoor" projects~~ — **checked, low risk.** Two pre-existing "Spoor" projects turned up: `microsoft/spoor` (an iOS performance-tracing tool, archived June 2026) and a SourceForge Django wiki engine (dormant since 2013). Both are a different domain from a web-crawler/extraction tool and both are inactive, so collision risk is low; no trademark concern was found. Re-check before any public announcement, but nothing here blocks development or the chosen name.
