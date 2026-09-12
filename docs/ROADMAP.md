@@ -71,6 +71,18 @@ pagination:
 
 Each field's `selector` is just the tier-1 starting point — the escalation dispatcher (§2) still walks it through tiers 2–4 automatically if tier 1 fails, so the config author never writes tier-specific logic. `pagination.next` (or an `infinite_scroll: true` flag) tells tier 4 when to keep going and, just as importantly, when to stop. A thin CLI (`spoor run config.yaml -o output.json`) is the whole product surface on top of this — config in, structured data out.
 
+**Single record vs. repeating records (decided).** The example above extracts one record per page (the fields resolve against the whole document). The far more common scraping shape — a listing page with many rows — is expressed by one optional key, `item`, a root selector that matches each repeating record; when present, every field's `selector` is resolved *relative to* each matched `item` element, and the run emits one output record per match instead of one per page. When `item` is absent, behavior is exactly the single-record case above (fields resolved against the whole document), so existing single-record configs are unaffected. This composes with pagination the obvious way: for each page, extract all `item` matches, then follow `pagination.next`. The `item` selector is itself just a tier-1 starting point, escalated the same as any field selector — the config author still never writes tier-specific logic. Example:
+
+```yaml
+target: https://example.com/products
+item: "li.product-card"          # one output record per match
+fields:
+  title: { selector: "h2.title" }      # resolved within each product-card
+  price: { selector: ".price", type: number }
+pagination:
+  next: "a.next-page"
+```
+
 ## 2b. API surface discovery (runs alongside the UI tiers, not a separate crawl)
 
 The goal here isn't just "find some API calls" — it's building up, over time, as complete a picture as can honestly be observed of what a product's API surface is and how the UI actually uses it. **Bounded claim, stated plainly:** this is inference from what was exercised, not guaranteed-exhaustive discovery — official spec discovery (layer 1) is authoritative when it succeeds, but GraphQL introspection can be disabled, and layers 3–5 only ever see endpoints a run actually happened to trigger. Spoor's API surface report means "everything observed so far," not "everything that exists" — worth stating exactly that way in user-facing docs, never softened into "the entire API surface." That decomposes into four layers, ordered cheapest/most-certain first:

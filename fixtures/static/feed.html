@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+  <head><title>Infinite feed</title></head>
+  <body>
+    <!-- Infinite-scroll fixture: items are appended by JS on scroll, so a
+         tier-1 (no-browser) fetch sees only the first screen. Exercised by the
+         @tier2 scenario, which needs a browser session (later Phase 1/2). -->
+    <div id="feed">
+      <div class="card"><span class="title">Item 1</span></div>
+    </div>
+    <script>/* appends more .card elements on scroll */</script>
+  </body>
+</html>
