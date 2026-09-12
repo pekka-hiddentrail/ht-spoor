@@ -141,18 +141,18 @@ Feature: Declarative extraction from a config file
     Then items are extracted from all 3 pages
     And the run stops after the page with no "a.next-page" link
 
-  @tier2
-  Scenario: Infinite-scroll pagination is driven by a flag
-    Given a fixture page that loads more items on scroll
+  Scenario: Infinite-scroll pagination is driven by a flag (tier 2)
+    Given a live fixture server
     And a config:
       """
-      target: http://localhost:8000/feed.html
+      target: SERVER_BASE/feed.html
+      item: ".card"
       fields:
-        title: { selector: ".card .title" }
+        title: { selector: ".title" }
       pagination:
         infinite_scroll: true
       """
-    When I run the config
+    When I run the config through a real browser
     Then more than one screen of items is extracted
 
   Scenario: Output is written to the path given with -o

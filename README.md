@@ -73,9 +73,11 @@ the default.
 browser) — single or repeating (`item`) records, element text or attribute
 (`attr`) values, `number` coercion, and next-link pagination — behind a
 `robots.txt`/crawl-delay politeness gate, with schema-validated JSON/JSON
-Lines/CSV output. JS rendering (tier 2), self-healing
-(tier 3), infinite-scroll, and the API-surface/signals capture are still ahead
-on the roadmap.
+Lines/CSV output. Tier 2 (JS rendering via headless Chromium) also works for
+its first slice: the dispatcher escalates to it for infinite-scroll pages,
+which it renders and scrolls to exhaustion before reusing the same extraction.
+Self-healing (tier 3) and the API-surface/signals capture are still ahead on
+the roadmap.
 
 ## Contributing
 

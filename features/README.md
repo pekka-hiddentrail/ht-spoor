@@ -27,9 +27,9 @@ are authored when their phase begins, not up front.
 | `exploration.feature` | Exploration mode + safety | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
-Status: `extraction.feature` (§2a) is authored and its tier-1 scenarios are
-implemented and green; its infinite-scroll scenario is tagged `@tier2` and
-skipped until tier-2 browser rendering lands. `operational.feature` (§2d) has
+Status: `extraction.feature` (§2a) is authored and green, including its
+infinite-scroll scenario, which now runs a real headless browser (tier 2)
+against a live loopback fixture server. `operational.feature` (§2d) has
 its Phase-1 politeness slice authored and green — respect `robots.txt` (default
 on) and honor the crawl-delay. `output.feature` (§2d) has its Phase-1 output
 pipeline authored and green — schema-validated JSON/JSON Lines/CSV sinks with
@@ -37,8 +37,7 @@ format chosen by extension or `--format`; SQLite/Parquet sinks and the Phase-3.5
 items (retry/error classification, CAPTCHA detection, change detection, run
 observability) are authored when those turns come. `resolution.feature` (§2)
 has its Phase-1 dispatcher slice authored and green — the escalation seam that
-picks a resolution tier and, for a browser-only capability, escalates from the
-implemented tier 1 to a declared-but-stubbed tier 2 that fails with a clear
-"not yet available"; tier-2 rendering and tier-3 self-healing behaviour are
-authored when those tiers are built. The remaining feature files are authored
-when their phase begins.
+picks a resolution tier and, for a browser-only capability (infinite scroll),
+routes past the static tier 1 to the browser-backed tier 2; tier-3 self-healing
+behaviour is authored when that tier is built. The remaining feature files are
+authored when their phase begins.

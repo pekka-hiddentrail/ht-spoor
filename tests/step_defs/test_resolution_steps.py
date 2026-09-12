@@ -1,8 +1,9 @@
 """Step definitions for features/resolution.feature (ROADMAP.md §2).
 
-Exercises the escalation dispatcher directly: which resolver a config selects,
-and that escalating to the not-yet-built tier 2 surfaces a clear error rather
-than crashing or silently mishandling the request.
+Exercises the escalation dispatcher directly: which resolver a config routes to,
+and that tier 1 hands a browser-only capability up to tier 2. What tier 2 does
+in a real browser is covered by extraction.feature, so these steps assert
+routing only and never launch a browser here.
 """
 
 from __future__ import annotations
@@ -49,11 +50,12 @@ def config_needs_browser(context: dict[str, Any], docstring: str) -> None:
 @when("the dispatcher resolves the config")
 def dispatch(context: dict[str, Any], mock_client: httpx.Client) -> None:
     cfg = context["config"]
-    context["resolver"] = extract.select_resolver(cfg)
-    try:
+    resolver = extract.select_resolver(cfg)
+    context["resolver"] = resolver
+    # Only tier 1 is network-free here; tier 2 needs a real browser + server,
+    # which extraction.feature's browser-backed scenario exercises directly.
+    if resolver.tier == 1:
         context["result"] = extract.run_report(cfg, client=mock_client)
-    except extract.TierUnavailableError as exc:
-        context["error"] = exc
 
 
 # --- Then ----------------------------------------------------------------
@@ -76,13 +78,12 @@ def escalates_to_tier2(context: dict[str, Any]) -> None:
     assert context["resolver"].tier == 2
 
 
-@then("it fails with a clear message that tier 2 is not yet available")
-def clear_unavailable_message(context: dict[str, Any]) -> None:
-    error = context.get("error")
-    assert isinstance(error, extract.TierUnavailableError)
-    message = str(error).lower()
-    assert "tier-2" in message
-    assert "not yet available" in message
+@then("tier 1 declined it while tier 2 accepted it")
+def tier1_declined_tier2_accepted(context: dict[str, Any]) -> None:
+    tier1, tier2 = extract.DEFAULT_TIERS
+    cfg = context["config"]
+    assert not tier1.accepts(cfg)
+    assert tier2.accepts(cfg)
 
 
 @then("the dispatcher registers tier 1 and tier 2 in order")
@@ -90,16 +91,15 @@ def tiers_registered_in_order(context: dict[str, Any]) -> None:
     assert [resolver.tier for resolver in extract.DEFAULT_TIERS] == [1, 2]
 
 
-@then("tier 1 is implemented while tier 2 is a declared stub")
-def tier2_is_stub(context: dict[str, Any]) -> None:
+@then("both tiers are implemented, tier 2 rendering in a real browser")
+def both_tiers_implemented(context: dict[str, Any]) -> None:
     tier1, tier2 = extract.DEFAULT_TIERS
-    # Tier 1 resolves an ordinary config; tier 2 accepts anything it is handed
-    # (it is the escalation target) but its stub refuses to run.
+    # Tier 1 resolves an ordinary config; tier 2 is the escalation target that
+    # accepts anything handed up and renders it in a browser (name says so).
     plain = load_config(
         "target: http://localhost:8000/products.html\n"
         'fields:\n  title: { selector: "h1" }\n'
     )
     assert tier1.accepts(plain)
     assert tier2.accepts(plain)
-    with pytest.raises(extract.TierUnavailableError):
-        tier2.run(plain, None)
+    assert "rendering" in tier2.name.lower()
