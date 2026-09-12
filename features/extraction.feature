@@ -85,6 +85,36 @@ Feature: Declarative extraction from a config file
     When I run the config
     Then the item field "price" is the number 12.5
 
+  Scenario: A number field ignores a hyphen inside a product code
+    Given a config:
+      """
+      target: http://localhost:8000/products.html
+      fields:
+        sku: { selector: "a.product-link", attr: data-sku, type: number }
+      """
+    When I run the config
+    Then the item field "sku" is the number 42
+
+  Scenario: A number field keeps a genuine leading-minus value negative
+    Given a config:
+      """
+      target: http://localhost:8000/products.html
+      fields:
+        discount: { selector: "a.product-link", attr: data-discount, type: number }
+      """
+    When I run the config
+    Then the item field "discount" is the number -5
+
+  Scenario: A number field parses a value with a thousands separator
+    Given a config:
+      """
+      target: http://localhost:8000/products.html
+      fields:
+        rrp: { selector: ".rrp", type: number }
+      """
+    When I run the config
+    Then the item field "rrp" is the number 1199.99
+
   Scenario: A missing optional field yields null, not an error
     Given a config:
       """

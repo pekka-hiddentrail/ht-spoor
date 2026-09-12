@@ -1,9 +1,9 @@
 """Spoor CLI entry point (ROADMAP.md §2a).
 
 The whole product surface on top of the resolution/extraction machinery:
-`spoor run config.yaml -o output.json`. Commands raise NotImplementedError
-until their phase lands — the scaffold exists so wiring and packaging are real
-from Phase 0, not the behaviour.
+`spoor run config.yaml -o output.json`. The `run` command drives a tier-1
+extraction and writes the chosen output format; later phases add their own
+commands as they land.
 """
 
 from __future__ import annotations

@@ -54,13 +54,22 @@ def _first_attr(root: Selector, css: str, attr: str) -> str | None:
     return matches[0].attrib.get(attr)
 
 
+# The first numeric run in a string. The optional leading `-` is only taken as
+# a sign when it isn't glued to a preceding word or digit (the lookbehind), so
+# an internal hyphen — e.g. a SKU like "SKU-42" — is read as 42, not -42, while
+# digits themselves are still found anywhere (e.g. "USD5" -> 5). Assumes `.`
+# decimal / `,` thousands; locale-specific formats (e.g. "1.234,56") are out of
+# scope.
+_NUMBER_RE = re.compile(r"(?:(?<![\w.])-)?(?:\d[\d,]*(?:\.\d+)?|\.\d+)")
+
+
 def _coerce_number(text: str) -> float | None:
-    """Best-effort numeric coercion: strip currency/formatting, parse a float."""
-    cleaned = re.sub(r"[^0-9.\-]", "", text)
-    if cleaned in ("", "-", ".", "-."):
+    """Best-effort numeric coercion: parse the first number found in the text."""
+    match = _NUMBER_RE.search(text)
+    if match is None:
         return None
     try:
-        return float(cleaned)
+        return float(match.group().replace(",", ""))
     except ValueError:
         return None
 
