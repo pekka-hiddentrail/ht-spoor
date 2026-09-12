@@ -83,6 +83,8 @@ pagination:
   next: "a.next-page"
 ```
 
+**Text vs. attribute values (decided).** By default a field takes the selected element's normalized text. A field's data often lives in an **attribute**, though — a link's `href`, a fuller `title`, an `<img>` `src`, a `data-*` value. That's expressed by one optional key on a field, `attr`: when set, the named attribute's value is taken instead of the element text; when absent, behavior is exactly the text case above, so existing configs are unaffected. `type` coercion (e.g. `number`) applies either way, and the selector is escalated the same as any field selector. Example: `full_title: { selector: "a.product-link", attr: title }`.
+
 ## 2b. API surface discovery (runs alongside the UI tiers, not a separate crawl)
 
 The goal here isn't just "find some API calls" — it's building up, over time, as complete a picture as can honestly be observed of what a product's API surface is and how the UI actually uses it. **Bounded claim, stated plainly:** this is inference from what was exercised, not guaranteed-exhaustive discovery — official spec discovery (layer 1) is authoritative when it succeeds, but GraphQL introspection can be disabled, and layers 3–5 only ever see endpoints a run actually happened to trigger. Spoor's API surface report means "everything observed so far," not "everything that exists" — worth stating exactly that way in user-facing docs, never softened into "the entire API surface." That decomposes into four layers, ordered cheapest/most-certain first:

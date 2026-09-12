@@ -47,7 +47,8 @@ every target (§0), so a new site is a new config, never new code:
 target: https://example.com/products
 item: "li.product-card"          # optional: one output record per match
 fields:
-  title: { selector: "h2.title" }
+  title: { selector: "h2.title" }              # element text (default)
+  url:   { selector: "h2.title a", attr: href } # or an attribute's value
   price: { selector: ".price", type: number }
 pagination:
   next: "a.next-page"
@@ -69,9 +70,10 @@ explicit, deliberate opt-out — `politeness: { respect_robots: false }` — nev
 the default.
 
 **What works today:** tier-1 extraction (fast selectors over fetched HTML, no
-browser) — single or repeating (`item`) records, `number` coercion, and
-next-link pagination — behind a `robots.txt`/crawl-delay politeness gate, with
-schema-validated JSON/JSON Lines/CSV output. JS rendering (tier 2), self-healing
+browser) — single or repeating (`item`) records, element text or attribute
+(`attr`) values, `number` coercion, and next-link pagination — behind a
+`robots.txt`/crawl-delay politeness gate, with schema-validated JSON/JSON
+Lines/CSV output. JS rendering (tier 2), self-healing
 (tier 3), infinite-scroll, and the API-surface/signals capture are still ahead
 on the roadmap.
 

@@ -46,6 +46,14 @@ def _first_text(root: Selector, css: str) -> str | None:
     return text if text else None
 
 
+def _first_attr(root: Selector, css: str, attr: str) -> str | None:
+    """First match's `attr` value, or None if the element or attribute is absent."""
+    matches = root.css(css)
+    if not matches:
+        return None
+    return matches[0].attrib.get(attr)
+
+
 def _coerce_number(text: str) -> float | None:
     """Best-effort numeric coercion: strip currency/formatting, parse a float."""
     cleaned = re.sub(r"[^0-9.\-]", "", text)
@@ -58,12 +66,15 @@ def _coerce_number(text: str) -> float | None:
 
 
 def _extract_value(root: Selector, spec: FieldSpec) -> str | float | None:
-    text = _first_text(root, spec.selector)
-    if text is None:
+    if spec.attr is not None:
+        raw = _first_attr(root, spec.selector, spec.attr)
+    else:
+        raw = _first_text(root, spec.selector)
+    if raw is None:
         return None
     if spec.type == "number":
-        return _coerce_number(text)
-    return text
+        return _coerce_number(raw)
+    return raw
 
 
 def extract_records(html: str, config: ExtractionConfig) -> list[dict[str, object]]:
