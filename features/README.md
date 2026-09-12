@@ -45,7 +45,8 @@ behaviour is authored when that tier is built. `observability.feature` (§2d) is
 authored and green — a structured, operator-facing run summary.
 
 Phase-2.5 is under way: `api_discovery.feature` (§2b) covers published-spec
-discovery and GraphQL introspection; `capture.feature` records the browser
+discovery — conventional paths and references scanned from the landing page's
+HTML — and GraphQL introspection; `capture.feature` records the browser
 tier's HAR to a local-only, git-ignored cache (§2h); and the §2c signals catalog
 is landing signal-by-signal — console output/JS errors, the accessibility tree,
 response-header fingerprints, and client-side storage state — each opt-in,
