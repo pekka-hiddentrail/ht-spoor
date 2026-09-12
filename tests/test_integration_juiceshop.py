@@ -8,7 +8,8 @@ Phase 1 built:
 - tier 1 (static fetch) sees only the empty app shell -> zero records, which is
   *why* the browser tier exists;
 - tier 2 (headless render) resolves the same config against the rendered DOM and
-  extracts real products, including `number` coercion of a currency-tagged price.
+  extracts real products, including `number` coercion of a currency-tagged price,
+  matched against a committed golden master (§5.4 dogfooding).
 
 Marked `integration`: it needs the docker bench up
 (`docker compose -f fixtures/docker-compose.yml up -d`) and skips cleanly when
@@ -23,6 +24,7 @@ tier-2 resolver directly rather than pretending the dispatcher auto-selected it.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import httpx
@@ -32,14 +34,21 @@ from spoor.core import extract
 from spoor.core.config import ExtractionConfig, load_config
 
 JUICE_SHOP_BASE = "http://127.0.0.1:3000"
-_CONFIG_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "fixtures"
-    / "configs"
-    / "juice-shop-products.yaml"
-)
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_CONFIG_PATH = _REPO_ROOT / "fixtures" / "configs" / "juice-shop-products.yaml"
+# Committed baseline for §5.4 dogfooding: the deterministic output of the pinned
+# Juice Shop image, so a diff surfaces any silent change in Spoor OR the fixture.
+_GOLDEN_PATH = Path(__file__).resolve().parent / "golden" / "juice-shop-products.json"
+# Where a run's actual output lands — a known, durable directory (not a temp
+# folder), so it can be uploaded as a CI artifact and inspected on a mismatch.
+_RUN_OUTPUT_PATH = _REPO_ROOT / "test-output" / "juice-shop-products.json"
 
 pytestmark = pytest.mark.integration
+
+
+def _sorted_by_name(records: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Stable ordering for comparison — the page's render order isn't a contract."""
+    return sorted(records, key=lambda record: str(record["name"]))
 
 
 @pytest.fixture(scope="module")
@@ -71,16 +80,23 @@ def test_tier1_cannot_resolve_the_spa(
     assert result.records == []
 
 
-def test_tier2_extracts_real_products(
+def test_tier2_matches_golden_master(
     juice_shop: str, config: ExtractionConfig
 ) -> None:
     result = extract.Tier2Resolver().run(config)
-    # Juice Shop lists a full page of products; assert a healthy count rather
-    # than an exact number so a paginator/page-size tweak upstream isn't brittle.
-    assert len(result.records) >= 6
     assert result.blocked == []
-    for record in result.records:
-        name = record["name"]
-        assert isinstance(name, str) and name.strip()
-        # `type: number` must coerce the currency-tagged price to a real number.
-        assert isinstance(record["price"], float)
+    records = _sorted_by_name(result.records)
+
+    # Persist the run to a durable path (uploaded as a CI artifact), then diff
+    # against the committed golden master (§5.4). Writing first means a mismatch
+    # leaves the actual output on disk to inspect, not just an assertion error.
+    _RUN_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _RUN_OUTPUT_PATH.write_text(
+        json.dumps(records, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    golden = json.loads(_GOLDEN_PATH.read_text(encoding="utf-8"))
+    assert records == golden, (
+        "Juice Shop extraction drifted from the golden master; inspect "
+        f"{_RUN_OUTPUT_PATH} against {_GOLDEN_PATH}"
+    )

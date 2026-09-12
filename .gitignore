@@ -206,6 +206,10 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Spoor run output — integration/E2E runs write here (uploaded as a CI
+# artifact); the committed baseline lives in tests/golden/, not here.
+test-output/
+
 # PyPI configuration file
 .pypirc
 

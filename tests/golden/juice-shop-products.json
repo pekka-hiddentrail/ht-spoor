@@ -1,0 +1,50 @@
+[
+  {
+    "name": "Apple Juice (1000ml)",
+    "price": 1.99
+  },
+  {
+    "name": "Apple Pomace",
+    "price": 0.89
+  },
+  {
+    "name": "Banana Juice (1000ml)",
+    "price": 1.99
+  },
+  {
+    "name": "Best Juice Shop Salesman Artwork",
+    "price": 5000.0
+  },
+  {
+    "name": "Carrot Juice (1000ml)",
+    "price": 2.99
+  },
+  {
+    "name": "DSOMM & Juice Shop User Day Ticket",
+    "price": 55.2
+  },
+  {
+    "name": "Eggfruit Juice (500ml)",
+    "price": 8.99
+  },
+  {
+    "name": "Fruit Press",
+    "price": 89.99
+  },
+  {
+    "name": "Green Smoothie",
+    "price": 1.99
+  },
+  {
+    "name": "Juice Shop \"Permafrost\" 2020 Edition",
+    "price": 9999.99
+  },
+  {
+    "name": "Lemon Juice (500ml)",
+    "price": 2.99
+  },
+  {
+    "name": "Melon Bike (Comeback-Product 2018 Edition)",
+    "price": 2999.0
+  }
+]
