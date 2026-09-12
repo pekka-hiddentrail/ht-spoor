@@ -66,16 +66,19 @@ class Capture(BaseModel):
     makes as a HAR, written to the local-only run cache (§2h) — never to shared
     output. `console`, when true, tells the browser tier to record the page's
     console output and uncaught errors (§2c) to the same local-only cache; only
-    non-sensitive counts of those reach shared output. Neither has any effect on
-    a run that resolves without a browser (tier 1), which has no browser session
-    to observe. Default-off here; §2c's default-on capture is the full Phase-2.5
-    target (see the ROADMAP decision note).
+    non-sensitive counts of those reach shared output. `accessibility`, when
+    true, snapshots the page's accessibility tree (§2c) to the local-only cache,
+    surfacing only a node count. None of these has any effect on a run that
+    resolves without a browser (tier 1), which has no browser session to observe.
+    Default-off here; §2c's default-on capture is the full Phase-2.5 target (see
+    the ROADMAP decision note).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     har: bool = False
     console: bool = False
+    accessibility: bool = False
 
 
 class ExtractionConfig(BaseModel):

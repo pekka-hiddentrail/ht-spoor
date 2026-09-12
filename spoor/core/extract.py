@@ -32,6 +32,7 @@ from spoor.api_discovery.graphql import DiscoveredGraphQL, discover_graphql
 from spoor.core.config import ExtractionConfig, FieldSpec, PolitenessPolicy
 from spoor.operational.politeness import Politeness
 from spoor.security import storage
+from spoor.signals.accessibility import AccessibilityCollector, AccessibilitySignal
 from spoor.signals.console import ConsoleCollector, ConsoleSignal
 
 # Guard against a pagination cycle running forever on a self-linking page.
@@ -66,8 +67,11 @@ class RunResult:
     the same way (§2b layer 2). `console`, when set, is the count summary of the
     browser tier's console activity (§2c) and `console_log_path` the local-only
     file its raw messages were written to (§2h) — both None for a run that didn't
-    capture the console. `spoor/operational/observability.py` turns these into
-    the operator-facing summary.
+    capture the console. `accessibility`, when set, is the node-count summary of
+    the browser tier's accessibility snapshots (§2c) and `accessibility_path` the
+    local-only file the raw trees were written to (§2h) — both None when not
+    captured. `spoor/operational/observability.py` turns these into the
+    operator-facing summary.
     """
 
     records: list[dict[str, object]] = field(default_factory=list)
@@ -80,6 +84,8 @@ class RunResult:
     graphql: DiscoveredGraphQL | None = None
     console: ConsoleSignal | None = None
     console_log_path: Path | None = None
+    accessibility: AccessibilitySignal | None = None
+    accessibility_path: Path | None = None
 
 
 def _first_text(root: Selector, css: str) -> str | None:
@@ -293,11 +299,12 @@ class Tier2Resolver:
         exhausted per page; next-link pagination still works via `_next_url`.
 
         A single browser context spans the whole run's pages. When the config
-        opts into capture, that context records a HAR of every request it makes
-        and/or a console collector observes its console output and errors, all
+        opts into capture, that context records a HAR of every request it makes,
+        a console collector observes its console output and errors, and/or an
+        accessibility collector snapshots each rendered page's a11y tree — all
         written to one fresh local-only run cache directory (ROADMAP.md §2b/§2c/
-        §2h); the HAR is flushed on `context.close()` and the console log after.
-        Without capture, nothing is recorded and the paths stay None.
+        §2h); the HAR is flushed on `context.close()`, the console log and a11y
+        trees after. Without capture, nothing is recorded and the paths stay None.
         """
         owns_client = client is None
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
@@ -306,12 +313,18 @@ class Tier2Resolver:
         capture = config.capture
         want_har = bool(capture and capture.har)
         want_console = bool(capture and capture.console)
+        want_a11y = bool(capture and capture.accessibility)
         # One run directory shared by every capture this run produces.
-        run_dir = storage.new_run_cache_dir() if (want_har or want_console) else None
+        run_dir = (
+            storage.new_run_cache_dir()
+            if (want_har or want_console or want_a11y)
+            else None
+        )
         har_path = run_dir / storage.HAR_FILENAME if (run_dir and want_har) else None
         if har_path is not None:
             result.har_path = har_path
-        collector = ConsoleCollector() if want_console else None
+        console = ConsoleCollector() if want_console else None
+        a11y = AccessibilityCollector() if want_a11y else None
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
@@ -324,18 +337,23 @@ class Tier2Resolver:
                         else browser.new_context()
                     )
                     try:
-                        self._crawl(context, config, gate, result, collector)
+                        self._crawl(context, config, gate, result, console, a11y)
                     finally:
                         context.close()  # flushes the HAR to disk, if recording
                 finally:
                     browser.close()
-            # The console collector holds its records in memory; persist them once
-            # the browser is closed and every event has been delivered (§2c/§2h).
-            if collector is not None and run_dir is not None:
+            # The collectors hold their records in memory; persist them once the
+            # browser is closed and every event has been delivered (§2c/§2h).
+            if console is not None and run_dir is not None:
                 console_path = run_dir / storage.CONSOLE_FILENAME
-                collector.write(console_path)
-                result.console = collector.signal
+                console.write(console_path)
+                result.console = console.signal
                 result.console_log_path = console_path
+            if a11y is not None and run_dir is not None:
+                a11y_path = run_dir / storage.ACCESSIBILITY_FILENAME
+                a11y.write(a11y_path)
+                result.accessibility = a11y.signal
+                result.accessibility_path = a11y_path
         finally:
             if owns_client:
                 client.close()
@@ -347,7 +365,8 @@ class Tier2Resolver:
         config: ExtractionConfig,
         gate: Politeness,
         result: RunResult,
-        collector: ConsoleCollector | None = None,
+        console: ConsoleCollector | None = None,
+        a11y: AccessibilityCollector | None = None,
     ) -> None:
         seen: set[str] = set()
         url: str | None = config.target
@@ -359,14 +378,17 @@ class Tier2Resolver:
             gate.before_fetch(url)
             page = context.new_page()
             # Attach before navigating so load-time console output and errors count.
-            if collector is not None:
-                collector.attach(page)
+            if console is not None:
+                console.attach(page)
             try:
                 page.goto(url, wait_until="networkidle")
                 self._await_items(page, config)
                 if _requires_browser(config):
                     _exhaust_infinite_scroll(page)
                 html = page.content()
+                # Snapshot the a11y tree after the page has fully rendered.
+                if a11y is not None:
+                    a11y.capture(page)
             finally:
                 page.close()
             result.pages_fetched += 1
