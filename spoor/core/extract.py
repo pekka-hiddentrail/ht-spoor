@@ -9,15 +9,32 @@ Per §0 there is no site-specific logic: everything is driven by the config.
 from __future__ import annotations
 
 import re
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from urllib.parse import urljoin
 
 import httpx
 from parsel import Selector
 
-from spoor.core.config import ExtractionConfig, FieldSpec
+from spoor.core.config import ExtractionConfig, FieldSpec, PolitenessPolicy
+from spoor.operational.politeness import Politeness
 
 # Guard against a pagination cycle running forever on a self-linking page.
 _MAX_PAGES = 1000
+
+
+@dataclass
+class RunResult:
+    """Outcome of a run: the extracted records plus what politeness skipped.
+
+    `blocked` holds URLs that robots.txt disallowed (ROADMAP.md §2d/§6) — these
+    are recorded, never fetched. This is deliberately minimal; the full §2d run
+    observability summary is Phase 3.5 work.
+    """
+
+    records: list[dict[str, object]] = field(default_factory=list)
+    blocked: list[str] = field(default_factory=list)
 
 
 def _first_text(root: Selector, css: str) -> str | None:
@@ -68,23 +85,43 @@ def _next_url(html: str, current_url: str, config: ExtractionConfig) -> str | No
     return urljoin(current_url, href) if href else None
 
 
-def run(
-    config: ExtractionConfig, client: httpx.Client | None = None
-) -> list[dict[str, object]]:
-    """Run a tier-1 extraction, following next-link pagination to the end."""
+def run_report(
+    config: ExtractionConfig,
+    client: httpx.Client | None = None,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> RunResult:
+    """Run a tier-1 extraction, following next-link pagination to the end.
+
+    Honors the politeness policy (ROADMAP.md §2d/§6): robots.txt disallowed URLs
+    are recorded as `blocked` and never fetched, and the crawl-delay is applied
+    between fetches. `sleep` is injectable so timing can be asserted in tests.
+    """
     owns_client = client is None
     client = client or httpx.Client(follow_redirects=True, timeout=10.0)
-    records: list[dict[str, object]] = []
+    gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
+    result = RunResult()
     seen: set[str] = set()
     url: str | None = config.target
     try:
         while url and url not in seen and len(seen) < _MAX_PAGES:
             seen.add(url)
+            if not gate.can_fetch(url):
+                result.blocked.append(url)
+                break
+            gate.before_fetch(url)
             response = client.get(url)
             response.raise_for_status()
-            records.extend(extract_records(response.text, config))
+            result.records.extend(extract_records(response.text, config))
             url = _next_url(response.text, url, config)
     finally:
         if owns_client:
             client.close()
-    return records
+    return result
+
+
+def run(
+    config: ExtractionConfig, client: httpx.Client | None = None
+) -> list[dict[str, object]]:
+    """Run a tier-1 extraction and return just the records (see `run_report`)."""
+    return run_report(config, client).records

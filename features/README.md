@@ -28,5 +28,9 @@ are authored when their phase begins, not up front.
 
 Status: `extraction.feature` (§2a) is authored and its tier-1 scenarios are
 implemented and green; its infinite-scroll scenario is tagged `@tier2` and
-skipped until tier-2 browser rendering lands. The remaining feature files are
-authored when their phase begins.
+skipped until tier-2 browser rendering lands. `operational.feature` (§2d) has
+its Phase-1 politeness slice authored and green — respect `robots.txt` (default
+on) and honor the crawl-delay; its output-pipeline and Phase-3.5 scenarios
+(retry/error classification, CAPTCHA detection, change detection, run
+observability) are authored when those turns come. The remaining feature files
+are authored when their phase begins.

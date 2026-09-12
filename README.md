@@ -51,17 +51,24 @@ fields:
   price: { selector: ".price", type: number }
 pagination:
   next: "a.next-page"
+politeness:                      # optional; robots.txt is respected by default
+  delay: 1.0                     # min seconds between fetches (overrides crawl-delay)
 ```
 
 ```
 spoor run config.yaml -o output.json
 ```
 
+Spoor respects `robots.txt` and honors its crawl-delay by default (§2d, §6):
+disallowed URLs are recorded and never fetched. Ignoring `robots.txt` is an
+explicit, deliberate opt-out — `politeness: { respect_robots: false }` — never
+the default.
+
 **What works today:** tier-1 extraction (fast selectors over fetched HTML, no
 browser) — single or repeating (`item`) records, `number` coercion, and
-next-link pagination. JS rendering (tier 2), self-healing (tier 3),
-infinite-scroll, and the API-surface/signals capture are still ahead on the
-roadmap.
+next-link pagination — behind a `robots.txt`/crawl-delay politeness gate. JS
+rendering (tier 2), self-healing (tier 3), infinite-scroll, and the
+API-surface/signals capture are still ahead on the roadmap.
 
 ## Contributing
 
