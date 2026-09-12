@@ -4,9 +4,12 @@ Holds the escalation seam — an ordered ladder of `Resolver` rungs that a confi
 is dispatched through, never chosen by the config author (§2a, §0). Tier 1
 (`httpx` fetch + `parsel` selectors) and tier 2 (headless-Chromium rendering via
 Playwright, reusing tier 1's `parsel` extraction on the rendered HTML) are both
-implemented here; escalation reaches tier 2 for browser-only capabilities such
-as JS-driven infinite scroll. Tier 3 (self-healing) joins the ladder later. Per
-§0 there is no site-specific logic: everything is driven by the config.
+implemented here. Escalation reaches tier 2 two ways, both generic (§0): by
+*capability* (a config requesting a browser-only feature such as JS-driven
+infinite scroll, which tier 1 declines up front) and by *content* (tier 1 runs
+but extracts zero records, so the dispatcher re-renders in a browser). Tier 3
+(self-healing) joins the ladder later. Per §0 there is no site-specific logic:
+everything is driven by the config.
 """
 
 from __future__ import annotations
@@ -33,6 +36,11 @@ _MAX_SCROLLS = 100
 # Grace window for a scroll to load more content before we call it the end of
 # the feed (ms). Generous enough to cover a fetch round-trip, not per-site.
 _SCROLL_GROWTH_TIMEOUT_MS = 2000
+# How long tier 2 waits for a config's `item` selector to render before
+# capturing (ms). `networkidle` alone doesn't bracket an SPA's async content
+# load; this waits for the items themselves. A legitimately empty listing waits
+# out this window once, then extracts zero — a bounded cost, not a hang.
+_ITEM_RENDER_TIMEOUT_MS = 5000
 
 
 @dataclass
@@ -127,9 +135,10 @@ class TierUnavailableError(RuntimeError):
 class Resolver(Protocol):
     """One rung of the resolution ladder (ROADMAP.md §2).
 
-    The dispatcher picks the first resolver that `accepts` a config and delegates
-    to its `run`. A config author never selects a tier (§2a, §0) — tier choice
-    and escalation are entirely this seam's concern. `accepts` answers routing
+    The dispatcher runs the first resolver that `accepts` a config, then escalates
+    to the next accepting one if that result comes up empty (see `run_report`). A
+    config author never selects a tier (§2a, §0) — tier choice and escalation are
+    entirely this seam's concern. `accepts` answers routing
     ("does this tier claim this config?"), which is distinct from whether the run
     then succeeds — a declared-but-stubbed tier can accept and still raise.
     """
@@ -288,6 +297,7 @@ class Tier2Resolver:
             page = browser.new_page()
             try:
                 page.goto(url, wait_until="networkidle")
+                self._await_items(page, config)
                 if _requires_browser(config):
                     _exhaust_infinite_scroll(page)
                 html = page.content()
@@ -295,6 +305,26 @@ class Tier2Resolver:
                 page.close()
             result.records.extend(extract_records(html, config))
             url = _next_url(html, url, config)
+
+    def _await_items(self, page: Page, config: ExtractionConfig) -> None:
+        """Wait for the config's `item` selector to render before capturing.
+
+        `networkidle` reports the network settled, not that an SPA has populated
+        its listing — the products often arrive on an XHR whose idle window fires
+        before the DOM is updated. So when the config names a repeating `item`,
+        wait for at least one to attach. This keys off the config's own selector,
+        nothing site-specific (§0). A genuinely empty listing has no such element;
+        we wait out the bounded window and fall through, extracting zero, rather
+        than hang. Single-record configs (no `item`) skip the wait entirely.
+        """
+        if not config.item:
+            return
+        try:
+            page.wait_for_selector(
+                config.item, state="attached", timeout=_ITEM_RENDER_TIMEOUT_MS
+            )
+        except PlaywrightTimeoutError:
+            return
 
 
 # The resolution ladder, tried in order (ROADMAP.md §2). Tier 3 (self-healing)
@@ -305,12 +335,30 @@ DEFAULT_TIERS: tuple[Resolver, ...] = (Tier1Resolver(), Tier2Resolver())
 def select_resolver(
     config: ExtractionConfig, tiers: tuple[Resolver, ...] = DEFAULT_TIERS
 ) -> Resolver:
-    """The dispatcher core: the first tier that can handle `config`."""
+    """The first tier that can handle `config` — the one the dispatcher runs first.
+
+    Capability routing only: it answers "which rung starts the run", not "which
+    rung finishes it". Content-driven escalation (running a higher tier when this
+    one comes up empty) is `run_report`'s job, not this function's.
+    """
     for resolver in tiers:
         if resolver.accepts(config):
             return resolver
     # The last (most capable) tier always accepts; reaching here is defensive.
     raise TierUnavailableError("no resolution tier can handle this config")
+
+
+def _should_escalate(result: RunResult) -> bool:
+    """Whether an empty tier result warrants trying the next tier (ROADMAP.md §2).
+
+    The trigger is **zero records**, never a null field: a run that produced
+    records is a legitimate result even if some fields are null (§2a), so it is
+    returned as-is. Zero records means the tier's selectors matched no items at
+    all — the hallmark of a listing that only populates in a browser. A
+    robots-blocked run is *not* escalated: `blocked` is a non-empty result, and a
+    heavier tier is for rendering, never for working around the disallow (§6).
+    """
+    return not result.records and not result.blocked
 
 
 def run_report(
@@ -320,8 +368,23 @@ def run_report(
     sleep: Callable[[float], None] = time.sleep,
     tiers: tuple[Resolver, ...] = DEFAULT_TIERS,
 ) -> RunResult:
-    """Resolve `config` through the dispatcher and return the full run report."""
-    return select_resolver(config, tiers).run(config, client, sleep=sleep)
+    """Resolve `config` through the dispatcher and return the full run report.
+
+    Walks the tiers that accept the config in order, running the first and
+    escalating to the next only while the result is empty (`_should_escalate`).
+    A tier that returns records ends the walk; if every tier comes up empty, the
+    most capable tier's (empty) result is returned.
+    """
+    candidates = [resolver for resolver in tiers if resolver.accepts(config)]
+    if not candidates:
+        # The last (most capable) tier always accepts; reaching here is defensive.
+        raise TierUnavailableError("no resolution tier can handle this config")
+    result = RunResult()
+    for resolver in candidates:
+        result = resolver.run(config, client, sleep=sleep)
+        if not _should_escalate(result):
+            break
+    return result
 
 
 def run(

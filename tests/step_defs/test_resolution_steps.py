@@ -1,9 +1,12 @@
 """Step definitions for features/resolution.feature (ROADMAP.md §2).
 
 Exercises the escalation dispatcher directly: which resolver a config routes to,
-and that tier 1 hands a browser-only capability up to tier 2. What tier 2 does
-in a real browser is covered by extraction.feature, so these steps assert
-routing only and never launch a browser here.
+that tier 1 hands a browser-only capability up to tier 2, and that an empty
+tier-1 result escalates to the browser on content grounds. The capability-routing
+steps assert routing only and never launch a browser; the content-escalation
+scenario runs through the full dispatcher against a live loopback server and a
+real Chromium, since that is the only honest way to prove the escalation end to
+end (tier 1 sees an empty shell, tier 2 renders the same page and extracts).
 """
 
 from __future__ import annotations
@@ -44,6 +47,16 @@ def config_needs_browser(context: dict[str, Any], docstring: str) -> None:
     context["config"] = load_config(docstring)
 
 
+@given("a live fixture server")
+def live_fixture_server(context: dict[str, Any], live_server: str) -> None:
+    context["server_base"] = live_server
+
+
+@given("a config whose items only exist after JS renders them:")
+def config_js_rendered(context: dict[str, Any], docstring: str) -> None:
+    context["config_text"] = docstring
+
+
 # --- When ----------------------------------------------------------------
 
 
@@ -56,6 +69,18 @@ def dispatch(context: dict[str, Any], mock_client: httpx.Client) -> None:
     # which extraction.feature's browser-backed scenario exercises directly.
     if resolver.tier == 1:
         context["result"] = extract.run_report(cfg, client=mock_client)
+
+
+@when("I run the config through the dispatcher against a real browser")
+def dispatch_through_browser(context: dict[str, Any]) -> None:
+    # No mock client: escalation must reach a real Chromium against the live
+    # server. Resolve SERVER_BASE, then run the full dispatcher (run_report) and,
+    # separately, tier 1 alone — so the assertions can contrast the two.
+    text = context["config_text"].replace("SERVER_BASE", context["server_base"])
+    cfg = load_config(text)
+    context["config"] = cfg
+    context["tier1_only"] = extract.Tier1Resolver().run(cfg).records
+    context["result"] = extract.run_report(cfg)
 
 
 # --- Then ----------------------------------------------------------------
@@ -84,6 +109,21 @@ def tier1_declined_tier2_accepted(context: dict[str, Any]) -> None:
     cfg = context["config"]
     assert not tier1.accepts(cfg)
     assert tier2.accepts(cfg)
+
+
+@then("tier 1 on its own extracts nothing")
+def tier1_extracts_nothing(context: dict[str, Any]) -> None:
+    # The served HTML is an empty shell; tier 1's selectors match no items.
+    assert context["tier1_only"] == []
+
+
+@then("the dispatcher escalates to tier 2 and returns the rendered records")
+def dispatcher_returns_rendered_records(context: dict[str, Any]) -> None:
+    records = context["result"].records
+    # Escalation happened iff the dispatcher returned records that tier 1 alone
+    # could not (asserted empty in the paired step) — i.e. the browser rendered.
+    assert records
+    assert all(record["title"] for record in records)
 
 
 @then("the dispatcher registers tier 1 and tier 2 in order")

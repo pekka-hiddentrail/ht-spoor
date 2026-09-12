@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Client-side rendered listing</title>
+    <!-- The product list is empty in the served HTML and is populated by JS on
+         load. A tier-1 (no-browser) fetch therefore extracts zero records, which
+         is the signal the dispatcher uses to escalate to the browser tier; a
+         tier-2 render sees the fully populated list. No infinite scroll here —
+         this is the "items only exist after JS runs" case, distinct from
+         feed.html's scroll-driven growth. Exercised by resolution.feature. -->
+  </head>
+  <body>
+    <ul id="list"></ul>
+    <script>
+      // Populate the list once, synchronously on load — a stand-in for an SPA
+      // whose listing is rendered client-side (like the Juice Shop archetype).
+      const TOTAL = 8;
+      const list = document.getElementById("list");
+      for (let i = 1; i <= TOTAL; i++) {
+        const item = document.createElement("li");
+        item.className = "card";
+        item.innerHTML = '<span class="title">Product ' + i + "</span>";
+        list.appendChild(item);
+      }
+    </script>
+  </body>
+</html>
