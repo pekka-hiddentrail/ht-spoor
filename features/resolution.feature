@@ -3,10 +3,10 @@
 # Resolution is a ladder: tier 1 (static fetch + selectors), tier 2 (JS
 # rendering), tier 3 (self-healing). The config author never names a tier (§2a,
 # §0) — the dispatcher picks one and escalates. This file specifies the seam
-# itself: which tier runs, and what happens when a config needs a tier that is
-# declared but not yet implemented. Tier-2 rendering and tier-3 self-healing
-# behaviour arrive with their own scenarios when those tiers are built; the
-# @tier2 extraction scenarios stay skipped until then.
+# itself: which tier a config routes to, and that tier 1 hands a browser-only
+# capability up to tier 2. What tier 2 then *does* in a real browser is covered
+# by extraction.feature's browser-backed scenario; tier-3 self-healing arrives
+# with its own scenarios when that tier is built.
 
 Feature: The dispatcher resolves a config through the right tier
   As someone who just describes what to extract
@@ -38,8 +38,8 @@ Feature: The dispatcher resolves a config through the right tier
       """
     When the dispatcher resolves the config
     Then the run escalates past tier 1 to tier 2
-    And it fails with a clear message that tier 2 is not yet available
+    And tier 1 declined it while tier 2 accepted it
 
-  Scenario: Both tiers are registered, with tier 2 declared but not yet built
+  Scenario: Both tiers are registered in order, tier 1 then the browser tier
     Then the dispatcher registers tier 1 and tier 2 in order
-    And tier 1 is implemented while tier 2 is a declared stub
+    And both tiers are implemented, tier 2 rendering in a real browser

@@ -51,10 +51,9 @@ def fixture_paginated_site(
     context["expected_pages"] = count
 
 
-@given("a fixture page that loads more items on scroll")
-def fixture_infinite_scroll(context: dict[str, Any]) -> None:
-    # Scenario is @tier2-skipped; body is not reached.
-    pass
+@given("a live fixture server")
+def live_fixture_server(context: dict[str, Any], live_server: str) -> None:
+    context["server_base"] = live_server
 
 
 @given(
@@ -100,6 +99,17 @@ def run_config(context: dict[str, Any], mock_client: httpx.Client) -> None:
         return
     context["config"] = cfg
     context["result"] = extract.run(cfg, client=mock_client)
+    context["fetched"] = True
+
+
+@when("I run the config through a real browser")
+def run_config_in_browser(context: dict[str, Any]) -> None:
+    # No mock client: tier 2 drives a real Chromium against the live server, and
+    # the SERVER_BASE placeholder is resolved to that server's base URL.
+    text = context["config_text"].replace("SERVER_BASE", context["server_base"])
+    cfg = load_config(text)
+    context["config"] = cfg
+    context["result"] = extract.run(cfg)
     context["fetched"] = True
 
 
@@ -172,8 +182,10 @@ def run_stops_at_last_page(context: dict[str, Any], selector: str) -> None:
 
 @then("more than one screen of items is extracted")
 def more_than_one_screen(context: dict[str, Any]) -> None:
-    # Scenario is @tier2-skipped; body is not reached.
-    pass
+    # The feed renders 3 cards initially and loads more only on scroll; tier 2
+    # must have scrolled to pull in materially more than that first screen.
+    assert len(context["result"]) > 5
+    assert all(item["title"] for item in context["result"])
 
 
 @then(parsers.parse('a file "{path}" exists'))

@@ -1,13 +1,40 @@
 <!doctype html>
 <html lang="en">
-  <head><title>Infinite feed</title></head>
+  <head>
+    <title>Infinite feed</title>
+    <!-- Cards are tall so the page is scrollable from the first render; a
+         tier-1 (no-browser) fetch sees only the initial cards, while a tier-2
+         browser session scrolls to load the rest. Exercised by the
+         infinite-scroll scenario in extraction.feature. -->
+    <style>.card { min-height: 400px; }</style>
+  </head>
   <body>
-    <!-- Infinite-scroll fixture: items are appended by JS on scroll, so a
-         tier-1 (no-browser) fetch sees only the first screen. Exercised by the
-         @tier2 scenario, which needs a browser session (later Phase 1/2). -->
     <div id="feed">
       <div class="card"><span class="title">Item 1</span></div>
+      <div class="card"><span class="title">Item 2</span></div>
+      <div class="card"><span class="title">Item 3</span></div>
     </div>
-    <script>/* appends more .card elements on scroll */</script>
+    <script>
+      // Append a batch of cards each time the viewport nears the bottom, up to
+      // a fixed total — a self-contained stand-in for a real infinite feed.
+      let count = 3;
+      const TOTAL = 40;
+      const BATCH = 10;
+      const feed = document.getElementById("feed");
+      function loadMore() {
+        for (let i = 0; i < BATCH && count < TOTAL; i++) {
+          count += 1;
+          const card = document.createElement("div");
+          card.className = "card";
+          card.innerHTML = '<span class="title">Item ' + count + "</span>";
+          feed.appendChild(card);
+        }
+      }
+      window.addEventListener("scroll", () => {
+        if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 5) {
+          loadMore();
+        }
+      });
+    </script>
   </body>
 </html>

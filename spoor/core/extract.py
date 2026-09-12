@@ -2,11 +2,11 @@
 
 Holds the escalation seam — an ordered ladder of `Resolver` rungs that a config
 is dispatched through, never chosen by the config author (§2a, §0). Tier 1
-(`httpx` fetch + `parsel` selectors) is implemented here; tier 2 (JS rendering)
-is a declared stub that escalation reaches for browser-only capabilities
-(infinite scroll) and that raises until its real implementation lands. Tier 3
-(self-healing) joins the ladder later. Per §0 there is no site-specific logic:
-everything is driven by the config.
+(`httpx` fetch + `parsel` selectors) and tier 2 (headless-Chromium rendering via
+Playwright, reusing tier 1's `parsel` extraction on the rendered HTML) are both
+implemented here; escalation reaches tier 2 for browser-only capabilities such
+as JS-driven infinite scroll. Tier 3 (self-healing) joins the ladder later. Per
+§0 there is no site-specific logic: everything is driven by the config.
 """
 
 from __future__ import annotations
@@ -20,12 +20,19 @@ from urllib.parse import urljoin
 
 import httpx
 from parsel import Selector
+from playwright.sync_api import Browser, Page, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from spoor.core.config import ExtractionConfig, FieldSpec, PolitenessPolicy
 from spoor.operational.politeness import Politeness
 
 # Guard against a pagination cycle running forever on a self-linking page.
 _MAX_PAGES = 1000
+# Guard against an infinite feed that never stops growing (tier 2).
+_MAX_SCROLLS = 100
+# Grace window for a scroll to load more content before we call it the end of
+# the feed (ms). Generous enough to cover a fetch round-trip, not per-site.
+_SCROLL_GROWTH_TIMEOUT_MS = 2000
 
 
 @dataclass
@@ -193,12 +200,38 @@ class Tier1Resolver:
         return result
 
 
-class Tier2Resolver:
-    """Tier 2: JS-rendered pages via a browser (ROADMAP.md §2) — not yet built.
+def _exhaust_infinite_scroll(page: Page) -> None:
+    """Scroll to the bottom until the page stops growing (a generic stop signal).
 
-    The declared-but-stubbed rung of the seam. It accepts anything tier 1 hands
-    up (it is the escalation target), but running it raises until the browser
-    implementation lands in a later Phase-1 slice.
+    JS-driven feeds append content as the viewport nears the bottom, whether by
+    fetching more or by rendering held-back DOM — so the one signal every such
+    feed shares is that `scrollHeight` grows. After each scroll we wait for the
+    height to actually increase; a grace window with no growth means the end of
+    the feed. This works for both network-driven and synchronous-DOM feeds, and
+    is nothing site-specific (§0). `_MAX_SCROLLS` bounds a feed that never stops.
+    """
+    for _ in range(_MAX_SCROLLS):
+        height = page.evaluate("document.body.scrollHeight")
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        try:
+            page.wait_for_function(
+                "previous => document.body.scrollHeight > previous",
+                arg=height,
+                timeout=_SCROLL_GROWTH_TIMEOUT_MS,
+            )
+        except PlaywrightTimeoutError:
+            return
+
+
+class Tier2Resolver:
+    """Tier 2: JS-rendered pages via a headless browser (ROADMAP.md §2).
+
+    A thin adapter over Playwright: it renders each page in headless Chromium,
+    then reuses the very same `parsel` extraction as tier 1 on the rendered HTML,
+    so field/`item`/pagination semantics stay identical across tiers. The
+    dispatcher reaches it for browser-only capabilities — today, JS-driven
+    infinite scroll. It honors the same politeness gate as tier 1 (robots.txt +
+    crawl-delay); nothing here is site-specific (§0).
     """
 
     tier = 2
@@ -214,10 +247,54 @@ class Tier2Resolver:
         *,
         sleep: Callable[[float], None] = time.sleep,
     ) -> RunResult:
-        raise TierUnavailableError(
-            f"this config needs {self.name}, which is not yet available "
-            "(browser-based rendering lands in a later Phase-1 slice)"
-        )
+        """Render and extract, following the same politeness gate as tier 1.
+
+        The gate (robots.txt + crawl-delay) runs on an `httpx` client, kept
+        separate from the browser: robots is a plain HTTP concern, and the check
+        must happen *before* a page is ever navigated to. Infinite scroll is
+        exhausted per page; next-link pagination still works via `_next_url`.
+        """
+        owns_client = client is None
+        client = client or httpx.Client(follow_redirects=True, timeout=10.0)
+        gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
+        result = RunResult()
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch()
+                try:
+                    self._crawl(browser, config, gate, result)
+                finally:
+                    browser.close()
+        finally:
+            if owns_client:
+                client.close()
+        return result
+
+    def _crawl(
+        self,
+        browser: Browser,
+        config: ExtractionConfig,
+        gate: Politeness,
+        result: RunResult,
+    ) -> None:
+        seen: set[str] = set()
+        url: str | None = config.target
+        while url and url not in seen and len(seen) < _MAX_PAGES:
+            seen.add(url)
+            if not gate.can_fetch(url):
+                result.blocked.append(url)
+                break
+            gate.before_fetch(url)
+            page = browser.new_page()
+            try:
+                page.goto(url, wait_until="networkidle")
+                if _requires_browser(config):
+                    _exhaust_infinite_scroll(page)
+                html = page.content()
+            finally:
+                page.close()
+            result.records.extend(extract_records(html, config))
+            url = _next_url(html, url, config)
 
 
 # The resolution ladder, tried in order (ROADMAP.md §2). Tier 3 (self-healing)

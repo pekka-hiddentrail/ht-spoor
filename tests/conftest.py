@@ -7,7 +7,10 @@ through an httpx MockTransport — fully deterministic, no ports, no network.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
@@ -32,12 +35,23 @@ def mock_client() -> Iterator[httpx.Client]:
         yield client
 
 
-def pytest_bdd_apply_tag(tag: str, function: object) -> bool | None:
-    """Skip scenarios that need capabilities not yet built."""
-    if tag == "tier2":
-        marker = pytest.mark.skip(
-            reason="requires tier-2 browser rendering (later Phase 1/2)"
-        )
-        marker(function)
-        return True
-    return None
+@pytest.fixture
+def live_server() -> Iterator[str]:
+    """Serve the static fixtures over loopback HTTP for tier-2 browser tests.
+
+    A real browser can't use the `httpx.MockTransport` the tier-1 tests rely on,
+    so tier-2 scenarios need an actual socket. Binds an ephemeral port on
+    127.0.0.1, serves `fixtures/static`, and yields the base URL.
+    """
+    handler = partial(SimpleHTTPRequestHandler, directory=str(FIXTURES_DIR))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        # We bound to the 127.0.0.1 literal above; only the ephemeral port is
+        # assigned by the OS (server_address[0] is typed as possibly bytes).
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
