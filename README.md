@@ -56,19 +56,24 @@ politeness:                      # optional; robots.txt is respected by default
 ```
 
 ```
-spoor run config.yaml -o output.json
+spoor run config.yaml -o output.json      # format inferred from the extension
+spoor run config.yaml -o data.csv          # → CSV, columns = your config fields
+spoor run config.yaml -o out.dat -f jsonl  # or force it with --format
 ```
 
-Spoor respects `robots.txt` and honors its crawl-delay by default (§2d, §6):
+Output is written as JSON, JSON Lines, or CSV, and every record is validated
+against your config's field schema before anything is written. Spoor respects
+`robots.txt` and honors its crawl-delay by default (§2d, §6):
 disallowed URLs are recorded and never fetched. Ignoring `robots.txt` is an
 explicit, deliberate opt-out — `politeness: { respect_robots: false }` — never
 the default.
 
 **What works today:** tier-1 extraction (fast selectors over fetched HTML, no
 browser) — single or repeating (`item`) records, `number` coercion, and
-next-link pagination — behind a `robots.txt`/crawl-delay politeness gate. JS
-rendering (tier 2), self-healing (tier 3), infinite-scroll, and the
-API-surface/signals capture are still ahead on the roadmap.
+next-link pagination — behind a `robots.txt`/crawl-delay politeness gate, with
+schema-validated JSON/JSON Lines/CSV output. JS rendering (tier 2), self-healing
+(tier 3), infinite-scroll, and the API-surface/signals capture are still ahead
+on the roadmap.
 
 ## Contributing
 
