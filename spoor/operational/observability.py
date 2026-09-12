@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from spoor.api_discovery.discovery import DiscoveredSpec
 from spoor.api_discovery.graphql import DiscoveredGraphQL
 from spoor.core.extract import RunResult
+from spoor.signals.console import ConsoleSignal
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,11 @@ class RunSummary:
     # An introspectable GraphQL endpoint observed at a conventional path, if any
     # (ROADMAP.md §2b layer 2) — likewise *observed*, never a complete census.
     graphql: DiscoveredGraphQL | None
+    # Counts of the browser tier's console activity, if it was captured (§2c).
+    # Counts only — the raw messages stay in the local-only log at
+    # `console_log_path`, never surfaced here (§2h).
+    console: ConsoleSignal | None
+    console_log_path: str | None
 
     @classmethod
     def from_result(cls, result: RunResult) -> RunSummary:
@@ -60,6 +66,12 @@ class RunSummary:
             har_path=str(result.har_path) if result.har_path is not None else None,
             api_spec=result.api_spec,
             graphql=result.graphql,
+            console=result.console,
+            console_log_path=(
+                str(result.console_log_path)
+                if result.console_log_path is not None
+                else None
+            ),
         )
 
     @property
@@ -113,8 +125,20 @@ class RunSummary:
             f"  blocked:       {len(self.blocked)}",
         ]
         lines.extend(f"    - {url} (robots.txt)" for url in self.blocked)
-        # Only shown when something was captured, so an ordinary run stays quiet;
-        # named as raw + local so it's clear this is not shared output (§2h).
+        # Console counts, only when the console was captured (§2c). Counts only —
+        # never message text — so nothing sensitive surfaces here (§2h).
+        if self.console is not None:
+            c = self.console
+            lines.append(
+                f"  console:       {c.messages} messages "
+                f"({c.errors} errors, {c.page_errors} uncaught)"
+            )
+        # Capture lines: only shown when something was captured, so an ordinary run
+        # stays quiet; named raw + local so it's clear this isn't shared output (§2h).
         if self.har_path is not None:
             lines.append(f"  captured:      raw HAR (local-only) {self.har_path}")
+        if self.console_log_path is not None:
+            lines.append(
+                f"  captured:      raw console log (local-only) {self.console_log_path}"
+            )
         return "\n".join(lines)

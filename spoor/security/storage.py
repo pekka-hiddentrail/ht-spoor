@@ -23,6 +23,9 @@ CACHE_ROOT = Path(".spoor-cache")
 # The filename a run's captured HAR is written under, inside its run directory.
 HAR_FILENAME = "network.har"
 
+# The filename a run's captured console log (JSON Lines) is written under (§2c).
+CONSOLE_FILENAME = "console.jsonl"
+
 
 def new_run_id() -> str:
     """A sortable, collision-resistant id for one run's cache subdirectory.

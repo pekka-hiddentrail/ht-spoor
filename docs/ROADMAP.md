@@ -137,6 +137,15 @@ Beyond DOM/selectors and the API surface, a Playwright session already sits in a
 
 Same principle as the rest of the stack: default to what's already flowing through the session for free, and gate anything storage- or CPU-heavy behind an explicit flag so a routine scrape doesn't silently become a slow, disk-filling one.
 
+### Decision note — §2c first signal: console output & JS errors (implemented)
+
+The first signal built from this catalog is **console output & uncaught JS errors** (`page.on("console")` / `page.on("pageerror")`), captured on the browser tier. Decisions made in building it, to be reused as the remaining signals land:
+
+- **Opt-in for now, via `capture.console`.** The catalog frames the free/near-free signals as default-on, but that's the full Phase-2.5 target; interim capture stays opt-in and parallel to `capture.har`, so a routine run's behavior is unchanged until default-on is switched on deliberately (one decision, one PR).
+- **§2h split — raw local-only, counts shared.** Console output can carry secrets (tokens logged in debug output), so the raw per-message log is written to the local-only run cache (`console.jsonl`, alongside the HAR) and never routed to shared output. The run summary surfaces only non-sensitive **counts** (total messages, error-level messages, uncaught page errors). Surfacing message *content* to shared output is deferred until the §2h redaction pipeline exists — a count leaks nothing, a message might.
+- **`page_errors` counted separately from `errors`.** An uncaught exception (`pageerror`) is a stronger "this page broke" signal than a `console.error`, so the two are tallied separately rather than merged.
+- **One run directory per run.** All captures for a run (HAR, console log, and future signals) share a single `new_run_cache_dir()`, rather than each capture minting its own.
+
 ## 2d. Operational essentials (the gap between "extracts data" and "usable tool")
 
 These didn't come up earlier because they're not about *finding* an element — they're what makes the difference between a tiered-cascade demo and something people actually run unattended. All of them lean on existing libraries, same as everywhere else in the plan:

@@ -32,6 +32,7 @@ from spoor.api_discovery.graphql import DiscoveredGraphQL, discover_graphql
 from spoor.core.config import ExtractionConfig, FieldSpec, PolitenessPolicy
 from spoor.operational.politeness import Politeness
 from spoor.security import storage
+from spoor.signals.console import ConsoleCollector, ConsoleSignal
 
 # Guard against a pagination cycle running forever on a self-linking page.
 _MAX_PAGES = 1000
@@ -62,8 +63,11 @@ class RunResult:
     `api_spec`, when set, is an official API spec discovery observed at a
     conventional path alongside the run (ROADMAP.md §2b); None means none was
     found. `graphql`, when set, is an introspectable GraphQL endpoint observed
-    the same way (§2b layer 2). `spoor/operational/observability.py` turns these
-    into the operator-facing summary.
+    the same way (§2b layer 2). `console`, when set, is the count summary of the
+    browser tier's console activity (§2c) and `console_log_path` the local-only
+    file its raw messages were written to (§2h) — both None for a run that didn't
+    capture the console. `spoor/operational/observability.py` turns these into
+    the operator-facing summary.
     """
 
     records: list[dict[str, object]] = field(default_factory=list)
@@ -74,6 +78,8 @@ class RunResult:
     har_path: Path | None = None
     api_spec: DiscoveredSpec | None = None
     graphql: DiscoveredGraphQL | None = None
+    console: ConsoleSignal | None = None
+    console_log_path: Path | None = None
 
 
 def _first_text(root: Selector, css: str) -> str | None:
@@ -287,19 +293,25 @@ class Tier2Resolver:
         exhausted per page; next-link pagination still works via `_next_url`.
 
         A single browser context spans the whole run's pages. When the config
-        opts into capture, that context records a HAR of every request it makes,
-        written to a fresh local-only run cache directory (ROADMAP.md §2b/§2h);
-        the file is flushed on `context.close()`. Without capture, no HAR is
-        recorded and `result.har_path` stays None.
+        opts into capture, that context records a HAR of every request it makes
+        and/or a console collector observes its console output and errors, all
+        written to one fresh local-only run cache directory (ROADMAP.md §2b/§2c/
+        §2h); the HAR is flushed on `context.close()` and the console log after.
+        Without capture, nothing is recorded and the paths stay None.
         """
         owns_client = client is None
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
         gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
         result = RunResult(tier=self.tier)
-        har_path: Path | None = None
-        if config.capture and config.capture.har:
-            har_path = storage.new_run_cache_dir() / storage.HAR_FILENAME
+        capture = config.capture
+        want_har = bool(capture and capture.har)
+        want_console = bool(capture and capture.console)
+        # One run directory shared by every capture this run produces.
+        run_dir = storage.new_run_cache_dir() if (want_har or want_console) else None
+        har_path = run_dir / storage.HAR_FILENAME if (run_dir and want_har) else None
+        if har_path is not None:
             result.har_path = har_path
+        collector = ConsoleCollector() if want_console else None
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
@@ -312,11 +324,18 @@ class Tier2Resolver:
                         else browser.new_context()
                     )
                     try:
-                        self._crawl(context, config, gate, result)
+                        self._crawl(context, config, gate, result, collector)
                     finally:
                         context.close()  # flushes the HAR to disk, if recording
                 finally:
                     browser.close()
+            # The console collector holds its records in memory; persist them once
+            # the browser is closed and every event has been delivered (§2c/§2h).
+            if collector is not None and run_dir is not None:
+                console_path = run_dir / storage.CONSOLE_FILENAME
+                collector.write(console_path)
+                result.console = collector.signal
+                result.console_log_path = console_path
         finally:
             if owns_client:
                 client.close()
@@ -328,6 +347,7 @@ class Tier2Resolver:
         config: ExtractionConfig,
         gate: Politeness,
         result: RunResult,
+        collector: ConsoleCollector | None = None,
     ) -> None:
         seen: set[str] = set()
         url: str | None = config.target
@@ -338,6 +358,9 @@ class Tier2Resolver:
                 break
             gate.before_fetch(url)
             page = context.new_page()
+            # Attach before navigating so load-time console output and errors count.
+            if collector is not None:
+                collector.attach(page)
             try:
                 page.goto(url, wait_until="networkidle")
                 self._await_items(page, config)
