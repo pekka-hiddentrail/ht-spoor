@@ -25,6 +25,16 @@ app = typer.Typer(
 )
 
 
+@app.callback()
+def main() -> None:
+    """Give your agents a map of the web.
+
+    A callback (even a no-op) keeps `run` as an explicit subcommand, so the
+    documented `spoor run config.yaml` interface holds instead of Typer
+    collapsing a single-command app into `spoor config.yaml`.
+    """
+
+
 @app.command()
 def run(
     config: Annotated[Path, typer.Argument(help="Path to a §2a config file.")],

@@ -26,5 +26,7 @@ are authored when their phase begins, not up front.
 | `exploration.feature` | Exploration mode + safety | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
-No `.feature` files exist yet — Phase 0 is scaffold only. The first to author is
-`extraction.feature` when Phase 1 starts.
+Status: `extraction.feature` (§2a) is authored and its tier-1 scenarios are
+implemented and green; its infinite-scroll scenario is tagged `@tier2` and
+skipped until tier-2 browser rendering lands. The remaining feature files are
+authored when their phase begins.
