@@ -181,6 +181,14 @@ def _extract_value(
     from what it saw before: a confident match fills the field, a weak one leaves
     it null but is flagged for review (see `Healer.attempt`). Without a healer the
     behavior is unchanged — a miss is simply a null field (§2a).
+
+    Note the two-step contract: healing resolves the *element*, then
+    `_value_from_element` extracts the *value* from it. These are independent, so
+    a confident heal to the right element can still yield a null value when the
+    field has an `attr` the healed element happens not to carry — the run summary
+    counts it as a confident heal (the element was re-resolved) even though the
+    field is null. This is intentional and honest: the healer's job is element
+    re-resolution, not guaranteeing a value the source markup no longer holds.
     """
     matches = root.css(spec.selector)
     element: Selector | None = matches[0] if matches else None

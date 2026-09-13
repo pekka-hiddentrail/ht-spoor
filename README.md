@@ -97,7 +97,9 @@ scoring every candidate against a fingerprint captured while the selector worked
 — tag, id, class, attribute, inner-text, and structural similarity, no model call
 (§2) — flagging a low-confidence best candidate as an "uncertain match" for review
 rather than guessing, and always recording the winning score plus the runners-up
-it considered. Its accuracy is guarded by the §5.3 `hypothesis` mutation corpus at
+it considered. This scoring algorithm is written from scratch — Spoor takes no
+dependency on Healenium and vendors none of its code; Healenium's published,
+permissively-licensed core approach was a conceptual reference only. Its accuracy is guarded by the §5.3 `hypothesis` mutation corpus at
 the merge-blocking ≥95% bar (currently ~99.8%). That core is now wired into a
 live run: while a field's selector resolves, the run fingerprints the element into
 a per-domain cache that persists across runs (local-only, §2h); on a later run, if
