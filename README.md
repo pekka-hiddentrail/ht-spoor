@@ -87,7 +87,7 @@ spoor run config.yaml -o out.dat -f jsonl  # force JSON Lines with --format
 
 - Output formats: JSON, JSON Lines, CSV (schema-validated before writing)
 - Politeness: `robots.txt` respected by default; crawl-delay honored by default
-- Retry: transient failures (timeouts, dropped connections, 5xx, 429) retry with backoff and `Retry-After`; other 4xx are dead-lettered
+- Retry: transient failures (timeouts, dropped connections, 5xx, 429) retry with backoff and `Retry-After`; other 4xx are dead-lettered. Browser-tier page navigations retry on the same policy, so a transient navigation failure is dead-lettered rather than crashing the run
 - Anti-bot detection: a fetch landing on a known anti-bot wall (a reCAPTCHA/hCaptcha widget, a Cloudflare interstitial) is flagged loudly on the run summary rather than scraped as data — detection only, never a bypass attempt
 - Change detection (opt-in, `change_detection: true`): a re-run sends the `ETag`/`Last-Modified` a prior run recorded as a conditional request and skips re-extracting a page the server reports unchanged (a 304, or a matching content hash) — cheap monitoring runs, off by default so a one-shot scrape still extracts everything
 - Safety/data handling: raw captures stay local-only; known secret patterns are redacted before shared output

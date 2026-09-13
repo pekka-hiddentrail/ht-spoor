@@ -39,12 +39,13 @@ class RunSummary:
     resolved_tier: int | None
     tiers_attempted: list[int]
     blocked: list[str]
-    # URLs the tier-1 fetch ultimately could not retrieve (§2d Phase 3.5): a
-    # permanent error or a transient one that exhausted its retries. Each carries
-    # a generic HTTP-category reason (§0) — never a captured secret (§2h).
+    # URLs a run ultimately could not retrieve (§2d Phase 3.5): a permanent error
+    # or a transient one that exhausted its retries, from either the tier-1 fetch
+    # or the browser tier's navigation. Each carries a generic HTTP-category
+    # reason (§0) — never a captured secret (§2h).
     dead_letter: list[FetchFailure]
-    # Transient fetch failures that were retried this run, whether or not they
-    # eventually succeeded (§2d) — a resilience signal, quiet when zero.
+    # Transient fetch/navigation failures that were retried this run, whether or
+    # not they eventually succeeded (§2d) — a resilience signal, quiet when zero.
     retries: int
     # URLs a change-detection run found unchanged since a prior run (§2d Phase
     # 3.5): pages deliberately skipped rather than re-extracted. Empty on a plain
