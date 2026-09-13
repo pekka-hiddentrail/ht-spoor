@@ -1,15 +1,17 @@
 # ROADMAP.md §5.1 archetype bench.
 #
-# Phase 1 stands up OWASP Juice Shop only. It is an Angular SPA whose product
+# OWASP Juice Shop is the first archetype. It is an Angular SPA whose product
 # listing is rendered client-side, so it exercises exactly what Phase 1 built:
 # tier 1 (static fetch) finds nothing, the dispatcher escalates, and tier 2
 # renders the page in a real browser and extracts. This is the first time the
 # generic tiers meet a real, uncontrolled app rather than a checked-in fixture.
 #
-# Sauce Demo, a self-hosted ERPNext/Odoo, and a Netflix-clone join this bench
-# when the phases that can actually exercise them arrive (auth is Phase 2+, API
-# discovery Phase 2.5, exploration mode Phase 6). Standing them up now would be
-# scaffolding for capabilities that do not yet exist.
+# Sauce Demo is the second archetype and the first login-gated one; it joined once
+# bring-your-own-session (§2h) shipped the capability that can actually exercise it,
+# giving the bench a structurally different SPA and an end-to-end auth proof (see the
+# sauce-demo service below). A self-hosted ERPNext/Odoo and a Netflix-clone still
+# wait for their phases (API discovery §2b/§2.5, exploration mode §2e/Phase 6) —
+# standing them up now would be scaffolding for capabilities that do not yet exist.
 
 services:
   juice-shop:
@@ -26,3 +28,24 @@ services:
     # test fixture), not by a container healthcheck: the image is distroless
     # (no shell, no `node`/`curl` on PATH for `docker exec`), so an in-container
     # probe is brittle. Polling the port is image-agnostic and just as reliable.
+
+  sauce-demo:
+    # Sauce Labs' sample storefront, the second live archetype. It joins the bench
+    # now (not with the others) because the capability that exercises it —
+    # bring-your-own-session for login-gated targets — has shipped. Its inventory is
+    # reachable only with an authenticated session, so it is the first real-world,
+    # end-to-end proof of that capability and a second data point that the generic
+    # tiers are not tailored to any one site. No trustworthy prebuilt image exists,
+    # so it is built from a pinned source commit (see sauce-demo/Dockerfile).
+    build: ./sauce-demo
+    ports:
+      # Host port defaults to 3001 (the next port after Juice Shop's 3000) and is
+      # overridable so a local machine that already uses 3001 can still run the
+      # bench: `SAUCE_DEMO_PORT=3002 docker compose ... up -d`. The container always
+      # serves on 80; the integration test reads the matching base URL from
+      # SPOOR_SAUCE_DEMO_BASE (default http://127.0.0.1:3001).
+      - "${SAUCE_DEMO_PORT:-3001}:80"
+    # Same §5.1 sandbox label as Juice Shop: this is a dedicated test target that
+    # §2e exploration mode may exercise freely.
+    labels:
+      spoor.sandbox: "true"
