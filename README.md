@@ -79,7 +79,11 @@ which it renders and scrolls to exhaustion before reusing the same extraction.
 Every run also looks for a published API spec — probing conventional paths and
 scanning the landing page's HTML and its same-origin JS bundles for a reference
 to one — and an introspectable GraphQL endpoint (§2b), and reports a structured
-run summary (§2d). The browser tier can
+run summary (§2d). When a run captures a HAR, it additionally synthesizes an API
+spec by clustering the recorded requests into templated endpoints (`/users/1`,
+`/users/2` → `/users/{id}`) and writes that OpenAPI document to the local-only
+cache — a bounded, inference-from-observed-traffic map, never a complete-API
+claim (§2b layer 4). The browser tier can
 opt into capturing signals (§2c) — HAR, console output/JS errors, the
 accessibility tree, response-header fingerprints, and client-side storage state
 — written to a local-only, git-ignored cache; only safe derived facts reach

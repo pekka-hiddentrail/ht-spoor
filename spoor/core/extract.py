@@ -30,6 +30,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from spoor.api_discovery.discovery import DiscoveredSpec, discover_spec
 from spoor.api_discovery.graphql import DiscoveredGraphQL, discover_graphql
+from spoor.api_discovery.synthesis import SynthesizedSpec, synthesize_from_har
 from spoor.core.config import ExtractionConfig, FieldSpec, PolitenessPolicy
 from spoor.operational.politeness import Politeness
 from spoor.security import storage
@@ -79,8 +80,11 @@ class RunResult:
     captured. `storage_state`, when set, is the redacted, shareable view of the
     browser context's client-side storage (§2c) and `storage_state_path` the
     local-only file the raw, unredacted state was written to (§2h) — both None
-    when not captured. `spoor/operational/observability.py` turns these into the
-    operator-facing summary.
+    when not captured. `synthesized_spec`, when set, is the API spec synthesized
+    by clustering the captured HAR's requests into templated endpoints (§2b layer
+    4) — only present when a HAR was captured; the OpenAPI document it wrote stays
+    in the local-only cache (§2h). `spoor/operational/observability.py` turns these
+    into the operator-facing summary.
     """
 
     records: list[dict[str, object]] = field(default_factory=list)
@@ -99,6 +103,7 @@ class RunResult:
     headers_path: Path | None = None
     storage_state: StorageStateSignal | None = None
     storage_state_path: Path | None = None
+    synthesized_spec: SynthesizedSpec | None = None
 
 
 def _first_text(root: Selector, css: str) -> str | None:
@@ -528,7 +533,20 @@ def run_report(
     # observability (a directly-invoked resolver leaves this empty).
     result.tiers_attempted = attempted
     _discover_api_surface(config, client, result)
+    _synthesize_from_capture(config, result)
     return result
+
+
+def _synthesize_from_capture(config: ExtractionConfig, result: RunResult) -> None:
+    """Synthesize an API spec from the run's captured HAR, if any (§2b layer 4).
+
+    Runs only when a HAR was captured (`capture.har`, so `har_path` is set); it
+    reads that local file, never the network, and never raises — a HAR that can't
+    be read or holds no API entries simply leaves `synthesized_spec` None.
+    """
+    if result.har_path is None:
+        return
+    result.synthesized_spec = synthesize_from_har(result.har_path, config.target)
 
 
 def _discover_api_surface(
