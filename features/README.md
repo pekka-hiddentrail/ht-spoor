@@ -49,7 +49,11 @@ discovery — conventional paths and references scanned from the landing page's
 HTML and its same-origin JS bundles — GraphQL introspection, and spec synthesis
 (layer 4): clustering a captured HAR's requests into templated endpoints and
 writing a synthesized OpenAPI document to the local-only cache (counts only reach
-shared output, §2h); `capture.feature` records the browser
+shared output, §2h), and action-to-endpoint correlation (layer 5): marking a
+checkpoint before each page load and scroll, then attributing each captured
+request to the action whose time window it fell in — a time-window approximation,
+never proven causation, with the per-action map kept local-only and only counts
+shared (§2h); `capture.feature` records the browser
 tier's HAR to a local-only, git-ignored cache (§2h); and the §2c signals catalog
 is landing signal-by-signal — console output/JS errors, the accessibility tree,
 response-header fingerprints, and client-side storage state — each opt-in,

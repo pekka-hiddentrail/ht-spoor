@@ -28,6 +28,12 @@ from playwright.sync_api import BrowserContext, Page, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from spoor.api_discovery.correlation import (
+    ActionCorrelation,
+    Checkpoint,
+    CheckpointRecorder,
+    correlate,
+)
 from spoor.api_discovery.discovery import DiscoveredSpec, discover_spec
 from spoor.api_discovery.graphql import DiscoveredGraphQL, discover_graphql
 from spoor.api_discovery.synthesis import SynthesizedSpec, synthesize_from_har
@@ -83,8 +89,15 @@ class RunResult:
     when not captured. `synthesized_spec`, when set, is the API spec synthesized
     by clustering the captured HAR's requests into templated endpoints (§2b layer
     4) — only present when a HAR was captured; the OpenAPI document it wrote stays
-    in the local-only cache (§2h). `spoor/operational/observability.py` turns these
-    into the operator-facing summary.
+    in the local-only cache (§2h). `checkpoints` are the action marks the browser
+    tier recorded during the run (load, each scroll) — the raw timeline layer-5
+    correlation attributes requests to; empty for a run that captured no HAR.
+    `action_correlation`, when set, is that correlation — captured requests
+    attributed to the action that likely triggered them (§2b layer 5) — only
+    present when a HAR and checkpoints were captured; the document it wrote (with
+    the templated paths) stays in the local-only cache (§2h).
+    `spoor/operational/observability.py` turns these into the operator-facing
+    summary.
     """
 
     records: list[dict[str, object]] = field(default_factory=list)
@@ -104,6 +117,8 @@ class RunResult:
     storage_state: StorageStateSignal | None = None
     storage_state_path: Path | None = None
     synthesized_spec: SynthesizedSpec | None = None
+    checkpoints: list[Checkpoint] = field(default_factory=list)
+    action_correlation: ActionCorrelation | None = None
 
 
 def _first_text(root: Selector, css: str) -> str | None:
@@ -260,7 +275,9 @@ class Tier1Resolver:
         return result
 
 
-def _exhaust_infinite_scroll(page: Page) -> None:
+def _exhaust_infinite_scroll(
+    page: Page, recorder: CheckpointRecorder | None = None
+) -> None:
     """Scroll to the bottom until the page stops growing (a generic stop signal).
 
     JS-driven feeds append content as the viewport nears the bottom, whether by
@@ -269,9 +286,14 @@ def _exhaust_infinite_scroll(page: Page) -> None:
     height to actually increase; a grace window with no growth means the end of
     the feed. This works for both network-driven and synchronous-DOM feeds, and
     is nothing site-specific (§0). `_MAX_SCROLLS` bounds a feed that never stops.
+
+    When a `recorder` is supplied, each scroll is marked just before it happens,
+    so layer-5 correlation can attribute the requests it triggered to it (§2b).
     """
-    for _ in range(_MAX_SCROLLS):
+    for index in range(_MAX_SCROLLS):
         height = page.evaluate("document.body.scrollHeight")
+        if recorder is not None:
+            recorder.mark(f"scroll #{index + 1}")
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         try:
             page.wait_for_function(
@@ -349,6 +371,9 @@ class Tier2Resolver:
         a11y = AccessibilityCollector() if want_a11y else None
         headers = HeaderCollector() if want_headers else None
         storage_state = StorageStateCollector() if want_storage else None
+        # Checkpoints only matter when there is a HAR to correlate them against
+        # (§2b layer 5); without capture there is nothing to attribute.
+        recorder = CheckpointRecorder() if want_har else None
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
@@ -362,7 +387,14 @@ class Tier2Resolver:
                     )
                     try:
                         self._crawl(
-                            context, config, gate, result, console, a11y, headers
+                            context,
+                            config,
+                            gate,
+                            result,
+                            console,
+                            a11y,
+                            headers,
+                            recorder,
                         )
                         # Storage state is a context-level capture (cookies +
                         # localStorage span pages), taken once after the crawl and
@@ -402,6 +434,10 @@ class Tier2Resolver:
                 storage_state.write(storage_state_path)
                 result.storage_state = storage_state.signal
                 result.storage_state_path = storage_state_path
+            # The action timeline the crawl recorded (§2b layer 5). Just the
+            # timestamps; the HAR they correlate against is the local-only artifact.
+            if recorder is not None:
+                result.checkpoints = recorder.checkpoints
         finally:
             if owns_client:
                 client.close()
@@ -416,6 +452,7 @@ class Tier2Resolver:
         console: ConsoleCollector | None = None,
         a11y: AccessibilityCollector | None = None,
         headers: HeaderCollector | None = None,
+        recorder: CheckpointRecorder | None = None,
     ) -> None:
         seen: set[str] = set()
         url: str | None = config.target
@@ -430,13 +467,18 @@ class Tier2Resolver:
             if console is not None:
                 console.attach(page)
             try:
+                # Mark the navigation just before it fires, so layer-5 correlation
+                # can attribute the load's requests to it (§2b). One "load" mark per
+                # page; a paginated crawl records several.
+                if recorder is not None:
+                    recorder.mark("load")
                 response = page.goto(url, wait_until="networkidle")
                 # Record the main document's response headers (§2c), if any.
                 if headers is not None and response is not None:
                     headers.capture(response.headers)
                 self._await_items(page, config)
                 if _requires_browser(config):
-                    _exhaust_infinite_scroll(page)
+                    _exhaust_infinite_scroll(page, recorder)
                 html = page.content()
                 # Snapshot the a11y tree after the page has fully rendered.
                 if a11y is not None:
@@ -534,6 +576,7 @@ def run_report(
     result.tiers_attempted = attempted
     _discover_api_surface(config, client, result)
     _synthesize_from_capture(config, result)
+    _correlate_from_capture(config, result)
     return result
 
 
@@ -547,6 +590,21 @@ def _synthesize_from_capture(config: ExtractionConfig, result: RunResult) -> Non
     if result.har_path is None:
         return
     result.synthesized_spec = synthesize_from_har(result.har_path, config.target)
+
+
+def _correlate_from_capture(config: ExtractionConfig, result: RunResult) -> None:
+    """Attribute the captured HAR's requests to the run's actions (§2b layer 5).
+
+    Runs only when a HAR was captured and the browser tier recorded action
+    checkpoints; it reads that local file, never the network, and never raises —
+    an unreadable HAR or nothing attributable simply leaves `action_correlation`
+    None. The attribution is a time-window approximation, not proof (§2b).
+    """
+    if result.har_path is None or not result.checkpoints:
+        return
+    result.action_correlation = correlate(
+        result.checkpoints, result.har_path, config.target
+    )
 
 
 def _discover_api_surface(
