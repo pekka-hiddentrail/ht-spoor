@@ -9,6 +9,7 @@ routed per scenario. Asserts against the run's discovered spec and the summary.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ import httpx
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from spoor.api_discovery.correlation import Checkpoint, correlate
 from spoor.api_discovery.synthesis import synthesize_from_har
 from spoor.core import extract
 from spoor.core.config import load_config
@@ -24,10 +26,16 @@ from spoor.operational.observability import RunSummary
 
 scenarios("api_discovery.feature")
 
-# The target the run is pointed at (see `_CONFIG`); layer-4 synthesis clusters
-# only requests same-origin with this, so HAR fixtures below use its origin.
+# The target the run is pointed at (see `_CONFIG`); layer-4 synthesis and layer-5
+# correlation cluster only requests same-origin with this, so HAR fixtures below
+# use its origin.
 _TARGET = "http://localhost:8000/index.html"
 _ORIGIN = "http://localhost:8000"
+
+# A fixed base instant for layer-5 correlation fixtures; checkpoints and requests
+# are placed at whole-second offsets from it, so the time-window attribution is
+# deterministic (no wall-clock, no ports).
+_BASE = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 # A target page tier 1 can extract a record from, so the run stays on tier 1
 # (no escalation to a browser) and discovery is what the scenarios exercise.
@@ -348,3 +356,137 @@ def synth_doc_written(context: dict[str, Any]) -> None:
 @then("no API spec is synthesized")
 def synth_none(context: dict[str, Any]) -> None:
     assert context["synth"] is None
+
+
+# --- Given: layer-5 correlation fixtures ---------------------------------
+
+
+def _har_entry_at(
+    method: str, url: str, second: int, mime: str = "application/json"
+) -> dict[str, Any]:
+    started = (_BASE + timedelta(seconds=second)).isoformat()
+    entry = _har_entry(method, url, mime)
+    entry["startedDateTime"] = started
+    return entry
+
+
+@given(parsers.parse('a checkpoint "{label}" at second {second:d}'))
+def checkpoint_at(context: dict[str, Any], label: str, second: int) -> None:
+    checkpoints = context.setdefault("checkpoints", [])
+    checkpoints.append(Checkpoint(label=label, at=_BASE + timedelta(seconds=second)))
+
+
+@given(
+    parsers.parse(
+        'a captured HAR with a "{method}" JSON request to "{path}" at second {sec:d}'
+    )
+)
+@given(
+    parsers.parse(
+        'the captured HAR also has a "{method}" JSON request to "{path}" '
+        "at second {sec:d}"
+    )
+)
+def har_request_at(
+    context: dict[str, Any], tmp_path: Path, method: str, path: str, sec: int
+) -> None:
+    _add_har_entry(context, tmp_path, _har_entry_at(method, _ORIGIN + path, sec))
+
+
+@given(
+    parsers.parse(
+        'a captured HAR with a same-origin JSON request to "{path}" at second {sec:d}'
+    )
+)
+def har_same_origin_at(
+    context: dict[str, Any], tmp_path: Path, path: str, sec: int
+) -> None:
+    _add_har_entry(context, tmp_path, _har_entry_at("GET", _ORIGIN + path, sec))
+
+
+@given(parsers.parse("the captured HAR also has a cross-origin JSON request "
+                     "at second {sec:d}"))
+def har_cross_origin_at(context: dict[str, Any], tmp_path: Path, sec: int) -> None:
+    _add_har_entry(
+        context, tmp_path, _har_entry_at("GET", "http://cdn.example.com/api/track", sec)
+    )
+
+
+@given("no action checkpoints were recorded")
+def no_checkpoints(context: dict[str, Any]) -> None:
+    context["checkpoints"] = []
+
+
+# --- When: layer-5 correlation -------------------------------------------
+
+
+@when("I correlate the captured requests with the actions")
+def run_correlation(context: dict[str, Any]) -> None:
+    har = context["har_path"]
+    checkpoints = context.get("checkpoints", [])
+    corr = correlate(checkpoints, har, _TARGET)
+    context["correlation"] = corr
+    context["summary"] = RunSummary.from_result(
+        RunResult(
+            records=[], har_path=har, checkpoints=checkpoints, action_correlation=corr
+        )
+    )
+
+
+# --- Then: layer-5 correlation -------------------------------------------
+
+
+@then(parsers.parse('the action "{label}" is credited with a "{method}" '
+                    'endpoint for "{path}"'))
+def action_credited(
+    context: dict[str, Any], label: str, method: str, path: str
+) -> None:
+    corr = context["correlation"]
+    assert corr is not None
+    actions = {a.label: a for a in corr.actions}
+    assert label in actions, f"{label} not in {list(actions)}"
+    assert f"{method} {path}" in actions[label].endpoints, (
+        f"{method} {path} not in {actions[label].endpoints}"
+    )
+
+
+@then(
+    parsers.re(
+        r"the correlation credits (?P<reqs>\d+) requests? "
+        r"across (?P<acts>\d+) actions?"
+    )
+)
+def correlation_counts(context: dict[str, Any], reqs: str, acts: str) -> None:
+    corr = context["correlation"]
+    assert corr is not None
+    assert corr.request_count == int(reqs)
+    assert corr.action_count == int(acts)
+
+
+@then("a correlation document is written to the local-only cache")
+def correlation_doc_written(context: dict[str, Any]) -> None:
+    corr = context["correlation"]
+    assert corr.doc_path is not None
+    doc = Path(corr.doc_path)
+    assert doc.is_file()
+    data = json.loads(doc.read_text(encoding="utf-8"))
+    assert data["actions"]
+    # The bounded-claim caveat travels with the local-only document (§2b).
+    assert "not proven" in data["note"]
+
+
+@then("the run summary reports the correlated counts, not the paths")
+def correlation_summary_counts_only(context: dict[str, Any]) -> None:
+    corr = context["correlation"]
+    rendered = context["summary"].render()
+    assert f"{corr.request_count} requests likely triggered" in rendered
+    assert f"by {corr.action_count} actions" in rendered
+    # §2h: counts only — no templated path leaks into the shared summary.
+    for action in corr.actions:
+        for endpoint in action.endpoints:
+            assert endpoint not in rendered
+
+
+@then("nothing is correlated")
+def correlation_none(context: dict[str, Any]) -> None:
+    assert context["correlation"] is None

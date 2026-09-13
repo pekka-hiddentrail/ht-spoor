@@ -83,7 +83,11 @@ run summary (§2d). When a run captures a HAR, it additionally synthesizes an AP
 spec by clustering the recorded requests into templated endpoints (`/users/1`,
 `/users/2` → `/users/{id}`) and writes that OpenAPI document to the local-only
 cache — a bounded, inference-from-observed-traffic map, never a complete-API
-claim (§2b layer 4). The browser tier can
+claim (§2b layer 4). It also correlates those requests back to the actions that
+likely triggered them — marking a checkpoint before each page load and scroll,
+then attributing each request to the action whose time window it fell in — a
+time-window approximation, never proven causation (§2b layer 5); the per-action
+map stays local-only, only counts reach the summary. The browser tier can
 opt into capturing signals (§2c) — HAR, console output/JS errors, the
 accessibility tree, response-header fingerprints, and client-side storage state
 — written to a local-only, git-ignored cache; only safe derived facts reach

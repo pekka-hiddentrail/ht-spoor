@@ -24,7 +24,20 @@
 # see the §2b layer-4 decision note). It reads only the local HAR — no network —
 # and is a bounded, inference-from-observed-traffic claim, never "the complete API".
 # The synthesized document is written to the local-only cache; only counts reach
-# shared output (§2h). Layer 5 (action-to-endpoint correlation) is still to come.
+# shared output (§2h).
+#
+# Layer 5 (action-to-endpoint correlation) is the final section: the browser tier
+# marks a timestamped checkpoint before each simulated action (page load, each
+# scroll); afterward, each captured request is attributed to the action whose time
+# window it fell in (the last checkpoint at or before the request). This turns a
+# flat endpoint list into "this action likely triggered these endpoints". It is a
+# time-window approximation, never proven causation (§2b): background polling or
+# analytics that fired in the same window are attributed too, and the output says
+# so. Same generic same-origin/JSON filter and ID templating as layer 4, reading
+# only local state; the correlation document is local-only, only counts are shared
+# (§2h). These scenarios drive the pure correlation engine directly with synthetic
+# checkpoints + a captured HAR; the in-vivo browser scroll->fetch correlation (a
+# network-driven feed fixture) is a stated follow-up (see the §2b layer-5 note).
 
 Feature: A run discovers an official API spec when the target serves one
   As someone mapping a product's API surface
@@ -156,3 +169,45 @@ Feature: A run discovers an official API spec when the target serves one
     Given a run that captured no HAR
     When I synthesize an API spec from the captured HAR
     Then no API spec is synthesized
+
+  # --- Layer 5: action-to-endpoint correlation -----------------------------
+
+  Scenario: Each request is credited to the action whose window it fell in
+    Given a checkpoint "load" at second 0
+    And a checkpoint "scroll #1" at second 10
+    And a captured HAR with a "GET" JSON request to "/api/feed" at second 2
+    And the captured HAR also has a "GET" JSON request to "/api/more" at second 12
+    When I correlate the captured requests with the actions
+    Then the action "load" is credited with a "GET" endpoint for "/api/feed"
+    And the action "scroll #1" is credited with a "GET" endpoint for "/api/more"
+    And the correlation credits 2 requests across 2 actions
+    And a correlation document is written to the local-only cache
+    And the run summary reports the correlated counts, not the paths
+
+  Scenario: An ID-bearing path is templated before it is credited
+    Given a checkpoint "load" at second 0
+    And a captured HAR with a "GET" JSON request to "/api/users/1" at second 1
+    And the captured HAR also has a "GET" JSON request to "/api/users/2" at second 2
+    When I correlate the captured requests with the actions
+    Then the action "load" is credited with a "GET" endpoint for "/api/users/{id}"
+    And the correlation credits 2 requests across 1 action
+
+  Scenario: A cross-origin request is not correlated to any action
+    Given a checkpoint "load" at second 0
+    And a captured HAR with a same-origin JSON request to "/api/me" at second 1
+    And the captured HAR also has a cross-origin JSON request at second 2
+    When I correlate the captured requests with the actions
+    Then the action "load" is credited with a "GET" endpoint for "/api/me"
+    And the correlation credits 1 request across 1 action
+
+  Scenario: A request that predates every action is not correlated
+    Given a checkpoint "load" at second 5
+    And a captured HAR with a "GET" JSON request to "/api/early" at second 1
+    When I correlate the captured requests with the actions
+    Then nothing is correlated
+
+  Scenario: A run that recorded no action checkpoints correlates nothing
+    Given a captured HAR with a "GET" JSON request to "/api/me" at second 1
+    And no action checkpoints were recorded
+    When I correlate the captured requests with the actions
+    Then nothing is correlated

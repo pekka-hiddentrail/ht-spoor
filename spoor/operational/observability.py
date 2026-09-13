@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from spoor.api_discovery.correlation import ActionCorrelation
 from spoor.api_discovery.discovery import DiscoveredSpec
 from spoor.api_discovery.graphql import DiscoveredGraphQL
 from spoor.api_discovery.synthesis import SynthesizedSpec
@@ -70,6 +71,12 @@ class RunSummary:
     # `synthesized_spec.doc_path` — a synthesized path can embed an un-clustered
     # secret, so promoting paths to shared output waits for a redaction slice (§2h).
     synthesized_spec: SynthesizedSpec | None
+    # Captured requests attributed to the action that likely triggered them (§2b
+    # layer 5), if a HAR and action checkpoints were captured. Counts surface here;
+    # the correlation document (with the templated paths) stays local-only at
+    # `action_correlation.doc_path`, same §2h reasoning as the synthesized spec. A
+    # time-window approximation, not proven causation (§2b).
+    action_correlation: ActionCorrelation | None
 
     @classmethod
     def from_result(cls, result: RunResult) -> RunSummary:
@@ -115,6 +122,7 @@ class RunSummary:
                 else None
             ),
             synthesized_spec=result.synthesized_spec,
+            action_correlation=result.action_correlation,
         )
 
     @property
@@ -208,6 +216,16 @@ class RunSummary:
                 f"  api synth:     {syn.endpoint_count} endpoints synthesized "
                 f"from {syn.request_count} requests"
             )
+        # Action-correlation counts, only when a HAR + checkpoints were captured and
+        # something was attributable (§2b layer 5). Counts only — the per-action
+        # templated paths stay in the local-only correlation document (§2h). Worded
+        # "likely" to hold §2b's bounded claim: a time window, not proven causation.
+        if self.action_correlation is not None:
+            corr = self.action_correlation
+            lines.append(
+                f"  api actions:   {corr.request_count} requests likely triggered "
+                f"by {corr.action_count} actions"
+            )
         # Capture lines: only shown when something was captured, so an ordinary run
         # stays quiet; named raw + local so it's clear this isn't shared output (§2h).
         if self.har_path is not None:
@@ -236,5 +254,13 @@ class RunSummary:
             lines.append(
                 "  captured:      synthesized OpenAPI (local-only) "
                 f"{self.synthesized_spec.doc_path}"
+            )
+        if (
+            self.action_correlation is not None
+            and self.action_correlation.doc_path is not None
+        ):
+            lines.append(
+                "  captured:      action correlation (local-only) "
+                f"{self.action_correlation.doc_path}"
             )
         return "\n".join(lines)
