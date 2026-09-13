@@ -123,7 +123,7 @@ scraping as an anonymous visitor.
 - API discovery: OpenAPI/Swagger discovery, GraphQL introspection, HAR-based synthesis, and action-to-endpoint correlation
 - Tier-3 self-healing: scored matching, uncertain-match handling, cross-run fingerprint persistence, listing field/container healing, re-anchoring, and visual-signal corroboration
 - Authenticated targets: supply a captured browser session (cookies + `localStorage`) via `session:` to scrape login-gated pages — "bring-your-own-session"; Spoor performs no login itself
-- Read-only map serving: each run remembers its extracted records — and a safe summary of the API surface it observed (any published spec/GraphQL endpoint, plus endpoint/request counts) — for the target URL, and `spoor serve` exposes them over a small read-only HTTP API (list mapped domains; fetch a URL's records and observed API surface with how long ago it was captured). It only answers questions — it never changes a site or the stored map, and secrets are redacted from what it returns. Install with `pip install 'ht-spoor[serve]'`
+- Read-only map serving: each run remembers its extracted records — and a safe summary of the API surface it observed (any published spec/GraphQL endpoint, plus endpoint/request counts) — for the target URL. Two ways to consult it without re-crawling: `spoor serve` exposes a small read-only HTTP API, and `spoor serve-mcp` exposes the same data to agents as read-only MCP tools (list mapped domains; fetch a URL's records and observed API surface with how long ago it was captured). Both only answer questions — they never change a site or the stored map, and secrets are redacted from what they return. Install with `pip install 'ht-spoor[serve]'`
 
 ### Optional capture signals (browser tier)
 
@@ -138,8 +138,7 @@ Captured artifacts are written to a local-only, git-ignored cache.
 ### Still on the roadmap
 
 - Default-on capture behavior (today capture remains opt-in)
-- MCP server mode for the map (the read-only REST API above ships today; an MCP interface over the same data is next)
-- A "re-check this now" request for a served map entry (today the API always shows how old an answer is and never re-fetches on its own)
+- A "re-check this now" request for a served map entry (today the serving layer always shows how old an answer is and never re-fetches on its own)
 
 ## Contributing
 

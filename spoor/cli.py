@@ -100,5 +100,25 @@ def serve(
     uvicorn.run(create_app(MapStore()), host=host, port=port)  # pragma: no cover
 
 
+@app.command(name="serve-mcp")
+def serve_mcp() -> None:
+    """Serve the captured map to agents over a read-only MCP server (stdio).
+
+    The same read-only answers as `spoor serve`, exposed as MCP tools for an
+    agent to consult; it never changes a target or the stored map. Requires the
+    optional serving extras: pip install 'ht-spoor[serve]'.
+    """
+    try:
+        from spoor.serving.mcp_server import create_mcp_server
+    except ModuleNotFoundError as exc:  # pragma: no cover - exercised via message
+        raise typer.BadParameter(
+            "The serving extras are not installed. Run: pip install 'ht-spoor[serve]'"
+        ) from exc
+    import asyncio
+
+    server = create_mcp_server(MapStore())
+    asyncio.run(server.run_stdio_async())  # pragma: no cover
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()

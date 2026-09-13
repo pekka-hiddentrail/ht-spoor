@@ -18,13 +18,12 @@ and its age; v1 shows the age and never auto-rechecks (§2f, §9 backlog).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 
-from spoor.security.redaction import redact_records, redact_value
 from spoor.serving.store import MapStore
+from spoor.serving.views import map_view
 
 
 def create_app(store: MapStore) -> FastAPI:
@@ -54,20 +53,7 @@ def create_app(store: MapStore) -> FastAPI:
         if entry is None:
             # Never fabricate an answer for a URL that was never mapped.
             raise HTTPException(status_code=404, detail="url not mapped")
-        captured = datetime.fromisoformat(entry.captured_at)
-        age_seconds = (datetime.now(UTC) - captured).total_seconds()
-        return {
-            "url": entry.url,
-            "domain": entry.domain,
-            "tier": entry.tier,
-            "records": redact_records(entry.records),
-            # The observed API surface: the §2h-safe projection the store holds
-            # (spec/graphql whole, synthesized/correlation as counts), run through
-            # the same redaction guard on the way out — counts are untouched, a
-            # secret-shaped URL is redacted like any other shared string.
-            "api_surface": redact_value(entry.api_surface),
-            "captured_at": entry.captured_at,
-            "age_seconds": age_seconds,
-        }
+        # Shared with the MCP surface: one redaction-guarded view (§2f/§2h).
+        return map_view(entry)
 
     return app

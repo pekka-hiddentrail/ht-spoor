@@ -37,7 +37,8 @@ are authored when their phase begins, not up front.
 | `self_healing_reanchor.feature` | Tier-3 cross-run re-anchoring: a confident heal becomes the new anchor | §2 / §2d | `spoor/core` | 3 |
 | `self_healing_container.feature` | Tier-3 heals a broken row *container* (`item` selector), with a repeating-group gate + ambiguity refusal | §2 / §2d | `spoor/core` | 3 |
 | `self_healing_visual.feature` | Tier-3 perceptual-hash visual signal: a cropped-screenshot difference hash heals a low-text element whose markup churns | §2 / §2d | `spoor/core` | 3 |
-| `serving.feature` | Read-only serving of a captured map: REST API delivered (MCP mode + exploration-graph serving later) | §2f | `spoor/serving` | 4 / 5 |
+| `serving.feature` | Read-only serving of a captured map over a REST API (records + observed API surface, with freshness) | §2f | `spoor/serving` | 4 / 5 |
+| `serving_mcp.feature` | Read-only serving of the same map over an MCP server (agent-facing tools; exploration-graph serving later) | §2f | `spoor/serving` | 4 / 5 |
 | `exploration.feature` | Exploration mode + safety | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
@@ -172,9 +173,15 @@ templated paths never leave the machine) — with a freshness age, never a
 state-changing operation (the §2f read-only non-negotiable, proven structurally
 by a scenario asserting every route is GET-only). It serves the same records the
 output pipeline writes, never a raw local-only capture (§2h), and both records
-and surface pass through the redaction guard on the way out. The **MCP server
-mode** and a **force-recheck** endpoint sit over the same store and are deferred
-to follow-on slices. `exploration.feature` (§2e) and `testgen.feature` (§2g),
+and surface pass through the redaction guard on the way out. `serving_mcp.feature`
+(§2f) is the second consumption mode: an MCP server (`spoor/serving/mcp_server.py`,
+run by `spoor serve-mcp`) exposing the same map to agents as read-only tools
+(`list_mapped_domains`, `get_map`). It shares the exact store and the single
+`views.map_view` answer-builder with the REST surface — so freshness and §2h
+redaction live in one place — and its read-only non-negotiable is pinned by a
+scenario asserting the exposed tool set is exactly that allowlist and every tool
+is marked read-only and non-destructive. A **force-recheck** endpoint sits over
+the same store and is deferred to a follow-on slice. `exploration.feature` (§2e) and `testgen.feature` (§2g),
 along with the sandbox registry (§2e/§2h), are listed in the table above ahead of
 implementation; their feature files are authored when their phase begins (see the
 Phase column).
