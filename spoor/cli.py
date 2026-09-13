@@ -38,7 +38,7 @@ def main() -> None:
 
 @app.command()
 def run(
-    config: Annotated[Path, typer.Argument(help="Path to a §2a config file.")],
+    config: Annotated[Path, typer.Argument(help="Path to a config file.")],
     output: Annotated[
         Path, typer.Option("-o", "--output", help="Where to write output.")
     ] = Path("output.json"),
@@ -51,7 +51,7 @@ def run(
         ),
     ] = None,
 ) -> None:
-    """Run an extraction config against its target (Phase 1)."""
+    """Run a config against its target and write the extracted records."""
     cfg = load_config(config.read_text(encoding="utf-8"))
     try:
         fmt = resolve_format(output, output_format)
