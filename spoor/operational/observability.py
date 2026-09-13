@@ -2,10 +2,10 @@
 
 §2d asks for "a structured run summary — items scraped, how often each tier had
 to escalate, error counts ... — so a user can tell whether a run actually went
-well without reading raw logs." This is the Phase-1 slice: the facts the current
-machinery can honestly report. Error/retry classification (needs the Phase-3.5
-retry mechanism) and "which fields fell back to tier 3/4" (needs those tiers) are
-deliberately absent, not faked — see the run-observability decision note in §2d.
+well without reading raw logs." Error/retry classification now surfaces here as
+the dead-letter log and the transient-retry count (Phase 3.5, §2d); "which
+fields fell back to tier 3/4" beyond the tier-3 heal counts still waits on the
+higher tiers, and is deliberately absent rather than faked (§2d decision note).
 
 Placement follows the §0 layout: the raw per-run facts are stamped on `RunResult`
 by the dispatcher (core); this module is the operator-facing *presentation* of
@@ -22,6 +22,7 @@ from spoor.api_discovery.discovery import DiscoveredSpec
 from spoor.api_discovery.graphql import DiscoveredGraphQL
 from spoor.api_discovery.synthesis import SynthesizedSpec
 from spoor.core.extract import RunResult
+from spoor.operational.retry import FetchFailure
 from spoor.signals.accessibility import AccessibilitySignal
 from spoor.signals.console import ConsoleSignal
 from spoor.signals.headers import HeaderSignal
@@ -37,6 +38,13 @@ class RunSummary:
     resolved_tier: int | None
     tiers_attempted: list[int]
     blocked: list[str]
+    # URLs the tier-1 fetch ultimately could not retrieve (§2d Phase 3.5): a
+    # permanent error or a transient one that exhausted its retries. Each carries
+    # a generic HTTP-category reason (§0) — never a captured secret (§2h).
+    dead_letter: list[FetchFailure]
+    # Transient fetch failures that were retried this run, whether or not they
+    # eventually succeeded (§2d) — a resilience signal, quiet when zero.
+    retries: int
     # The local-only HAR the browser tier captured, if any (ROADMAP.md §2b/§2h).
     # A string (not a Path) so the summary stays trivially serializable (§2d).
     har_path: str | None
@@ -101,6 +109,8 @@ class RunSummary:
             resolved_tier=result.tier,
             tiers_attempted=list(attempted),
             blocked=list(result.blocked),
+            dead_letter=list(result.dead_letter),
+            retries=result.retries,
             har_path=str(result.har_path) if result.har_path is not None else None,
             api_spec=result.api_spec,
             graphql=result.graphql,
@@ -185,6 +195,28 @@ class RunSummary:
             f"  blocked:       {len(self.blocked)}",
         ]
         lines.extend(f"    - {url} (robots.txt)" for url in self.blocked)
+        # Dead-letter log, only when a fetch failed unrecoverably this run (§2d).
+        # Reasons are generic HTTP categories, safe to surface (§0/§2h); the URLs
+        # are the config's own request URLs, shown like `blocked` (a query string
+        # can embed a token, so URL-level redaction across both is a candidate for
+        # the §2h redaction slice — noted in the decision record). Quiet on a
+        # clean run.
+        if self.dead_letter:
+            lines.append(
+                f"  dead-letter:   {len(self.dead_letter)} (unrecoverable fetch)"
+            )
+            lines.extend(
+                f"    - {f.url} ({f.reason}, {f.attempts} attempt"
+                f"{'' if f.attempts == 1 else 's'})"
+                for f in self.dead_letter
+            )
+        # Retries, only when a transient failure was retried (§2d) — a resilience
+        # note; stays quiet on a run that hit no transient errors.
+        if self.retries:
+            lines.append(
+                f"  retries:       {self.retries} transient failure"
+                f"{'' if self.retries == 1 else 's'} retried"
+            )
         # Self-healing outcome, only when tier 3 actually healed something this run
         # (§2/§2d). Confident heals filled a field; uncertain matches were flagged
         # for review and left the field null (never silently guessed). Counts only,
