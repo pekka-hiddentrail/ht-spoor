@@ -40,6 +40,14 @@ def redact_text_twice(context: dict[str, Any], text: str) -> None:
     context["second"] = redact(once)
 
 
+@when("I redact the text:")
+def redact_docstring(context: dict[str, Any], docstring: str) -> None:
+    # Multi-line secrets (e.g. a PEM key block) can't ride the inline
+    # `I redact "..."` step, so this variant takes a Gherkin docstring.
+    context["input"] = docstring
+    context["result"] = redact(docstring)
+
+
 # --- Then ----------------------------------------------------------------
 
 
@@ -51,6 +59,11 @@ def result_is(context: dict[str, Any], expected: str) -> None:
 @then("the result is unchanged")
 def result_unchanged(context: dict[str, Any]) -> None:
     assert context["result"] == context["input"]
+
+
+@then(parsers.parse('the result no longer contains "{substring}"'))
+def result_lacks_substring(context: dict[str, Any], substring: str) -> None:
+    assert substring not in context["result"]
 
 
 @then("the two results are identical")
