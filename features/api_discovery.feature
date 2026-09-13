@@ -15,8 +15,16 @@
 # (openapi/swagger/api-docs) — first in the landing page's HTML, then inside the
 # same-origin JS bundles it loads (where SPAs usually keep that config). Every
 # candidate is validated exactly as strictly as a conventional probe, so a false
-# lead is never reported. Spec synthesis from captured traffic is a later §2b
-# slice.
+# lead is never reported.
+#
+# Layer 4 (spec synthesis) is the last section: when a run captured a HAR, cluster
+# the API requests it recorded into templated endpoints (/users/1, /users/2 -> the
+# one endpoint /users/{id}) and synthesize an OpenAPI document from them. This is
+# reimplemented directly over the captured HAR (no mitmproxy2swagger dependency;
+# see the §2b layer-4 decision note). It reads only the local HAR — no network —
+# and is a bounded, inference-from-observed-traffic claim, never "the complete API".
+# The synthesized document is written to the local-only cache; only counts reach
+# shared output (§2h). Layer 5 (action-to-endpoint correlation) is still to come.
 
 Feature: A run discovers an official API spec when the target serves one
   As someone mapping a product's API surface
@@ -114,3 +122,37 @@ Feature: A run discovers an official API spec when the target serves one
     Given a target that serves no spec at any conventional path
     When I run the config and capture the summary
     Then the run reports no discovered GraphQL schema
+
+  # --- Layer 4: spec synthesis from a captured HAR -------------------------
+
+  Scenario: Repeated ID paths in a captured HAR synthesize one templated endpoint
+    Given a captured HAR with GET JSON requests to "/api/users/1", "/api/users/2", "/api/users/3"
+    When I synthesize an API spec from the captured HAR
+    Then the synthesized spec has a "GET" endpoint for "/api/users/{id}"
+    And the synthesized spec clustered 3 requests into 1 endpoint
+    And the run summary reports the synthesized endpoint count, not the paths
+    And a synthesized OpenAPI document is written to the local-only cache
+
+  Scenario: Distinct methods and paths stay distinct endpoints
+    Given a captured HAR with a "GET" JSON request to "/api/products/10"
+    And the captured HAR also has a "POST" JSON request to "/api/orders"
+    When I synthesize an API spec from the captured HAR
+    Then the synthesized spec has a "GET" endpoint for "/api/products/{id}"
+    And the synthesized spec has a "POST" endpoint for "/api/orders"
+
+  Scenario: Non-JSON responses are not treated as API endpoints
+    Given a captured HAR whose only requests return HTML, not JSON
+    When I synthesize an API spec from the captured HAR
+    Then no API spec is synthesized
+
+  Scenario: A cross-origin request in the HAR is not clustered into the surface
+    Given a captured HAR with a same-origin JSON request to "/api/me"
+    And the captured HAR also has a cross-origin JSON request
+    When I synthesize an API spec from the captured HAR
+    Then the synthesized spec has a "GET" endpoint for "/api/me"
+    And the synthesized spec clustered 1 request into 1 endpoint
+
+  Scenario: A run with no captured HAR synthesizes nothing
+    Given a run that captured no HAR
+    When I synthesize an API spec from the captured HAR
+    Then no API spec is synthesized

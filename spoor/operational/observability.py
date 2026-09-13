@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from spoor.api_discovery.discovery import DiscoveredSpec
 from spoor.api_discovery.graphql import DiscoveredGraphQL
+from spoor.api_discovery.synthesis import SynthesizedSpec
 from spoor.core.extract import RunResult
 from spoor.signals.accessibility import AccessibilitySignal
 from spoor.signals.console import ConsoleSignal
@@ -63,6 +64,12 @@ class RunSummary:
     # state stays in the local-only file at `storage_state_path` (§2h).
     storage_state: StorageStateSignal | None
     storage_state_path: str | None
+    # API spec synthesized by clustering the captured HAR's requests into
+    # templated endpoints (§2b layer 4), if a HAR was captured. Counts surface
+    # here; the OpenAPI document (with the templated paths) stays local-only at
+    # `synthesized_spec.doc_path` — a synthesized path can embed an un-clustered
+    # secret, so promoting paths to shared output waits for a redaction slice (§2h).
+    synthesized_spec: SynthesizedSpec | None
 
     @classmethod
     def from_result(cls, result: RunResult) -> RunSummary:
@@ -107,6 +114,7 @@ class RunSummary:
                 if result.storage_state_path is not None
                 else None
             ),
+            synthesized_spec=result.synthesized_spec,
         )
 
     @property
@@ -191,6 +199,15 @@ class RunSummary:
                 f"{s.local_storage_count} localStorage entries "
                 f"({s.origin_count} origins)"
             )
+        # Synthesized-spec counts, only when a HAR was captured and clustered into
+        # endpoints (§2b layer 4). Counts only — the templated paths stay in the
+        # local-only OpenAPI document, never surfaced here (§2h).
+        if self.synthesized_spec is not None:
+            syn = self.synthesized_spec
+            lines.append(
+                f"  api synth:     {syn.endpoint_count} endpoints synthesized "
+                f"from {syn.request_count} requests"
+            )
         # Capture lines: only shown when something was captured, so an ordinary run
         # stays quiet; named raw + local so it's clear this isn't shared output (§2h).
         if self.har_path is not None:
@@ -211,5 +228,13 @@ class RunSummary:
             lines.append(
                 "  captured:      raw storage state (local-only) "
                 f"{self.storage_state_path}"
+            )
+        if (
+            self.synthesized_spec is not None
+            and self.synthesized_spec.doc_path is not None
+        ):
+            lines.append(
+                "  captured:      synthesized OpenAPI (local-only) "
+                f"{self.synthesized_spec.doc_path}"
             )
         return "\n".join(lines)

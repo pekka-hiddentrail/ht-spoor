@@ -9,17 +9,25 @@ routed per scenario. Asserts against the run's discovered spec and the summary.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from spoor.api_discovery.synthesis import synthesize_from_har
 from spoor.core import extract
 from spoor.core.config import load_config
+from spoor.core.extract import RunResult
 from spoor.operational.observability import RunSummary
 
 scenarios("api_discovery.feature")
+
+# The target the run is pointed at (see `_CONFIG`); layer-4 synthesis clusters
+# only requests same-origin with this, so HAR fixtures below use its origin.
+_TARGET = "http://localhost:8000/index.html"
+_ORIGIN = "http://localhost:8000"
 
 # A target page tier 1 can extract a record from, so the run stays on tier 1
 # (no escalation to a browser) and discovery is what the scenarios exercise.
@@ -133,7 +141,88 @@ def robots_disallows(context: dict[str, Any], path: str) -> None:
     )
 
 
+# --- Given: layer-4 captured-HAR fixtures --------------------------------
+
+
+def _har_entry(method: str, url: str, mime: str = "application/json") -> dict[str, Any]:
+    return {
+        "request": {"method": method, "url": url},
+        "response": {"status": 200, "content": {"mimeType": mime}},
+    }
+
+
+def _add_har_entry(
+    context: dict[str, Any], tmp_path: Path, entry: dict[str, Any]
+) -> None:
+    entries = context.setdefault("har_entries", [])
+    entries.append(entry)
+    har = {
+        "log": {
+            "version": "1.2",
+            "creator": {"name": "Playwright", "version": "1.62.0"},
+            "entries": entries,
+        }
+    }
+    path = tmp_path / "net.har"
+    path.write_text(json.dumps(har), encoding="utf-8")
+    context["har_path"] = path
+
+
+@given(
+    parsers.parse(
+        'a captured HAR with GET JSON requests to "{p1}", "{p2}", "{p3}"'
+    )
+)
+def har_three_get(
+    context: dict[str, Any], tmp_path: Path, p1: str, p2: str, p3: str
+) -> None:
+    for path in (p1, p2, p3):
+        _add_har_entry(context, tmp_path, _har_entry("GET", _ORIGIN + path))
+
+
+@given(parsers.parse('a captured HAR with a "{method}" JSON request to "{path}"'))
+@given(parsers.parse('the captured HAR also has a "{method}" JSON request to "{path}"'))
+def har_add_request(
+    context: dict[str, Any], tmp_path: Path, method: str, path: str
+) -> None:
+    _add_har_entry(context, tmp_path, _har_entry(method, _ORIGIN + path))
+
+
+@given(parsers.parse('a captured HAR with a same-origin JSON request to "{path}"'))
+def har_same_origin(context: dict[str, Any], tmp_path: Path, path: str) -> None:
+    _add_har_entry(context, tmp_path, _har_entry("GET", _ORIGIN + path))
+
+
+@given("the captured HAR also has a cross-origin JSON request")
+def har_cross_origin(context: dict[str, Any], tmp_path: Path) -> None:
+    _add_har_entry(
+        context, tmp_path, _har_entry("GET", "http://cdn.example.com/api/track")
+    )
+
+
+@given("a captured HAR whose only requests return HTML, not JSON")
+def har_html_only(context: dict[str, Any], tmp_path: Path) -> None:
+    _add_har_entry(
+        context, tmp_path, _har_entry("GET", _ORIGIN + "/page", mime="text/html")
+    )
+
+
+@given("a run that captured no HAR")
+def no_har(context: dict[str, Any]) -> None:
+    context["har_path"] = None
+
+
 # --- When ----------------------------------------------------------------
+
+
+@when("I synthesize an API spec from the captured HAR")
+def run_synthesis(context: dict[str, Any]) -> None:
+    har = context.get("har_path")
+    spec = synthesize_from_har(har, _TARGET) if har is not None else None
+    context["synth"] = spec
+    context["summary"] = RunSummary.from_result(
+        RunResult(records=[], har_path=har, synthesized_spec=spec)
+    )
 
 
 @when("I run the config and capture the summary")
@@ -208,3 +297,54 @@ def summary_graphql_observed(context: dict[str, Any]) -> None:
 @then("the run reports no discovered GraphQL schema")
 def reports_no_graphql(context: dict[str, Any]) -> None:
     assert context["result"].graphql is None
+
+
+# --- Then: layer-4 synthesis ---------------------------------------------
+
+
+@then(parsers.parse('the synthesized spec has a "{method}" endpoint for "{path}"'))
+def synth_has_endpoint(context: dict[str, Any], method: str, path: str) -> None:
+    spec = context["synth"]
+    assert spec is not None
+    assert any(e.method == method and e.path == path for e in spec.endpoints), (
+        f"{method} {path} not in {[(e.method, e.path) for e in spec.endpoints]}"
+    )
+
+
+@then(
+    parsers.re(
+        r"the synthesized spec clustered (?P<reqs>\d+) requests? "
+        r"into (?P<eps>\d+) endpoints?"
+    )
+)
+def synth_counts(context: dict[str, Any], reqs: str, eps: str) -> None:
+    spec = context["synth"]
+    assert spec is not None
+    assert spec.request_count == int(reqs)
+    assert spec.endpoint_count == int(eps)
+
+
+@then("the run summary reports the synthesized endpoint count, not the paths")
+def synth_summary_counts_only(context: dict[str, Any]) -> None:
+    spec = context["synth"]
+    rendered = context["summary"].render()
+    assert f"{spec.endpoint_count} endpoints synthesized" in rendered
+    # §2h: counts only — no templated path leaks into the shared summary.
+    for endpoint in spec.endpoints:
+        assert endpoint.path not in rendered
+
+
+@then("a synthesized OpenAPI document is written to the local-only cache")
+def synth_doc_written(context: dict[str, Any]) -> None:
+    spec = context["synth"]
+    assert spec.doc_path is not None
+    doc = Path(spec.doc_path)
+    assert doc.is_file()
+    data = json.loads(doc.read_text(encoding="utf-8"))
+    assert str(data["openapi"]).startswith("3.")
+    assert data["paths"]
+
+
+@then("no API spec is synthesized")
+def synth_none(context: dict[str, Any]) -> None:
+    assert context["synth"] is None
