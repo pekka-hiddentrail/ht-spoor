@@ -16,9 +16,17 @@ from fastapi.testclient import TestClient
 from pytest_bdd import given, parsers, scenarios, then, when
 from starlette.routing import Route
 
+from spoor.api_discovery.discovery import DiscoveredSpec
+from spoor.api_discovery.graphql import DiscoveredGraphQL
+from spoor.api_discovery.synthesis import SynthesizedEndpoint, SynthesizedSpec
 from spoor.security import storage
 from spoor.serving.api import create_app
-from spoor.serving.store import MapStore
+from spoor.serving.store import MapStore, shareable_api_surface
+
+# Marker segments planted in the local-only parts of the surface; the served
+# response must never contain them (§2h counts-only for synthesized paths).
+_SECRET_PATH_MARKER = "should-not-leak"
+_LOCAL_DOC_MARKER = "local-only-doc"
 
 scenarios("serving.feature")
 
@@ -52,6 +60,37 @@ def served_map(context: dict[str, Any], datatable: list[list[str]]) -> None:
         )
     context["client"] = TestClient(create_app(store))
     context["app"] = context["client"].app
+
+
+@given(
+    parsers.parse('the map records an observed API surface for "{url}"')
+)
+def record_api_surface(context: dict[str, Any], url: str) -> None:
+    # Build a run's observed surface with synthesized endpoints whose templated
+    # paths and doc path carry the leak markers, then project it through the
+    # §2h-safe helper the CLI uses — proving the projection drops the paths.
+    synthesized = SynthesizedSpec(
+        endpoints=(
+            SynthesizedEndpoint("GET", f"/api/{_SECRET_PATH_MARKER}/{{id}}", (200,)),
+            SynthesizedEndpoint("POST", f"/api/{_SECRET_PATH_MARKER}/orders", (201,)),
+            SynthesizedEndpoint("GET", f"/api/{_SECRET_PATH_MARKER}/status", (200,)),
+        ),
+        request_count=12,
+        doc_path=f"/tmp/{_LOCAL_DOC_MARKER}/openapi.json",
+    )
+    surface = shareable_api_surface(
+        api_spec=DiscoveredSpec("openapi", "3.0.0", "https://shop.example/openapi.json"),
+        graphql=DiscoveredGraphQL("https://shop.example/graphql", 42),
+        synthesized_spec=synthesized,
+        action_correlation=None,
+    )
+    MapStore().record(
+        url,
+        [{"title": "API Home"}],
+        tier=1,
+        api_surface=surface,
+        captured_at=datetime.fromisoformat("2020-01-01T00:00:00Z"),
+    )
 
 
 # --- When ----------------------------------------------------------------
@@ -92,6 +131,33 @@ def response_has_freshness(context: dict[str, Any]) -> None:
 @then(parsers.parse('the domains list contains "{domain}"'))
 def domains_list_contains(context: dict[str, Any], domain: str) -> None:
     assert domain in context["response"].json()["domains"]
+
+
+@then(parsers.parse('the API surface reports an "{kind}" spec'))
+def surface_spec_kind(context: dict[str, Any], kind: str) -> None:
+    surface = context["response"].json()["api_surface"]
+    assert surface["spec"]["kind"] == kind
+
+
+@then(parsers.parse("the API surface reports a GraphQL endpoint with {n:d} types"))
+def surface_graphql_types(context: dict[str, Any], n: int) -> None:
+    surface = context["response"].json()["api_surface"]
+    assert surface["graphql"]["types"] == n
+
+
+@then(parsers.parse("the API surface reports {n:d} synthesized endpoints"))
+def surface_synthesized_count(context: dict[str, Any], n: int) -> None:
+    surface = context["response"].json()["api_surface"]
+    assert surface["synthesized"]["endpoint_count"] == n
+
+
+@then("the served API surface exposes no templated endpoint path")
+def surface_hides_paths(context: dict[str, Any]) -> None:
+    # The whole served payload, as text, must contain neither the templated
+    # endpoint paths nor the local-only doc path (§2h counts-only).
+    body = context["response"].text
+    assert _SECRET_PATH_MARKER not in body
+    assert _LOCAL_DOC_MARKER not in body
 
 
 @then("every serving route is read-only")

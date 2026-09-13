@@ -7,7 +7,9 @@ checks against a previously-mapped site.
 NON-NEGOTIABLE (§2f/§2h, CLAUDE.md): this layer is READ-ONLY, always. It defines
 only GET routes — no route mutates the store or acts on a target — so the
 read-only guarantee is structural, not a matter of discipline. It serves the
-extracted records a run already produced, never a raw local-only capture, and —
+extracted records a run already produced — plus the §2h-safe projection of the
+observed API surface (published spec/GraphQL whole, synthesized/correlation as
+counts only) — never a raw local-only capture, and —
 because an API response is a shared surface §2h names explicitly — record values
 pass through the secret-redaction primitive on their way out (the local store may
 hold raw; the boundary out is redacted). Every answer carries the capture time
@@ -21,7 +23,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 
-from spoor.security.redaction import redact_records
+from spoor.security.redaction import redact_records, redact_value
 from spoor.serving.store import MapStore
 
 
@@ -59,6 +61,11 @@ def create_app(store: MapStore) -> FastAPI:
             "domain": entry.domain,
             "tier": entry.tier,
             "records": redact_records(entry.records),
+            # The observed API surface: the §2h-safe projection the store holds
+            # (spec/graphql whole, synthesized/correlation as counts), run through
+            # the same redaction guard on the way out — counts are untouched, a
+            # secret-shaped URL is redacted like any other shared string.
+            "api_surface": redact_value(entry.api_surface),
             "captured_at": entry.captured_at,
             "age_seconds": age_seconds,
         }

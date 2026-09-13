@@ -165,10 +165,14 @@ feature files make up tier-3 self-healing.
 over a captured map. A run remembers its extracted records for a URL in a
 persisted per-domain map (`spoor/serving/store.py`, under the local cache root),
 and the API (`spoor/serving/api.py`, FastAPI) answers `GET` queries about it —
-which domains are mapped, and a URL's records with a freshness age — never a
+which domains are mapped, and a URL's records — plus the §2h-safe projection of
+the API surface the run observed (any published spec/GraphQL endpoint served
+whole; the synthesized spec and action correlation as counts only, so their
+templated paths never leave the machine) — with a freshness age, never a
 state-changing operation (the §2f read-only non-negotiable, proven structurally
 by a scenario asserting every route is GET-only). It serves the same records the
-output pipeline writes, never a raw local-only capture (§2h). The **MCP server
+output pipeline writes, never a raw local-only capture (§2h), and both records
+and surface pass through the redaction guard on the way out. The **MCP server
 mode** and a **force-recheck** endpoint sit over the same store and are deferred
 to follow-on slices. `exploration.feature` (§2e) and `testgen.feature` (§2g),
 along with the sandbox registry (§2e/§2h), are listed in the table above ahead of

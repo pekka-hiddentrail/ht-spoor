@@ -123,7 +123,7 @@ scraping as an anonymous visitor.
 - API discovery: OpenAPI/Swagger discovery, GraphQL introspection, HAR-based synthesis, and action-to-endpoint correlation
 - Tier-3 self-healing: scored matching, uncertain-match handling, cross-run fingerprint persistence, listing field/container healing, re-anchoring, and visual-signal corroboration
 - Authenticated targets: supply a captured browser session (cookies + `localStorage`) via `session:` to scrape login-gated pages — "bring-your-own-session"; Spoor performs no login itself
-- Read-only map serving: each run remembers its extracted records for the target URL, and `spoor serve` exposes them over a small read-only HTTP API (list mapped domains; fetch a URL's records with how long ago it was captured). It only answers questions — it never changes a site or the stored map. Install with `pip install 'ht-spoor[serve]'`
+- Read-only map serving: each run remembers its extracted records — and a safe summary of the API surface it observed (any published spec/GraphQL endpoint, plus endpoint/request counts) — for the target URL, and `spoor serve` exposes them over a small read-only HTTP API (list mapped domains; fetch a URL's records and observed API surface with how long ago it was captured). It only answers questions — it never changes a site or the stored map, and secrets are redacted from what it returns. Install with `pip install 'ht-spoor[serve]'`
 
 ### Optional capture signals (browser tier)
 
@@ -139,7 +139,7 @@ Captured artifacts are written to a local-only, git-ignored cache.
 
 - Default-on capture behavior (today capture remains opt-in)
 - MCP server mode for the map (the read-only REST API above ships today; an MCP interface over the same data is next)
-- Serving the observed API surface alongside extracted records, and a "re-check this now" request
+- A "re-check this now" request for a served map entry (today the API always shows how old an answer is and never re-fetches on its own)
 
 ## Contributing
 

@@ -23,10 +23,55 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
 
+from spoor.api_discovery.correlation import ActionCorrelation
+from spoor.api_discovery.discovery import DiscoveredSpec
+from spoor.api_discovery.graphql import DiscoveredGraphQL
+from spoor.api_discovery.synthesis import SynthesizedSpec
 from spoor.security import storage
 
 # Subdirectory of the cache root holding one JSON file per mapped domain.
 MAPS_DIRNAME = "maps"
+
+
+def shareable_api_surface(
+    *,
+    api_spec: DiscoveredSpec | None,
+    graphql: DiscoveredGraphQL | None,
+    synthesized_spec: SynthesizedSpec | None,
+    action_correlation: ActionCorrelation | None,
+) -> dict[str, object] | None:
+    """Project a run's observed API surface to the §2h-shareable facts only.
+
+    Mirrors the observability layer's §2h split. The published spec and GraphQL
+    endpoint are non-sensitive and kept whole (kind/version/url, url/types), but
+    the *synthesized* spec and action correlation are reduced to **counts only** —
+    their templated paths (and the local-only ``doc_path``) can embed an
+    un-clustered secret segment, so they never enter this shared surface at all.
+    Returns None when nothing was observed, so a URL with no API surface stores
+    nothing rather than an empty shell.
+    """
+    surface: dict[str, object] = {}
+    if api_spec is not None:
+        surface["spec"] = {
+            "kind": api_spec.kind,
+            "version": api_spec.version,
+            "url": api_spec.url,
+        }
+    if graphql is not None:
+        surface["graphql"] = {"url": graphql.url, "types": graphql.types}
+    if synthesized_spec is not None:
+        # Counts only — the templated endpoint paths and doc_path stay local (§2h).
+        surface["synthesized"] = {
+            "endpoint_count": synthesized_spec.endpoint_count,
+            "request_count": synthesized_spec.request_count,
+        }
+    if action_correlation is not None:
+        # Counts only — the per-action templated endpoints stay local (§2h).
+        surface["correlation"] = {
+            "action_count": action_correlation.action_count,
+            "request_count": action_correlation.request_count,
+        }
+    return surface or None
 
 # Characters not safe in a cross-platform filename (Windows forbids ':' etc.);
 # the real domain is preserved inside the file, so this is only for the path.
@@ -42,6 +87,9 @@ class MapEntry:
     records: list[dict[str, object]]
     tier: int | None
     captured_at: str  # ISO-8601 UTC, e.g. "2026-09-13T12:00:00+00:00"
+    # The §2h-shareable projection of the run's observed API surface (spec whole,
+    # synthesized/correlation as counts only), or None if nothing was observed.
+    api_surface: dict[str, object] | None = None
 
 
 def _domain_of(url: str) -> str:
@@ -81,17 +129,24 @@ class MapStore:
         *,
         tier: int | None = None,
         captured_at: datetime | None = None,
+        api_surface: dict[str, object] | None = None,
     ) -> MapEntry:
         """Remember a run's result for `url` so the API can serve it later.
 
         Overwrites any prior entry for the same URL — the map holds the latest
         known-good result, and its capture time is what freshness is measured
-        against. Defaults the capture time to now (UTC).
+        against. Defaults the capture time to now (UTC). `api_surface` is the
+        already-§2h-projected surface (see `shareable_api_surface`), or None.
         """
         domain = _domain_of(url)
         stamp = (captured_at or datetime.now(UTC)).isoformat()
         entry = MapEntry(
-            url=url, domain=domain, records=records, tier=tier, captured_at=stamp
+            url=url,
+            domain=domain,
+            records=records,
+            tier=tier,
+            captured_at=stamp,
+            api_surface=api_surface,
         )
         by_url = self._load_domain(domain)
         by_url[url] = {
@@ -100,6 +155,7 @@ class MapStore:
             "records": entry.records,
             "tier": entry.tier,
             "captured_at": entry.captured_at,
+            "api_surface": entry.api_surface,
         }
         path = self._path_for_domain(domain)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -118,12 +174,18 @@ class MapStore:
             else []
         )
         tier_raw = raw.get("tier")
+        surface_raw = raw.get("api_surface")
         return MapEntry(
             url=str(raw["url"]),
             domain=str(raw["domain"]),
             records=records,
             tier=tier_raw if isinstance(tier_raw, int) else None,
             captured_at=str(raw["captured_at"]),
+            api_surface=(
+                cast("dict[str, object]", surface_raw)
+                if isinstance(surface_raw, dict)
+                else None
+            ),
         )
 
     def domains(self) -> list[str]:
