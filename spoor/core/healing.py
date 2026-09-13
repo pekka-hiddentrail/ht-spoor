@@ -25,11 +25,14 @@ considered, so "why did it heal to this element" is always answerable straight
 from the `HealResult` (§2), not a separately bolted-on log.
 
 §0: nothing here is site-specific — the same generic similarity math runs for
-every target. This slice is the pure engine over static DOM (parsel); the
-perceptual-hash-on-screenshot component (§2 tier table), cross-run fingerprint
-persistence, and dispatcher wiring are separate follow-on slices (see the §2
-tier-3 decision note). The merge-blocking ≥95% mutation corpus that guards this
-math lives in tests/ under `pytest -m mutation` (§5.3).
+every target. This module is the pure scoring engine over static DOM (parsel).
+It is wired into live runs by `self_healing.py` (the run-scoped `Healer`) and
+`fingerprint_cache.py` (cross-run persistence), and reached from the dispatcher
+in `extract.py`, for both single-record and item-mode (listing) configs. Still
+follow-on: healing the `item` selector itself when a row container breaks,
+cross-run re-anchoring, and the perceptual-hash-on-screenshot component (§2 tier
+table) — see the §2 tier-3 decision notes. The merge-blocking ≥95% mutation
+corpus that guards this math lives in tests/ under `pytest -m mutation` (§5.3).
 """
 
 from __future__ import annotations
@@ -129,8 +132,16 @@ def _normalize_text(value: str) -> str:
     return " ".join(value.split())
 
 
-def fingerprint(selector: Selector) -> ElementFingerprint:
-    """Capture an element's fingerprint from a parsel `Selector` wrapping it."""
+def fingerprint(selector: Selector, *, include_text: bool = True) -> ElementFingerprint:
+    """Capture an element's fingerprint from a parsel `Selector` wrapping it.
+
+    `include_text` captures the element's inner text as an identity signal — right
+    for single-record healing, where text is a strong, stable anchor. Pass
+    `include_text=False` for **item-mode** (listing) fingerprints: a listing's rows
+    are structurally identical but differ in text, so text is per-row noise, not
+    identity — a text-agnostic fingerprint (empty `text`, so the scorer skips that
+    signal) is what generalizes a field's identity across every row.
+    """
     root = selector.root
     # A parsel Selector can wrap a text/comment node or a bare string; only real
     # elements have a str tag we can fingerprint.
@@ -144,7 +155,7 @@ def fingerprint(selector: Selector) -> ElementFingerprint:
     classes = frozenset(class_value.split())
     attrs = frozenset((k, v) for k, v in attrib.items())
 
-    text = _normalize_text("".join(root.itertext()))
+    text = _normalize_text("".join(root.itertext())) if include_text else ""
 
     ancestors = tuple(
         anc.tag

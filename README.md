@@ -106,10 +106,16 @@ a per-domain cache that persists across runs (local-only, §2h); on a later run,
 that selector breaks but a fingerprint was remembered, tier 3 re-resolves the
 field — a confident heal fills it, an uncertain match leaves it null and is
 flagged, and the run summary surfaces the confident/uncertain counts (never the
-matched text, §2h). This wiring covers single-record configs; `item`-mode healing,
-cross-run re-anchoring, and the perceptual-hash-on-screenshot component are the
-next Phase-3 slices. Default-on capture and the MCP/API serving layer are still
-ahead on the roadmap.
+matched text, §2h). This works for both single-record configs and listings: in a
+listing, a field whose selector breaks *inside* the rows is healed **per row**,
+scoring the candidates within each row against a text-agnostic fingerprint (a
+listing's rows share structure but differ in text) — and, because healing only
+ever matches a fingerprint a *prior* run recorded, a row that genuinely lacks an
+optional field is left null rather than filled in from its sibling rows. Healing
+the row-container (`item`) selector itself when a row breaks, cross-run
+re-anchoring, and the perceptual-hash-on-screenshot component are the next Phase-3
+slices. Default-on capture and the MCP/API serving layer are still ahead on the
+roadmap.
 
 ## Contributing
 
