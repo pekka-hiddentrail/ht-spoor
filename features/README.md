@@ -29,6 +29,7 @@ are authored when their phase begins, not up front.
 | `self_healing_runs.feature` | Tier-3 wired into a live run: persist fingerprints, heal across runs, surface counts | §2 / §2d | `spoor/core` | 3 |
 | `self_healing_items.feature` | Tier-3 in a listing: heal a field selector that breaks *within* rows, per row | §2 / §2d | `spoor/core` | 3 |
 | `self_healing_reanchor.feature` | Tier-3 cross-run re-anchoring: a confident heal becomes the new anchor | §2 / §2d | `spoor/core` | 3 |
+| `self_healing_container.feature` | Tier-3 heals a broken row *container* (`item` selector), with a repeating-group gate + ambiguity refusal | §2 / §2d | `spoor/core` | 3 |
 | `serving.feature` | MCP server & REST API (read-only) | §2f | `spoor/serving` | 5 |
 | `exploration.feature` | Exploration mode + safety | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
@@ -93,12 +94,19 @@ optional field is left null, never filled from a sibling row. `self_healing_rean
 confidently, it rewrites the stored fingerprint to the healed element's current
 shape, so a later redesign heals from the most recent shape rather than only the
 first — drift is absorbed one healable step at a time, while an uncertain match
-never overwrites the good anchor. Most recently, the fingerprint was enriched with
+never overwrites the good anchor. The fingerprint was then enriched with
 a **descendant-composition** signal (the multiset of tags an element contains) —
 inert for leaf fields but the stable identity a *container* keeps when its own
-class is renamed; this is a scoring-core change with no user-observable behavior on
-its own (so no new `.feature`, covered by unit tests + the mutation corpus), landed
-as groundwork for healing the row-container (`item`) selector itself when a whole
-row breaks. That container healing and the perceptual-hash-on-screenshot component
-are follow-on slices (see the §2 tier-3 decision notes). The sandbox registry
+class is renamed; a scoring-core change with no user-observable behavior on its own
+(so no `.feature`, covered by unit tests + the mutation corpus), landed as
+groundwork for the next feature. `self_healing_container.feature` (§2, §2d) uses it
+to heal the **row-container (`item`) selector itself** when a redesign breaks it
+and no rows match at all: rather than pick a single best element, it re-resolves a
+coherent sibling group (same parent + tag) of two or more members, and is
+reliability-first about refusing to fabricate — a lone look-alike is never promoted
+to a one-row listing (the ≥2-member gate), and two distinct groups both matching
+confidently are refused rather than guessed between (ambiguity refusal); either
+refusal yields zero records surfaced as an uncertain match. The
+perceptual-hash-on-screenshot component is the remaining tier-3 follow-on (see the
+§2 tier-3 decision notes). The sandbox registry
 (§2e/§2h) and the remaining feature files are authored when their phase begins.

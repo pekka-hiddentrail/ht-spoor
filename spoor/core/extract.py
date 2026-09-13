@@ -222,11 +222,25 @@ def extract_records(
     the field's fingerprint is keyed by `(item, field_name)` and text-agnostic
     (a listing's rows share structure but differ in text), and a broken field is
     re-resolved against the candidates inside each row (§2 item-mode decision
-    note). Healing the `item` selector itself when a row container breaks is a
-    stated follow-on, so a row that stops matching `item` is simply not extracted.
+    note).
+
+    The `item` selector *itself* is healed too: on a successful resolve the row
+    container is fingerprinted, and when a later run finds `item` matching nothing,
+    tier 3 re-resolves the repeating row group (`Healer.attempt_container`) — but
+    only when a single coherent sibling group is confident, refusing to fabricate a
+    listing from a lone look-alike or ambiguous groups (§2 container decision note).
+    A refusal leaves the listing with no rows, surfaced as an uncertain match.
     """
     page = Selector(text=html)
     if config.item:
+        rows = list(page.css(config.item))
+        if rows:
+            if healer is not None:
+                healer.remember_container(config.item, rows[0])
+        elif healer is not None:
+            healed = healer.attempt_container(config.item, page)
+            if healed is not None:
+                rows = healed
         return [
             {
                 name: _extract_value(
@@ -238,7 +252,7 @@ def extract_records(
                 )
                 for name, spec in config.fields.items()
             }
-            for root in page.css(config.item)
+            for root in rows
         ]
     return [
         {

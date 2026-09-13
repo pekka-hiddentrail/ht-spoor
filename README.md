@@ -116,12 +116,15 @@ optional field is left null rather than filled in from its sibling rows. And a
 confident heal **re-anchors**: it rewrites the stored fingerprint to the healed
 element's current shape, so successive redesigns each heal from the most recent
 shape rather than only the original — drift is absorbed one healable step at a
-time (an uncertain match never re-anchors). The fingerprint now also captures an
+time (an uncertain match never re-anchors). The fingerprint also captures an
 element's **descendant composition** (the multiset of tags it contains) — inert
 for leaf fields, but the identity a *container* keeps when its own class is
-renamed — as the groundwork for healing the row-container (`item`) selector itself
-when a whole row breaks, which, with the perceptual-hash-on-screenshot component,
-are the next Phase-3 slices. Default-on capture and the MCP/API serving layer are
+renamed — which powers healing the row-container (`item`) selector itself: when a
+redesign breaks it so no rows match, tier 3 re-resolves the repeating row group,
+refusing to fabricate a listing from a lone look-alike (a ≥2-member gate) or from
+ambiguous look-alike groups (it refuses rather than guess between two), so a
+container break degrades to a reviewable heal, never a confidently-wrong listing.
+The perceptual-hash-on-screenshot component is the remaining Phase-3 tier-3 slice. Default-on capture and the MCP/API serving layer are
 still ahead on the roadmap.
 
 ## Contributing

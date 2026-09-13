@@ -39,8 +39,12 @@ It is wired into live runs by `self_healing.py` (the run-scoped `Healer`) and
 `fingerprint_cache.py` (cross-run persistence), and reached from the dispatcher
 in `extract.py`, for both single-record and item-mode (listing) configs, and a
 confident heal re-anchors the stored fingerprint to the healed shape so drift
-across successive redesigns is absorbed one step at a time. Still follow-on:
-healing the `item` selector itself when a row container breaks, and the
+across successive redesigns is absorbed one step at a time. A broken row
+*container* (the `item` selector matching nothing) is healed too, by
+`find_container_groups` here plus the `Healer`'s single-group/ambiguity decision:
+the descendant-composition signal gives a container the identity a leaf print
+lacked, and a repeating-group gate refuses to fabricate a listing from a lone
+look-alike or ambiguous groups (§2, §1). Still follow-on: the
 perceptual-hash-on-screenshot component (§2 tier table) — see the §2 tier-3
 decision notes. The merge-blocking ≥95% mutation
 corpus that guards this math lives in tests/ under `pytest -m mutation` (§5.3).
@@ -337,6 +341,80 @@ def heal(
         confident=best.score >= threshold,
         runners_up=tuple(scored[1 : 1 + _MAX_RUNNERS_UP]),
         element=candidates[best.index],
+    )
+
+
+def _sibling_group_key(selector: Selector) -> tuple[int, str] | None:
+    """Identity of the coherent sibling group `selector` belongs to, or None.
+
+    A "coherent sibling group" is the set of elements that share one parent element
+    *and* one tag — a listing's repeating rows are exactly such a group. Keyed by
+    `(id(parent), tag)`: `id()` is stable within a single call (the whole parsed
+    tree stays referenced for the call's duration, so no id is reused), which is
+    all the grouping needs. Returns None for a root element with no parent — a row
+    always has a parent, so a parentless element is never a listing row.
+    """
+    parent = selector.root.getparent()
+    if parent is None:
+        return None
+    return (id(parent), selector.root.tag)
+
+
+@dataclass(frozen=True)
+class ContainerMatch:
+    """The confident repeating sibling groups found while healing a row container.
+
+    `groups` are the coherent sibling groups (same parent + tag) whose members all
+    scored at/above the threshold, each with **at least two** members — a lone
+    confident element is not a repeating group and never appears here. `best_score`
+    is the single highest candidate score seen, for the explainable heal event even
+    when nothing qualified (§2). `has_confident` is whether *any* candidate cleared
+    the threshold, grouped or not — it distinguishes a refusal worth flagging (a
+    look-alike crossed the bar but was ambiguous or ungrouped) from a page where
+    nothing resembled a row at all (a legitimately-empty or wholly-different page,
+    which a caller should pass over silently rather than flag). A caller heals only
+    when exactly one group qualified; zero (no repeating group) or more than one
+    (ambiguous look-alikes) is a refusal, reliability-first (§2, §1).
+    """
+
+    groups: tuple[tuple[Selector, ...], ...] = field(compare=False)
+    best_score: float = 0.0
+    has_confident: bool = False
+
+
+def find_container_groups(
+    stored: ElementFingerprint,
+    candidates: list[Selector],
+    threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+) -> ContainerMatch:
+    """Score `candidates` against a container fingerprint and group the confident.
+
+    Every candidate is scored **text-agnostic** (a listing's rows share structure
+    but differ in text, so the container print carries no text either); those at or
+    above `threshold` are grouped into coherent sibling groups (`_sibling_group_key`)
+    and only groups of two or more members are kept. Deterministic: members keep
+    document order (candidates arrive in document order) and groups keep the order
+    of their first member. This is the pure grouping engine; the single-group /
+    ambiguity / re-anchor decisions live in the `Healer` (§0: no site knowledge).
+    """
+    best_score = 0.0
+    has_confident = False
+    confident: dict[tuple[int, str], list[Selector]] = {}
+    for candidate in candidates:
+        candidate_score = score(stored, fingerprint(candidate, include_text=False))
+        best_score = max(best_score, candidate_score)
+        if candidate_score < threshold:
+            continue
+        has_confident = True
+        key = _sibling_group_key(candidate)
+        if key is None:
+            continue
+        confident.setdefault(key, []).append(candidate)
+    groups = tuple(
+        tuple(members) for members in confident.values() if len(members) >= 2
+    )
+    return ContainerMatch(
+        groups=groups, best_score=best_score, has_confident=has_confident
     )
 
 
