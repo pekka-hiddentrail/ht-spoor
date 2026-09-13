@@ -22,6 +22,7 @@ from spoor.api_discovery.discovery import DiscoveredSpec
 from spoor.api_discovery.graphql import DiscoveredGraphQL
 from spoor.api_discovery.synthesis import SynthesizedSpec
 from spoor.core.extract import RunResult
+from spoor.operational.challenge import ChallengeSignal
 from spoor.operational.retry import FetchFailure
 from spoor.signals.accessibility import AccessibilitySignal
 from spoor.signals.console import ConsoleSignal
@@ -45,6 +46,10 @@ class RunSummary:
     # Transient fetch failures that were retried this run, whether or not they
     # eventually succeeded (§2d) — a resilience signal, quiet when zero.
     retries: int
+    # An anti-bot challenge recognized in a fetched page (§2d): the vendor name,
+    # surfaced loudly so a challenged run reads as "hit a wall" rather than an
+    # unexplained empty result. Detection only, never bypass; None on a clean run.
+    challenge: ChallengeSignal | None
     # The local-only HAR the browser tier captured, if any (ROADMAP.md §2b/§2h).
     # A string (not a Path) so the summary stays trivially serializable (§2d).
     har_path: str | None
@@ -111,6 +116,7 @@ class RunSummary:
             blocked=list(result.blocked),
             dead_letter=list(result.dead_letter),
             retries=result.retries,
+            challenge=result.challenge,
             har_path=str(result.har_path) if result.har_path is not None else None,
             api_spec=result.api_spec,
             graphql=result.graphql,
@@ -195,6 +201,15 @@ class RunSummary:
             f"  blocked:       {len(self.blocked)}",
         ]
         lines.extend(f"    - {url} (robots.txt)" for url in self.blocked)
+        # Anti-bot challenge, surfaced loudly (§2d): a challenged run reads as "hit
+        # a wall here", never as an unexplained empty result. Placed after the
+        # blocked block so it never splits that count from its URL list. Named
+        # detection, never a bypass; the vendor only, no captured markup (§2h).
+        if self.challenge is not None:
+            lines.append(
+                f"  anti-bot:      CHALLENGE DETECTED ({self.challenge.vendor}) "
+                "— not scraped as data"
+            )
         # Dead-letter log, only when a fetch failed unrecoverably this run (§2d).
         # Reasons are generic HTTP categories, safe to surface (§0/§2h); the URLs
         # are the config's own request URLs, shown like `blocked` (a query string

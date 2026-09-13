@@ -46,6 +46,7 @@ from spoor.core.config import (
 from spoor.core.fingerprint_cache import cache_for_target
 from spoor.core.self_healing import Healer, HealEvent, Screenshotter
 from spoor.core.visual import InvalidImageError, perceptual_hash
+from spoor.operational.challenge import ChallengeSignal, detect_challenge
 from spoor.operational.politeness import Politeness
 from spoor.operational.retry import FetchFailure, RetryingFetcher
 from spoor.security import storage
@@ -122,6 +123,12 @@ class RunResult:
     # that were retried this run (whether or not they eventually succeeded).
     dead_letter: list[FetchFailure] = field(default_factory=list)
     retries: int = 0
+    # An anti-bot challenge recognized in a fetched page (ROADMAP.md §2d): a
+    # CAPTCHA/interstitial fingerprint, surfaced so the run reports "hit a wall"
+    # rather than silently emitting challenge markup as data. Detection, never
+    # bypass; None on an ordinary run. Vendor name only, never a captured secret
+    # (§2h).
+    challenge: ChallengeSignal | None = None
     tier: int | None = None
     pages_fetched: int = 0
     tiers_attempted: list[int] = field(default_factory=list)
@@ -375,6 +382,11 @@ class Tier1Resolver:
                     result.dead_letter.append(outcome)
                     break
                 result.pages_fetched += 1
+                # Recognize an anti-bot challenge in the fetched page (§2d): a
+                # 2xx challenge would otherwise be scraped as if it were data.
+                # First page to look like one names the run's challenge.
+                if result.challenge is None:
+                    result.challenge = detect_challenge(outcome.text)
                 result.records.extend(extract_records(outcome.text, config, healer))
                 url = _next_url(outcome.text, url, config)
         finally:
@@ -625,6 +637,11 @@ class Tier2Resolver:
                 # elements for the perceptual-hash visual signal (§2 tier table).
                 # The screenshotter is bound to this live page and cleared after,
                 # so it never outlives the page it captures from.
+                # Recognize an anti-bot challenge in the rendered page (§2d),
+                # same tier-agnostic scan as tier 1 — a browser can render a
+                # challenge just as a static fetch can land on one.
+                if result.challenge is None:
+                    result.challenge = detect_challenge(html)
                 page_records = self._extract_on_live_page(html, config, healer, page)
             finally:
                 page.close()
