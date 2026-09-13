@@ -3,8 +3,10 @@
 Downstream of extraction: take the records a run produced and write them in a
 chosen format. Per §2d the field schema from §2a is validated (via pydantic)
 *before* anything is written, so a stray or mistyped field fails loudly instead
-of landing silently in the output. Per §0 there is nothing site-specific here —
-the schema is derived from the config, whatever the target.
+of landing silently in the output. An output file is a shared surface, so per
+§2h known secret shapes in record values are redacted (default-on) before any
+write. Per §0 there is nothing site-specific here — the schema is derived from
+the config, whatever the target.
 
 Phase-1 formats are the dependency-free text sinks (JSON, JSON Lines, CSV).
 SQLite and Parquet are named in §2d as further sinks and land later.
@@ -20,6 +22,7 @@ from typing import Any, Literal, cast, get_args
 from pydantic import BaseModel, ConfigDict, create_model
 
 from spoor.core.config import ExtractionConfig
+from spoor.security.redaction import redact_records
 
 OutputFormat = Literal["json", "jsonl", "csv"]
 
@@ -83,8 +86,14 @@ def write_records(
     path: Path,
     fmt: OutputFormat,
 ) -> None:
-    """Validate `records` against the config schema, then write them as `fmt`."""
-    rows = _validated_rows(records, config)
+    """Validate `records` against the config schema, then write them as `fmt`.
+
+    An output file is a shared surface, so records pass through secret redaction
+    (§2h) after validation and before any write — on by default, no opt-out here.
+    The raw records remain only in the local-only cache/map; only this redacted
+    form reaches the file.
+    """
+    rows = redact_records(_validated_rows(records, config))
     if fmt == "json":
         path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
     elif fmt == "jsonl":

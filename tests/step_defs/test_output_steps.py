@@ -55,6 +55,16 @@ def extra_record(context: dict[str, Any]) -> None:
     context["records"].append({"title": "Rogue", "price": 1.0, "sku": "X-1"})
 
 
+@given('a single record whose "title" carries a bearer token')
+def secret_record(context: dict[str, Any]) -> None:
+    # An obviously-fake token in a declared field; the price is present-but-null
+    # so the record still satisfies the config schema.
+    context["raw_token"] = "abcdef1234567890x"
+    context["records"] = [
+        {"title": f"Bearer {context['raw_token']}", "price": None}
+    ]
+
+
 # --- When ----------------------------------------------------------------
 
 
@@ -87,7 +97,23 @@ def try_write(context: dict[str, Any], tmp_path: Path, name: str) -> None:
         context["error"] = exc
 
 
+@when(parsers.parse('I read the first written object\'s "{field}"'))
+def read_first_field(context: dict[str, Any], field: str) -> None:
+    data = json.loads(_read(context))
+    context["value"] = data[0][field]
+
+
 # --- Then ----------------------------------------------------------------
+
+
+@then("it no longer contains the raw token")
+def value_lacks_raw_token(context: dict[str, Any]) -> None:
+    assert context["raw_token"] not in context["value"]
+
+
+@then(parsers.parse('it equals "{value}"'))
+def value_equals(context: dict[str, Any], value: str) -> None:
+    assert context["value"] == value
 
 
 def _read(context: dict[str, Any]) -> str:

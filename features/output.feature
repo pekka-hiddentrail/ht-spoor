@@ -6,6 +6,10 @@
 # and Parquet are named in §2d as further/optional sinks and land later (see the
 # §2d output-pipeline decision note). Extraction without a usable output path
 # isn't a finished tool, so the sink is a first-class stage, not a CLI afterthought.
+#
+# An output file is a shared surface §2h names explicitly: known secret shapes in
+# a record's values are redacted on the way out, on by default, before anything is
+# written (the raw record stays only in the local-only cache/map).
 
 Feature: Writing extracted records to a chosen output format
   As someone running an extraction
@@ -48,3 +52,12 @@ Feature: Writing extracted records to a chosen output format
     Given an extra record carrying an undeclared "sku" field
     When I try to write the records to "out.json"
     Then it fails before writing with an error naming "sku"
+
+  Scenario: A secret in an extracted field is redacted before it is written
+    # §2h: an output file is a shared surface, so a known secret shape that landed
+    # in an extracted value is redacted on the way out, on by default.
+    Given a single record whose "title" carries a bearer token
+    When I write the records to "out.json"
+    And I read the first written object's "title"
+    Then it no longer contains the raw token
+    And it equals "Bearer [REDACTED]"
