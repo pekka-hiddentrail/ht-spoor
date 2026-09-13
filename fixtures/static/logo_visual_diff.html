@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Tier-3 visual-signal fixture: the REDESIGN whose appearance genuinely changed.
+     The logo's DOM identity churns identically to logo_visual_same.html (class
+     rename, data-v bump, src change, inserted wrapper <div>), so the DOM-only heal
+     is the same sub-threshold match. The difference is that logo-c.png is a
+     visually different image, so the perceptual hash does NOT corroborate: the
+     match stays uncertain and the field is left null (reliability-first, §2) — the
+     visual signal is a corroborator, never a blanket confidence boost. -->
+<html>
+  <head><title>Redesign (different look)</title></head>
+  <body>
+    <header>
+      <div class="hero-wrap">
+        <img class="hero" data-v="2" src="/logo-c.png">
+      </div>
+    </header>
+  </body>
+</html>

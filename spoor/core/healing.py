@@ -9,9 +9,11 @@ none of its code; Healenium's published, Apache-2.0 core approach (a DOM
 fingerprint + weighted similarity, *not* the commercial "Pro" tier) is only a
 conceptual reference. What runs is entirely this module's own implementation: a
 weighted blend of tag, id, class, other-attribute, inner-text, structural
-(ancestor-chain + sibling-position), and descendant-composition similarity. No
-LLM, no network — deterministic arithmetic over the DOM (§2 tier table: "no model
-call").
+(ancestor-chain + sibling-position), descendant-composition, and — when a
+screenshot is available — perceptual-hash *visual* similarity. No LLM, no network
+— deterministic arithmetic over the DOM and a cropped screenshot (§2 tier table:
+"DOM fingerprint + attribute similarity + perceptual-hash on a cropped
+screenshot", "no model call").
 
 The descendant-composition signal (a multiset of the element's descendant tag
 names) is what gives *container* elements — a listing row, a card — a stable
@@ -44,19 +46,26 @@ across successive redesigns is absorbed one step at a time. A broken row
 `find_container_groups` here plus the `Healer`'s single-group/ambiguity decision:
 the descendant-composition signal gives a container the identity a leaf print
 lacked, and a repeating-group gate refuses to fabricate a listing from a lone
-look-alike or ambiguous groups (§2, §1). Still follow-on: the
-perceptual-hash-on-screenshot component (§2 tier table) — see the §2 tier-3
-decision notes. The merge-blocking ≥95% mutation
-corpus that guards this math lives in tests/ under `pytest -m mutation` (§5.3).
+look-alike or ambiguous groups (§2, §1). The visual signal (`spoor/core/visual.py`,
+a from-scratch perceptual/difference hash of a cropped screenshot) rides with the
+browser tier: `heal` re-scores its top DOM front-runners with visual similarity
+when the stored print carries a screenshot hash and the caller supplies a
+screenshotting `visual_lookup`, so a low-text element (an icon, a logo) that
+re-renders the same is re-resolved even when its class/attrs churned below the
+DOM-only bar. The merge-blocking ≥95% mutation corpus that guards this math lives
+in tests/ under `pytest -m mutation` (§5.3).
 """
 
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 
 from parsel import Selector
+
+from spoor.core.visual import visual_similarity
 
 # Default "safe to auto-resolve" confidence threshold (§2). Tunable per call; a
 # best candidate scoring below this but above zero is flagged uncertain, not used.
@@ -89,9 +98,21 @@ _W_TEXT = 3.0
 _W_ANCESTORS = 1.5
 _W_SIBLING = 0.5
 _W_DESCENDANTS = 2.0
+# Visual (perceptual-hash) similarity — applicable only when *both* the stored
+# print and the candidate carry a screenshot hash (see `score`). Weighted as a
+# strong signal because for a low-text element (an icon, a logo, an image) its
+# rendered appearance is a more stable identity than its churning class/attrs —
+# exactly the case the visual signal exists for — while still one voice among
+# several, so a coincidental look-alike cannot single-handedly force a heal.
+_W_VISUAL = 2.0
 
 # How many runner-up candidates to retain for the "why did it heal here" record.
 _MAX_RUNNERS_UP = 4
+# How many of the top DOM-scored candidates to re-score with the visual signal at
+# heal time (see `heal`). Bounded because each one costs a live screenshot; the
+# visually-correct element is nigh-always among the DOM front-runners, so a small
+# window re-ranks usefully without screenshotting the whole page.
+_VISUAL_RERANK_K = 5
 
 
 @dataclass(frozen=True)
@@ -106,6 +127,12 @@ class ElementFingerprint:
     tuple of `(tag, count)` pairs — a leaf element's is empty. It is what gives a
     *container* (a listing row, a card) an identity that survives a class rename on
     the container itself; a leaf field carries none and is scored exactly as before.
+    `visual_hash` is a 64-bit perceptual (difference) hash of the element's cropped
+    screenshot, or None when no screenshot was taken — it is captured only by the
+    browser tier (a hash needs rendered pixels), so a DOM-only (tier-1) fingerprint
+    always has None here and is scored exactly as before. It is the identity a
+    low-text element (an icon, a logo, an image) keeps when its markup churns but
+    its appearance does not (§2 tier table).
     """
 
     tag: str
@@ -116,6 +143,7 @@ class ElementFingerprint:
     ancestors: tuple[str, ...]
     sibling_index: int
     descendants: tuple[tuple[str, int], ...]
+    visual_hash: int | None = None
 
 
 @dataclass(frozen=True)
@@ -309,6 +337,17 @@ def score(stored: ElementFingerprint, candidate: ElementFingerprint) -> float:
             stored.descendants, candidate.descendants
         )
 
+    # Visual appearance — applicable only when *both* prints carry a screenshot
+    # hash. Unlike the other optional signals (gated on the stored element alone),
+    # a candidate's hash is computed on demand at heal time for only a handful of
+    # front-runners (see `heal`), so most candidates have none; blending it in only
+    # when both sides have one keeps every other candidate's score unchanged.
+    if stored.visual_hash is not None and candidate.visual_hash is not None:
+        total_weight += _W_VISUAL
+        weighted += _W_VISUAL * visual_similarity(
+            stored.visual_hash, candidate.visual_hash
+        )
+
     return weighted / total_weight if total_weight else 0.0
 
 
@@ -316,6 +355,8 @@ def heal(
     stored: ElementFingerprint,
     candidates: list[Selector],
     threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    *,
+    visual_lookup: Callable[[int], int | None] | None = None,
 ) -> HealResult | None:
     """Re-resolve `stored` by scoring every candidate; pick the best (§2, §5.3).
 
@@ -324,6 +365,15 @@ def heal(
     not use silently) — with the runner-ups it considered so the choice stays
     explainable. Returns `None` only when there are no candidates. Deterministic:
     ties break toward the earlier candidate (stable sort by descending score).
+
+    When `stored` carries a visual hash and `visual_lookup` is supplied (the
+    browser tier passes one that screenshots a candidate by index and returns its
+    perceptual hash, or None on failure), the top `_VISUAL_RERANK_K` DOM
+    front-runners are re-scored with the visual signal blended in and the whole
+    field re-sorted, so appearance can promote the visually-correct element over a
+    DOM look-alike or lift a shaky DOM match to confident. The visual pass is
+    bounded to those few screenshots; the remaining candidates keep their DOM
+    score. With no visual hash or no lookup, this is a pure DOM heal, unchanged.
     """
     if not candidates:
         return None
@@ -334,6 +384,8 @@ def heal(
         ),
         key=lambda sc: (-sc.score, sc.index),
     )
+    if stored.visual_hash is not None and visual_lookup is not None:
+        scored = _visual_rerank(stored, candidates, scored, visual_lookup)
     best = scored[0]
     return HealResult(
         index=best.index,
@@ -342,6 +394,39 @@ def heal(
         runners_up=tuple(scored[1 : 1 + _MAX_RUNNERS_UP]),
         element=candidates[best.index],
     )
+
+
+def _visual_rerank(
+    stored: ElementFingerprint,
+    candidates: list[Selector],
+    scored: list[ScoredCandidate],
+    visual_lookup: Callable[[int], int | None],
+) -> list[ScoredCandidate]:
+    """Re-score the top DOM front-runners with the visual signal, then re-sort all.
+
+    Screenshots at most `_VISUAL_RERANK_K` candidates (via `visual_lookup`), blends
+    each one's perceptual hash into its score, and returns the full field re-sorted
+    by the updated scores (unscored candidates keep their DOM score). A candidate
+    whose screenshot fails (`visual_lookup` returns None) keeps its DOM score.
+    Deterministic: ties still break toward the earlier candidate.
+    """
+    updated: dict[int, float] = {}
+    for sc in scored[:_VISUAL_RERANK_K]:
+        candidate_hash = visual_lookup(sc.index)
+        if candidate_hash is None:
+            continue
+        enriched = replace(
+            fingerprint(candidates[sc.index]), visual_hash=candidate_hash
+        )
+        updated[sc.index] = score(stored, enriched)
+    if not updated:
+        return scored
+    rescored = [
+        ScoredCandidate(index=sc.index, score=updated.get(sc.index, sc.score))
+        for sc in scored
+    ]
+    rescored.sort(key=lambda sc: (-sc.score, sc.index))
+    return rescored
 
 
 def _sibling_group_key(selector: Selector) -> tuple[int, str] | None:

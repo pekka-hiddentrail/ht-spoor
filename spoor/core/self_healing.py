@@ -19,6 +19,14 @@ failure"):
   so successive redesigns each heal from the most recent shape rather than only
   the first; an uncertain match never re-anchors.
 
+When the browser tier supplies a `screenshotter`, capture and healing gain the
+perceptual-hash *visual* signal (§2 tier table): `remember` stores the element's
+cropped-screenshot hash alongside its DOM print, and `attempt` lets `heal`
+re-score its top DOM front-runners by appearance — so a low-text element (an icon,
+a logo) that re-renders the same is re-resolved even when its class/attrs churned
+below the DOM-only bar. Tier 1 leaves the screenshotter None, so healing is
+DOM-only and unchanged.
+
 - `remember_container(item, row)` / `attempt_container(item, page)` — the same
   two-phase mechanic for a listing's **row container** (the `item` selector). On a
   successful run the row's shape is fingerprinted (text-agnostic); when a later run
@@ -39,17 +47,29 @@ runs for every target; only runtime-learned fingerprints differ.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 
 from parsel import Selector
 
 from spoor.core.fingerprint_cache import FingerprintCache
-from spoor.core.healing import find_container_groups, fingerprint, heal
+from spoor.core.healing import (
+    ElementFingerprint,
+    find_container_groups,
+    fingerprint,
+    heal,
+)
 
 # Sentinel "field name" for a listing's row-container fingerprint. Empty because no
 # real field is (YAML keys are non-empty), so the container key `f"{item}::"` can
 # never collide with a field key `f"{item}::{name}"`.
 _CONTAINER_FIELD = ""
+
+# A screenshotter maps a resolved/candidate element to a perceptual hash of its
+# cropped screenshot, or None when no screenshot could be taken. The browser tier
+# supplies one bound to the live page (§2 tier table); tier 1 and directly-invoked
+# healers leave it None, so healing is DOM-only and behaves exactly as before.
+Screenshotter = Callable[[Selector], int | None]
 
 
 @dataclass(frozen=True)
@@ -73,6 +93,24 @@ class Healer:
 
     cache: FingerprintCache
     events: list[HealEvent] = field(default_factory=list)
+    screenshotter: Screenshotter | None = None
+
+    def _capture(self, element: Selector, *, include_text: bool) -> ElementFingerprint:
+        """Fingerprint `element`, attaching a visual hash when a screenshotter is set.
+
+        The browser tier's screenshotter renders the element and returns a
+        perceptual hash of its crop (or None on any failure — capture is
+        opportunistic and never fails the extraction, §2c). Without a screenshotter
+        (tier 1, or a directly-invoked healer) the print is DOM-only, exactly as
+        before. Shared by capture and confident re-anchoring so both store the same
+        shape of print.
+        """
+        fp = fingerprint(element, include_text=include_text)
+        if self.screenshotter is not None:
+            visual_hash = self.screenshotter(element)
+            if visual_hash is not None:
+                fp = replace(fp, visual_hash=visual_hash)
+        return fp
 
     def remember(
         self, field_name: str, element: Selector, *, item_selector: str | None = None
@@ -83,11 +121,14 @@ class Healer:
         per `(item_selector, field_name)` and captured **text-agnostic**, because a
         listing's rows share structure but differ in text, so text is per-row noise
         rather than field identity (see `fingerprint`'s `include_text`). Left None
-        for single-record configs, where text is a strong, stable anchor.
+        for single-record configs, where text is a strong, stable anchor. When the
+        browser tier supplied a screenshotter, the element's cropped-screenshot
+        perceptual hash is captured too (§2 tier table), so a later run can heal on
+        appearance when the markup churns.
         """
         self.cache.put(
             self._key(field_name, item_selector),
-            fingerprint(element, include_text=item_selector is None),
+            self._capture(element, include_text=item_selector is None),
         )
 
     def attempt(
@@ -121,7 +162,7 @@ class Healer:
         if stored is None:
             return None
         candidates = list(root.css("*"))
-        result = heal(stored, candidates)
+        result = heal(stored, candidates, visual_lookup=self._visual_lookup(candidates))
         if result is None:
             return None
         self.events.append(
@@ -130,9 +171,23 @@ class Healer:
         if not result.confident:
             return None
         self.cache.put(
-            key, fingerprint(result.element, include_text=item_selector is None)
+            key, self._capture(result.element, include_text=item_selector is None)
         )
         return result.element
+
+    def _visual_lookup(
+        self, candidates: list[Selector]
+    ) -> Callable[[int], int | None] | None:
+        """A by-index screenshot-hash lookup over `candidates`, or None.
+
+        Returns None (so `heal` stays a pure DOM heal) unless a screenshotter is
+        set; otherwise wraps it so `heal` can screenshot a candidate on demand for
+        its bounded visual re-rank (see `healing.heal`).
+        """
+        shot = self.screenshotter
+        if shot is None:
+            return None
+        return lambda index: shot(candidates[index])
 
     def remember_container(self, item_selector: str, row: Selector) -> None:
         """Fingerprint a listing's row container on a successful resolve.
