@@ -105,6 +105,16 @@ Feature: Declarative extraction from a config file
     When I run the config
     Then the item field "discount" is the number -5
 
+  Scenario: A number too large to represent yields null, keeping output valid JSON
+    Given a config:
+      """
+      target: http://localhost:8000/products.html
+      fields:
+        price: { selector: ".astronomical-price", type: number }
+      """
+    When I run the config
+    Then the item field "price" is null
+
   Scenario: A number field parses a value with a thousands separator
     Given a config:
       """
