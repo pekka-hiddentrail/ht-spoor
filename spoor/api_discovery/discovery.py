@@ -16,18 +16,18 @@ spec observed there", never an error that fails the run. What is reported is
 *observed*, never "the complete API" (§2b's bounded claim).
 
 Two halves, both here (§2b layer 1). First, conventional-path probing (above).
-Second, when that finds nothing, scan the landing page's HTML for a *reference*
-to a spec — a Redoc `spec-url`, a Swagger-UI `url:`, or any link carrying the
-spec vocabulary (`openapi`/`swagger`/`api-docs`) — and validate each candidate
-with the same strict JSON check, so a false lead is never reported. The
-reference-finding is deliberately loose (a bad guess costs one bounded probe);
-the validation is what keeps false positives out. Scanning referenced JS bundles
-(this slice reads only the landing HTML), YAML specs (validation is JSON-only,
-matching the conventional paths), GraphQL introspection, and spec synthesis from
-captured traffic are later §2b slices (see the ROADMAP note). This slice fetches
-the landing page itself to scan it; reusing the HTML the resolver already
-fetched — like sharing one robots cache between resolver and discovery — is a
-known, deferred optimization, not a correctness gap.
+Second, when that finds nothing, scan for a *reference* to a spec — a Redoc
+`spec-url`, a Swagger-UI `url:`, or any link carrying the spec vocabulary
+(`openapi`/`swagger`/`api-docs`) — first in the landing page's HTML, then inside
+the same-origin JS bundles the page loads (where a SPA usually keeps that
+config). Every candidate is validated with the same strict JSON check, so a
+false lead is never reported. The reference-finding is deliberately loose (a bad
+guess costs one bounded probe); the validation is what keeps false positives out.
+YAML specs (validation is JSON-only, matching the conventional paths), GraphQL
+introspection, and spec synthesis from captured traffic are later §2b slices (see
+the ROADMAP note). This slice fetches the landing page itself to scan it; reusing
+the HTML the resolver already fetched — like sharing one robots cache between
+resolver and discovery — is a known, deferred optimization, not a correctness gap.
 """
 
 from __future__ import annotations
@@ -70,6 +70,19 @@ _SPEC_URL_ATTR = re.compile(r"""spec-url\s*=\s*["']([^"']+)["']""", re.IGNORECAS
 _SPEC_VOCAB_REF = re.compile(
     r"""["']([^"'\s]*(?:openapi|swagger|api[-_]?docs)[^"'\s]*)["']""",
     re.IGNORECASE,
+)
+
+# Cap on how many same-origin JS bundles the landing page loads are fetched and
+# scanned for a spec reference — keeps the bundle scan bounded and near-free.
+_MAX_SCRIPT_BUNDLES = 10
+
+# `<script src="...">` — the bundles a page loads. Only same-origin ones are
+# fetched (see `_script_srcs`); a spec's config usually lives in the app's own
+# bundle, and fetching arbitrary third-party origins would be neither bounded
+# nor polite. `src` must be whitespace-preceded so it is a real attribute, not
+# the tail of another one like `data-src` (a lazy-load decoy).
+_SCRIPT_SRC = re.compile(
+    r"""<script\b[^>]*?\ssrc\s*=\s*["']([^"']+)["']""", re.IGNORECASE
 )
 
 
@@ -144,29 +157,82 @@ def _spec_reference_candidates(html: str, page_url: str) -> list[str]:
     return seen
 
 
+def _script_srcs(html: str, page_url: str) -> list[str]:
+    """Same-origin `<script src>` URLs a page loads, absolute and de-duplicated.
+
+    Cross-origin bundles are dropped: a spec's config usually lives in the app's
+    own bundle, and fetching arbitrary third-party origins would be neither
+    bounded nor polite. Resolved against `page_url`, first-seen order preserved.
+    """
+    origin = urlsplit(page_url).netloc
+    seen: list[str] = []
+    for match in _SCRIPT_SRC.finditer(html):
+        url = urljoin(page_url, match.group(1).strip())
+        if not url.startswith(("http://", "https://")):
+            continue
+        if urlsplit(url).netloc != origin:
+            continue
+        if url not in seen:
+            seen.append(url)
+    return seen
+
+
+def _probe_candidates(
+    client: httpx.Client, gate: Politeness, candidates: list[str]
+) -> DiscoveredSpec | None:
+    """Probe candidate spec URLs (robots-honored, capped); first valid wins."""
+    for url in candidates[:_MAX_HTML_SPEC_CANDIDATES]:
+        if not gate.can_fetch(url):
+            continue
+        spec = _probe(client, url)
+        if spec is not None:
+            return spec
+    return None
+
+
+def _fetch(client: httpx.Client, url: str, gate: Politeness) -> httpx.Response | None:
+    """GET `url`, or None if robots-denied, errored, or not a 200."""
+    if not gate.can_fetch(url):
+        return None
+    try:
+        response = client.get(url, timeout=_PROBE_TIMEOUT_S)
+    except httpx.HTTPError:
+        return None
+    if response.status_code != 200:
+        return None
+    return response
+
+
 def _discover_spec_in_html(
     client: httpx.Client, target: str, gate: Politeness
 ) -> DiscoveredSpec | None:
     """Fetch the landing page and probe any spec it references (§2b layer 1).
 
     The second half of layer 1, run only when conventional-path probing found
-    nothing. Honors robots on both the landing fetch and every referenced
-    candidate (§6), is bounded by `_MAX_HTML_SPEC_CANDIDATES`, and never raises —
-    a failed fetch or a candidate that isn't a real spec is simply "not there".
+    nothing. Looks for a spec reference first in the landing HTML, then inside
+    the same-origin JS bundles the page loads. Both are resolved against the
+    landing page's *final* URL (after any redirect), matching how a browser
+    resolves a relative reference — including one a bundle makes, which resolves
+    against the document, not the script. Honors robots on the landing fetch,
+    each bundle fetch, and each probed candidate (§6); is bounded by
+    `_MAX_SCRIPT_BUNDLES` and `_MAX_HTML_SPEC_CANDIDATES`; never raises — any
+    failed fetch or non-spec candidate is simply "not there".
     """
-    if not gate.can_fetch(target):
+    response = _fetch(client, target, gate)
+    if response is None:
         return None
-    try:
-        response = client.get(target, timeout=_PROBE_TIMEOUT_S)
-    except httpx.HTTPError:
-        return None
-    if response.status_code != 200:
-        return None
-    candidates = _spec_reference_candidates(response.text, str(response.url))
-    for url in candidates[:_MAX_HTML_SPEC_CANDIDATES]:
-        if not gate.can_fetch(url):
+    html = response.text
+    page_url = str(response.url)
+    spec = _probe_candidates(client, gate, _spec_reference_candidates(html, page_url))
+    if spec is not None:
+        return spec
+    for src in _script_srcs(html, page_url)[:_MAX_SCRIPT_BUNDLES]:
+        bundle = _fetch(client, src, gate)
+        if bundle is None:
             continue
-        spec = _probe(client, url)
+        spec = _probe_candidates(
+            client, gate, _spec_reference_candidates(bundle.text, page_url)
+        )
         if spec is not None:
             return spec
     return None

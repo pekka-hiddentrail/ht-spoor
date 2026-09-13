@@ -10,12 +10,13 @@
 # never a claim of a complete API.
 #
 # Layer 1's second half (below the conventional-path scenarios): when no
-# conventional path serves a spec, scan the landing page's HTML for a reference
-# to one — a Redoc `spec-url`, a Swagger-UI `url:`, or any link carrying the spec
-# vocabulary (openapi/swagger/api-docs) — and validate each candidate exactly as
-# strictly as a conventional probe, so a false lead is never reported. Scanning
-# referenced JS bundles, and spec synthesis from captured traffic, are later
-# §2b slices.
+# conventional path serves a spec, scan for a reference to one — a Redoc
+# `spec-url`, a Swagger-UI `url:`, or any link carrying the spec vocabulary
+# (openapi/swagger/api-docs) — first in the landing page's HTML, then inside the
+# same-origin JS bundles it loads (where SPAs usually keep that config). Every
+# candidate is validated exactly as strictly as a conventional probe, so a false
+# lead is never reported. Spec synthesis from captured traffic is a later §2b
+# slice.
 
 Feature: A run discovers an official API spec when the target serves one
   As someone mapping a product's API surface
@@ -77,6 +78,21 @@ Feature: A run discovers an official API spec when the target serves one
     Given a target whose landing page references a spec at "/v3/api-docs"
     And a target that serves an OpenAPI 3 document at "/v3/api-docs"
     And a robots.txt that disallows "/v3/api-docs"
+    When I run the config and capture the summary
+    Then the run reports no discovered API spec
+
+  Scenario: A spec referenced only inside a JS bundle is discovered
+    Given a target whose landing page loads the script "/static/app.js"
+    And the script "/static/app.js" references a spec at "/v3/api-docs"
+    And a target that serves an OpenAPI 3 document at "/v3/api-docs"
+    When I run the config and capture the summary
+    Then the run reports a discovered "openapi" spec at "/v3/api-docs"
+
+  Scenario: A JS bundle disallowed by robots.txt is not scanned
+    Given a target whose landing page loads the script "/static/app.js"
+    And the script "/static/app.js" references a spec at "/v3/api-docs"
+    And a target that serves an OpenAPI 3 document at "/v3/api-docs"
+    And a robots.txt that disallows "/static/app.js"
     When I run the config and capture the summary
     Then the run reports no discovered API spec
 
