@@ -91,8 +91,18 @@ map stays local-only, only counts reach the summary. The browser tier can
 opt into capturing signals (§2c) — HAR, console output/JS errors, the
 accessibility tree, response-header fingerprints, and client-side storage state
 — written to a local-only, git-ignored cache; only safe derived facts reach
-shared output, with known secrets redacted first (§2h). Self-healing (tier 3),
-default-on capture, and the MCP/API serving layer are still ahead on the roadmap.
+shared output, with known secrets redacted first (§2h). Tier-3 self-healing has
+its scoring core (Phase 3): when a selector breaks, it re-resolves the element by
+scoring every candidate against a fingerprint captured while the selector worked
+— tag, id, class, attribute, inner-text, and structural similarity, no model call
+(§2) — flagging a low-confidence best candidate as an "uncertain match" for review
+rather than guessing, and always recording the winning score plus the runners-up
+it considered. Its accuracy is guarded by the §5.3 `hypothesis` mutation corpus at
+the merge-blocking ≥95% bar (currently ~99.8%). Wiring that core into a live run
+(cross-run fingerprint persistence, dispatcher escalation, surfacing uncertain
+matches in the run summary) and the perceptual-hash-on-screenshot component are
+the next Phase-3 slices; default-on capture and the MCP/API serving layer are
+still ahead on the roadmap.
 
 ## Contributing
 
