@@ -137,7 +137,9 @@ class RunResult:
     unchanged: list[str] = field(default_factory=list)
     # An anti-bot challenge recognized in a fetched page (ROADMAP.md §2d): a
     # CAPTCHA/interstitial fingerprint, surfaced so the run reports "hit a wall"
-    # rather than silently emitting challenge markup as data. Detection, never
+    # rather than silently emitting challenge markup as data. Recognized whether
+    # the wall rode a successful response or sat *behind* an error status (a
+    # dead-lettered fetch carrying a challenge promotes it here). Detection, never
     # bypass; None on an ordinary run. Vendor name only, never a captured secret
     # (§2h).
     challenge: ChallengeSignal | None = None
@@ -396,8 +398,12 @@ class Tier1Resolver:
                 outcome = fetcher.get(url, headers=headers)
                 if isinstance(outcome, FetchFailure):
                     # Classified fetch failure: record it and stop this crawl —
-                    # a failed page has no next-link to follow (§2d).
+                    # a failed page has no next-link to follow (§2d). If a challenge
+                    # was recognized *behind* the error status, surface it too — the
+                    # failure was a wall, not just an opaque error (§2d).
                     result.dead_letter.append(outcome)
+                    if result.challenge is None and outcome.challenge is not None:
+                        result.challenge = outcome.challenge
                     break
                 result.pages_fetched += 1
                 # Change detection (§2d): an unchanged page (304, or a body whose
@@ -680,7 +686,18 @@ class Tier2Resolver:
                     # Navigation failed unrecoverably: record it and stop this
                     # crawl — a page that never loaded has no next-link to follow
                     # (§2d), the same terminal handling as tier 1. page.close()
-                    # still runs via the finally below.
+                    # still runs via the finally below. When the failure was an
+                    # error *status* (a response arrived — status not None), scan
+                    # the rendered body for an anti-bot wall served behind it: the
+                    # browser holds the DOM, so `page.content()` is the right source
+                    # (the navigator stays body-free). A pure transport failure
+                    # (timeout / dropped connection, status None) has no body worth
+                    # scanning — and this keeps page.content() off the path where a
+                    # never-loaded page could make it raise, so the dead-letter path
+                    # stays crash-proof. Mirrors tier 1, which likewise detects only
+                    # on a response that arrived (§2d).
+                    if result.challenge is None and response.status is not None:
+                        result.challenge = detect_challenge(page.content())
                     result.dead_letter.append(response)
                     break
                 # Record the main document's response headers (§2c), if any.

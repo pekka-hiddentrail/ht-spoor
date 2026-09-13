@@ -92,6 +92,51 @@ def test_an_exhausted_transient_error_is_dead_lettered() -> None:
     assert sleeps == [0.5, 1.0]  # base * 2**0, base * 2**1
 
 
+_CHALLENGE_BODY = (
+    "<html><head><title>Just a moment...</title></head>"
+    '<body><div class="cf-turnstile"></div></body></html>'
+)
+
+
+def test_a_challenge_behind_a_permanent_error_is_carried_on_the_failure() -> None:
+    # A 403/503 often *is* a challenge interstitial: the FetchFailure carries the
+    # recognized vendor (§2d) — the generic signal only, never the body (§2h).
+    fetcher, _ = _fetcher(_scripted([httpx.Response(403, text=_CHALLENGE_BODY)]))
+    result = fetcher.get(_URL)
+    assert isinstance(result, FetchFailure)
+    assert result.challenge is not None
+    assert result.challenge.vendor == "Cloudflare"
+
+
+def test_a_challenge_behind_an_exhausted_transient_error_is_carried() -> None:
+    fetcher, _ = _fetcher(_scripted([httpx.Response(503, text=_CHALLENGE_BODY)]))
+    result = fetcher.get(_URL)
+    assert isinstance(result, FetchFailure)
+    assert result.challenge is not None
+    assert result.challenge.vendor == "Cloudflare"
+
+
+def test_an_ordinary_error_body_carries_no_phantom_challenge() -> None:
+    fetcher, _ = _fetcher(_scripted([httpx.Response(503, text="server on fire")]))
+    result = fetcher.get(_URL)
+    assert isinstance(result, FetchFailure)
+    assert result.challenge is None
+
+
+def test_a_transport_failure_carries_no_challenge() -> None:
+    # A timeout after an earlier challenged attempt has no body to scan; the
+    # per-attempt reset means the terminal failure reports None, not a stale hit.
+    fetcher, _ = _fetcher(
+        _scripted(
+            [httpx.Response(503, text=_CHALLENGE_BODY), httpx.TimeoutException("slow")]
+        )
+    )
+    result = fetcher.get(_URL)
+    assert isinstance(result, FetchFailure)
+    assert result.reason == "timeout"
+    assert result.challenge is None
+
+
 def test_a_permanent_error_is_not_retried() -> None:
     fetcher, sleeps = _fetcher(_scripted([httpx.Response(404)]))
     result = fetcher.get(_URL)

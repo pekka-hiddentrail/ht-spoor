@@ -59,9 +59,11 @@ retried with the same policy and backoff, and a page it ultimately cannot load i
 dead-lettered rather than crashing the run on an uncaught Playwright error — the
 scenarios drive a real browser against a scripted flaky loopback server.
 `anti_bot.feature` (§2d)
-covers challenge detection: a fetched page matching a known anti-bot fingerprint
+covers challenge detection: a page matching a known anti-bot fingerprint
 (a reCAPTCHA/hCaptcha widget, a Cloudflare interstitial) is flagged loudly on the
-run summary rather than scraped as data — detection only, never a bypass attempt.
+run summary rather than scraped as data — whether it arrives in a 2xx response or
+*behind* an error status (a 403/503 interstitial), where the run is both
+dead-lettered and reported as a challenge. Detection only, never a bypass attempt.
 `change_detection.feature` (§2d) covers the opt-in monitoring optimization: with
 `change_detection: true`, a re-run replays the `ETag`/`Last-Modified` a prior run
 recorded as a conditional request and, on a 304 (or a body whose content hash
