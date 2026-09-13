@@ -39,6 +39,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Read-only map serving (§2f): the REST API (FastAPI) and its ASGI server. Kept
+# out of the core dependency set — the resolution/extraction engine needs none of
+# it; only `spoor serve` does.
+serve = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
 dev = [
     "ruff",
     "mypy",
@@ -46,6 +53,9 @@ dev = [
     "pytest-bdd",
     "pytest-cov",
     "hypothesis",
+    # Serving extras are needed to run serving.feature in the gate.
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [project.scripts]
