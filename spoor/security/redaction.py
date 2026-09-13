@@ -123,3 +123,36 @@ def redact(text: str) -> str:
     for pattern, replacement in SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
     return text
+
+
+def redact_value(value: object) -> object:
+    """Recursively redact known secret shapes from an arbitrary record value.
+
+    Only string values carry a redactable shape; numbers, booleans, and ``None``
+    are returned unchanged. Lists and dicts are walked so a secret can't ride out
+    nested inside a structured field. The shape of the value is preserved.
+    """
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, list):
+        return [redact_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: redact_value(item) for key, item in value.items()}
+    return value
+
+
+def redact_records(
+    records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Redact every value of every record on its way to a shared surface (§2h).
+
+    The record-level guard shared by both shared-output consumers — the §2d
+    output pipeline's files and the §2f serving API's responses — so a secret
+    that landed in an extracted field never leaves the machine through either.
+    The raw records stay in the local-only cache/map; this guards only the path
+    out. Idempotent, since :data:`REDACTED` matches no pattern.
+    """
+    return [
+        {key: redact_value(value) for key, value in record.items()}
+        for record in records
+    ]

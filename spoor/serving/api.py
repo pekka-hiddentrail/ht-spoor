@@ -21,33 +21,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 
-from spoor.security.redaction import redact
+from spoor.security.redaction import redact_records
 from spoor.serving.store import MapStore
-
-
-def _redact_value(value: Any) -> Any:
-    """Redact known secret shapes from a served value (§2h).
-
-    The store is a local-only cache and may hold raw records; this is the path
-    *out* to a shared surface (an API response is one §2h explicitly names), so
-    string values pass through the redaction primitive on the way out. Non-string
-    values (numbers, None) carry no secret shape and are returned unchanged;
-    nested lists/dicts are handled so a record shape can't smuggle a secret past.
-    """
-    if isinstance(value, str):
-        return redact(value)
-    if isinstance(value, list):
-        return [_redact_value(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _redact_value(item) for key, item in value.items()}
-    return value
-
-
-def _redact_records(records: list[dict[str, object]]) -> list[dict[str, object]]:
-    return [
-        {key: _redact_value(value) for key, value in record.items()}
-        for record in records
-    ]
 
 
 def create_app(store: MapStore) -> FastAPI:
@@ -83,7 +58,7 @@ def create_app(store: MapStore) -> FastAPI:
             "url": entry.url,
             "domain": entry.domain,
             "tier": entry.tier,
-            "records": _redact_records(entry.records),
+            "records": redact_records(entry.records),
             "captured_at": entry.captured_at,
             "age_seconds": age_seconds,
         }
