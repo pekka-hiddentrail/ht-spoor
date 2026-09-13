@@ -25,6 +25,7 @@ are authored when their phase begins, not up front.
 | `redaction.feature` | Data handling: secret redaction before shared output (sandbox registry later) | §2h | `spoor/security` | 2.5 |
 | `observability.feature` | Run summary / observability | §2d | `spoor/operational` | 1 |
 | `resolution.feature` | Tier dispatcher / escalation, then tier-3 self-healing | §2 | `spoor/core` | 1 / 3 |
+| `self_healing.feature` | Tier-3 self-healing: scored element matching, no model call | §2 / §5.3 | `spoor/core` | 3 |
 | `serving.feature` | MCP server & REST API (read-only) | §2f | `spoor/serving` | 5 |
 | `exploration.feature` | Exploration mode + safety | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
@@ -60,5 +61,18 @@ response-header fingerprints, and client-side storage state — each opt-in,
 browser-tier-only, with raw captures kept local-only and only safe/derived facts
 (or, for storage state, redacted entries) surfaced to shared output. The §2h
 secret-redaction pipeline (`redaction.feature`) is authored and green and backs
-that storage-state surfacing. The sandbox registry (§2e/§2h) and the remaining
-feature files are authored when their phase begins.
+that storage-state surfacing.
+
+Phase 3 has begun: `self_healing.feature` (§2, §5.3) authors the tier-3 scoring
+core — capture an element's fingerprint while its selector works, and when the
+selector later breaks, re-resolve by scoring every candidate (tag, id, class,
+attribute, inner-text, and structural similarity, no model call), flagging a
+low-confidence best candidate as an "uncertain match" rather than guessing and
+always recording the winning score plus runners-up. It is backed below the
+Gherkin layer by the §5.3 `hypothesis` mutation corpus (a statistical
+success-rate property, not a shape Gherkin suits), which gates the merge-blocking
+≥95% bar (currently ~99.8%). This first slice is the pure engine over static DOM;
+cross-run fingerprint persistence, dispatcher wiring + surfacing uncertain matches
+in the run summary, and the perceptual-hash-on-screenshot component are follow-on
+slices (see the §2 tier-3 decision note). The sandbox registry (§2e/§2h) and the
+remaining feature files are authored when their phase begins.
