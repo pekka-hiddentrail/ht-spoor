@@ -267,7 +267,7 @@ class RunSummary:
             )
         # Accessibility node count, only when the a11y tree was captured (§2c).
         if self.accessibility is not None:
-            lines.append(f"  a11y nodes:    {self.accessibility.nodes}")
+            lines.append(f"  accessibility: {self.accessibility.nodes} nodes")
         # Response-header fingerprint, only when captured (§2c). Count + security-
         # header presence, never values (§2h — some headers are secret shapes).
         if self.headers is not None:
@@ -294,7 +294,7 @@ class RunSummary:
         if self.synthesized_spec is not None:
             syn = self.synthesized_spec
             lines.append(
-                f"  api synth:     {syn.endpoint_count} endpoints synthesized "
+                f"  api from traffic: {syn.endpoint_count} endpoints synthesized "
                 f"from {syn.request_count} requests"
             )
         # Action-correlation counts, only when a HAR + checkpoints were captured and
@@ -304,7 +304,8 @@ class RunSummary:
         if self.action_correlation is not None:
             corr = self.action_correlation
             lines.append(
-                f"  api actions:   {corr.request_count} requests likely triggered "
+                f"  api action correlation: {corr.request_count} requests likely "
+                "triggered "
                 f"by {corr.action_count} actions"
             )
         # Capture lines: only shown when something was captured, so an ordinary run

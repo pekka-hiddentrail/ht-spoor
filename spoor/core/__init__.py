@@ -1,4 +1,4 @@
-"""Core resolution tiers, escalation dispatcher, interaction executor (ROADMAP.md §2).
+"""Core extraction, escalation, and self-healing primitives (ROADMAP.md §2).
 
 HARD RULE (§0 / CLAUDE.md): nothing in this package may hardcode knowledge of a
 specific website — no `if domain == "..."` branches, no site-specific selectors

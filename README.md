@@ -1,18 +1,15 @@
 # Spoor
 
 > **Give your agents a map of the web.**
-> Spoor is a local-first crawler that escalates from selectors to browser and
-> visual interaction only when needed — then exposes the discovered behavior
-> through MCP or API.
+> Spoor is a local-first crawler that escalates from selectors to browser
+> rendering and visual/fingerprint healing only when needed.
 >
-> **Local-first. MCP-ready. LLM optional.**
+> **Local-first. Config-driven.**
 
 Spoor escalates through UI resolution tiers (fast selectors → JS-rendered
-selectors → visual/fingerprint healing) with human-like interaction on a
-separate axis, only going as deep as a target needs. Alongside, it passively
-builds a map of the target's API surface and a catalog of client-side signals —
-using existing open-source components wherever possible, and LLM calls only as
-an optional, off-by-default last resort.
+selectors → visual/fingerprint healing), only going as deep as a target needs.
+Alongside extraction, it passively observes the target's API surface and a
+catalog of client-side signals.
 
 It reports **a map of what's been explored** — everything Spoor has actually
 observed or been asked to look at — never a guaranteed-exhaustive census of a
@@ -51,7 +48,7 @@ the import package and CLI are both `spoor`.
 
 ## Quickstart (taking Spoor into use)
 
-1) Create a config file (same schema for every target, §0):
+1) Create a config file:
 
 ```yaml
 # config.yaml

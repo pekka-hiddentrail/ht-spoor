@@ -105,7 +105,7 @@ def a11y_signal_populated(context: dict[str, Any]) -> None:
 @then("the run summary reports the accessible node count")
 def summary_reports_a11y(context: dict[str, Any]) -> None:
     signal = context["result"].accessibility
-    assert f"a11y nodes:    {signal.nodes}" in context["summary"].render()
+    assert f"accessibility: {signal.nodes} nodes" in context["summary"].render()
 
 
 @then("the run summary reports the accessibility snapshot as a local-only capture")
@@ -133,4 +133,4 @@ def no_a11y_file(context: dict[str, Any]) -> None:
 def summary_no_a11y(context: dict[str, Any]) -> None:
     summary = context["summary"]
     assert summary.accessibility is None
-    assert "a11y nodes:" not in summary.render()
+    assert "accessibility:" not in summary.render()

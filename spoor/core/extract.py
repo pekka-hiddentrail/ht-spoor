@@ -8,8 +8,9 @@ implemented here. Escalation reaches tier 2 two ways, both generic (§0): by
 *capability* (a config requesting a browser-only feature such as JS-driven
 infinite scroll, which tier 1 declines up front) and by *content* (tier 1 runs
 but extracts zero records, so the dispatcher re-renders in a browser). Tier 3
-(self-healing) joins the ladder later. Per §0 there is no site-specific logic:
-everything is driven by the config.
+(self-healing) is also wired here, but as a run-wide `Healer` threaded through
+the resolving tier rather than as its own resolver rung. Per §0 there is no
+site-specific logic: everything is driven by the config.
 """
 
 from __future__ import annotations
@@ -770,8 +771,9 @@ class Tier2Resolver:
             return
 
 
-# The resolution ladder, tried in order (ROADMAP.md §2). Tier 3 (self-healing)
-# joins this tuple when it is built.
+# The resolution ladder, tried in order (ROADMAP.md §2). Tier 3 self-healing is
+# not a resolver rung here; `run_report` threads one run-wide `Healer` through
+# whichever resolver handles the run.
 DEFAULT_TIERS: tuple[Resolver, ...] = (Tier1Resolver(), Tier2Resolver())
 
 
