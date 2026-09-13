@@ -8,9 +8,18 @@ re-finds the element by scoring every candidate on the page against a
 none of its code; Healenium's published, Apache-2.0 core approach (a DOM
 fingerprint + weighted similarity, *not* the commercial "Pro" tier) is only a
 conceptual reference. What runs is entirely this module's own implementation: a
-weighted blend of tag, id, class, other-attribute, inner-text, and structural
-(ancestor-chain + sibling-position) similarity. No LLM, no network — deterministic
-arithmetic over the DOM (§2 tier table: "no model call").
+weighted blend of tag, id, class, other-attribute, inner-text, structural
+(ancestor-chain + sibling-position), and descendant-composition similarity. No
+LLM, no network — deterministic arithmetic over the DOM (§2 tier table: "no model
+call").
+
+The descendant-composition signal (a multiset of the element's descendant tag
+names) is what gives *container* elements — a listing row, a card — a stable
+identity: a leaf field element (a price span, a heading) has no descendants, so
+the signal is simply not part of its blend and leaf-element scoring is unchanged;
+but a row whose identity is "a thing containing a link and a price" is
+distinguished from a look-alike sibling group (e.g. a nav list) by *what it
+contains*, which survives a class rename on the container itself.
 
 Reliability-first (§2, §1). `heal` never silently guesses:
 
@@ -39,6 +48,7 @@ corpus that guards this math lives in tests/ under `pytest -m mutation` (§5.3).
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
@@ -61,6 +71,12 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.6
 # element actually had that signal, so an element with (say) no id is not
 # penalised for candidates that have one — the score is a weighted mean over the
 # *applicable* signals only.
+# Descendant composition is likewise applicable only when the stored element had
+# descendants: a leaf field (a price span, a heading) has none, so the signal drops
+# out and leaf scoring is unchanged; it is weighted heavily because for a
+# *container* (a listing row, a card) "what it contains" is its most stable
+# identity, and is exactly what survives a class rename on the container itself —
+# the case container healing exists for.
 _W_TAG = 1.5
 _W_ID = 3.0
 _W_CLASSES = 1.0
@@ -68,6 +84,7 @@ _W_ATTRS = 1.0
 _W_TEXT = 3.0
 _W_ANCESTORS = 1.5
 _W_SIBLING = 0.5
+_W_DESCENDANTS = 2.0
 
 # How many runner-up candidates to retain for the "why did it heal here" record.
 _MAX_RUNNERS_UP = 4
@@ -81,6 +98,10 @@ class ElementFingerprint:
     have their own dedicated, higher-weighted fields); `ancestors` is the chain of
     ancestor tag names from the root down to the element's parent; `sibling_index`
     is the element's position among same-tag siblings under its parent.
+    `descendants` is the multiset of the element's descendant tag names, as a sorted
+    tuple of `(tag, count)` pairs — a leaf element's is empty. It is what gives a
+    *container* (a listing row, a card) an identity that survives a class rename on
+    the container itself; a leaf field carries none and is scored exactly as before.
     """
 
     tag: str
@@ -90,6 +111,7 @@ class ElementFingerprint:
     text: str
     ancestors: tuple[str, ...]
     sibling_index: int
+    descendants: tuple[tuple[str, int], ...]
 
 
 @dataclass(frozen=True)
@@ -172,6 +194,14 @@ def fingerprint(selector: Selector, *, include_text: bool = True) -> ElementFing
         same_tag = [child for child in parent if child.tag == tag]
         sibling_index = same_tag.index(root)
 
+    # Multiset of descendant element tag names (comments/PIs have non-str tags and
+    # are skipped). Sorted to a canonical tuple so equal structures fingerprint
+    # equally regardless of traversal order. Empty for a leaf element.
+    descendant_counts = Counter(
+        desc.tag for desc in root.iterdescendants() if isinstance(desc.tag, str)
+    )
+    descendants = tuple(sorted(descendant_counts.items()))
+
     return ElementFingerprint(
         tag=tag,
         element_id=element_id,
@@ -180,6 +210,7 @@ def fingerprint(selector: Selector, *, include_text: bool = True) -> ElementFing
         text=text,
         ancestors=ancestors,
         sibling_index=sibling_index,
+        descendants=descendants,
     )
 
 
@@ -193,12 +224,33 @@ def _jaccard(a: frozenset[object], b: frozenset[object]) -> float:
     return len(a & b) / len(union)
 
 
+def _multiset_similarity(
+    a: tuple[tuple[str, int], ...], b: tuple[tuple[str, int], ...]
+) -> float:
+    """Weighted-Jaccard similarity of two tag-count multisets, in [0.0, 1.0].
+
+    `sum(min(count)) / sum(max(count))` over the union of tags: identical
+    compositions score 1.0, disjoint ones 0.0, and adding or dropping a descendant
+    degrades the score proportionally rather than all-or-nothing. 1.0 for two empty
+    multisets (nothing to differ), matching `_jaccard`.
+    """
+    count_a = dict(a)
+    count_b = dict(b)
+    tags = count_a.keys() | count_b.keys()
+    if not tags:
+        return 1.0
+    intersection = sum(min(count_a.get(t, 0), count_b.get(t, 0)) for t in tags)
+    union = sum(max(count_a.get(t, 0), count_b.get(t, 0)) for t in tags)
+    return intersection / union if union else 1.0
+
+
 def score(stored: ElementFingerprint, candidate: ElementFingerprint) -> float:
     """Blended similarity of `candidate` to `stored`, in [0.0, 1.0] (§2, §5.3).
 
     A weighted mean over the *applicable* signals: tag and structure always count;
-    id/classes/attrs/text count only when `stored` had them, so an element with no
-    id is never penalised for a candidate that has one. Deterministic.
+    id/classes/attrs/text/descendants count only when `stored` had them, so an
+    element with no id (or a leaf with no descendants) is never penalised for a
+    candidate that has one. Deterministic.
     """
     total_weight = 0.0
     weighted = 0.0
@@ -242,6 +294,16 @@ def score(stored: ElementFingerprint, candidate: ElementFingerprint) -> float:
     weighted += _W_SIBLING * (
         1.0 / (1.0 + abs(stored.sibling_index - candidate.sibling_index))
     )
+
+    # Descendant composition — only when the stored element had descendants (a leaf
+    # field has none, so this signal is simply absent and leaf scoring is unchanged).
+    # For a container it is the identity that survives a rename of the container's
+    # own class/id.
+    if stored.descendants:
+        total_weight += _W_DESCENDANTS
+        weighted += _W_DESCENDANTS * _multiset_similarity(
+            stored.descendants, candidate.descendants
+        )
 
     return weighted / total_weight if total_weight else 0.0
 

@@ -47,6 +47,7 @@ def _fingerprint_to_dict(fp: ElementFingerprint) -> dict[str, object]:
         "text": fp.text,
         "ancestors": list(fp.ancestors),
         "sibling_index": fp.sibling_index,
+        "descendants": [[tag, count] for tag, count in fp.descendants],
     }
 
 
@@ -59,10 +60,14 @@ def _fingerprint_from_dict(data: dict[str, object]) -> ElementFingerprint:
     classes = data["classes"]
     attrs = data["attrs"]
     ancestors = data["ancestors"]
+    # Backward-compatible: caches written before the descendant signal have no
+    # "descendants" key, so an entry without one loads as a leaf (empty multiset).
+    descendants = data.get("descendants", [])
     if not (
         isinstance(classes, list)
         and isinstance(attrs, list)
         and isinstance(ancestors, list)
+        and isinstance(descendants, list)
     ):
         raise TypeError("malformed fingerprint entry: expected list fields")
     return ElementFingerprint(
@@ -73,6 +78,7 @@ def _fingerprint_from_dict(data: dict[str, object]) -> ElementFingerprint:
         text=str(data["text"]),
         ancestors=tuple(str(a) for a in ancestors),
         sibling_index=int(str(data["sibling_index"])),
+        descendants=tuple((str(pair[0]), int(pair[1])) for pair in descendants),
     )
 
 

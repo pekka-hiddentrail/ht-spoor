@@ -73,6 +73,21 @@ def test_fingerprint_rejects_a_non_element_selector() -> None:
         fingerprint(text_node[0])
 
 
+def test_fingerprint_of_a_leaf_element_has_no_descendants() -> None:
+    # A field element (a heading with only text) has no descendant elements, so its
+    # descendant multiset is empty and the signal is inert for leaf scoring.
+    fp = _fp(_PAGE, "h2[data-pos='2']")
+    assert fp.descendants == ()
+
+
+def test_fingerprint_captures_the_descendant_tag_multiset() -> None:
+    # A container's descendants are captured as a sorted (tag, count) multiset —
+    # the identity a leaf-oriented fingerprint can't see.
+    row = "<li class='card'><a>n</a><span>p</span><span>was</span></li>"
+    fp = _fp(row, "li")
+    assert fp.descendants == (("a", 1), ("span", 2))
+
+
 # --- score ----------------------------------------------------------------
 
 
@@ -107,6 +122,30 @@ def test_a_missing_id_does_not_penalise_when_stored_had_none() -> None:
     # The candidate has an id the stored lacks; since stored had none, id is not
     # scored, so the shared tag/class/text/structure still dominate.
     assert score(stored, other) >= DEFAULT_CONFIDENCE_THRESHOLD
+
+
+def test_descendant_signal_is_inert_when_the_stored_element_is_a_leaf() -> None:
+    # Stored is a leaf (no descendants), so a candidate's descendants must not
+    # affect the score: two candidates identical except for their children score
+    # the same against a leaf stored fingerprint.
+    stored = _fp("<span class='price'>10</span>", "span")
+    plain = _fp("<span class='price'>10</span>", "span")
+    # Empty children so only the descendant multiset differs (text stays "10").
+    with_children = _fp("<span class='price'>10<b></b><i></i></span>", "span")
+    assert with_children.descendants == (("b", 1), ("i", 1))
+    assert score(stored, plain) == pytest.approx(score(stored, with_children))
+
+
+def test_descendant_composition_distinguishes_a_container_from_a_lookalike() -> None:
+    # Two same-tag sibling groups whose class is renamed identically: the product
+    # row (a + span) and a nav item (a only). Text, tag, class-shape and structure
+    # are held identical across the two candidates so the *only* thing that can
+    # separate them is their descendant composition — the gap the signal exists to
+    # create. The row that shares the stored container's composition must win.
+    stored = _fp("<li class='card'><a>X</a><span></span></li>", "li")
+    real_row = _fp("<li class='item'><a>X</a><span></span></li>", "li")
+    nav_item = _fp("<li class='item'><a>X</a></li>", "li")
+    assert score(stored, real_row) > score(stored, nav_item)
 
 
 # --- heal -----------------------------------------------------------------
