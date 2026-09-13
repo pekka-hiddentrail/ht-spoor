@@ -37,11 +37,17 @@ from spoor.api_discovery.correlation import (
 from spoor.api_discovery.discovery import DiscoveredSpec, discover_spec
 from spoor.api_discovery.graphql import DiscoveredGraphQL, discover_graphql
 from spoor.api_discovery.synthesis import SynthesizedSpec, synthesize_from_har
-from spoor.core.config import ExtractionConfig, FieldSpec, PolitenessPolicy
+from spoor.core.config import (
+    ExtractionConfig,
+    FieldSpec,
+    PolitenessPolicy,
+    RetryPolicy,
+)
 from spoor.core.fingerprint_cache import cache_for_target
 from spoor.core.self_healing import Healer, HealEvent, Screenshotter
 from spoor.core.visual import InvalidImageError, perceptual_hash
 from spoor.operational.politeness import Politeness
+from spoor.operational.retry import FetchFailure, RetryingFetcher
 from spoor.security import storage
 from spoor.signals.accessibility import AccessibilityCollector, AccessibilitySignal
 from spoor.signals.console import ConsoleCollector, ConsoleSignal
@@ -109,6 +115,13 @@ class RunResult:
 
     records: list[dict[str, object]] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
+    # URLs the tier-1 fetch could not retrieve — a permanent error (e.g. 404) or
+    # a transient one that exhausted its retries (ROADMAP.md §2d Phase 3.5). Each
+    # carries a generic HTTP-category reason and the attempt count; recorded, not
+    # raised, so a run degrades honestly. `retries` counts transient failures
+    # that were retried this run (whether or not they eventually succeeded).
+    dead_letter: list[FetchFailure] = field(default_factory=list)
+    retries: int = 0
     tier: int | None = None
     pages_fetched: int = 0
     tiers_attempted: list[int] = field(default_factory=list)
@@ -344,6 +357,7 @@ class Tier1Resolver:
         owns_client = client is None
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
         gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
+        fetcher = RetryingFetcher(client, config.retry or RetryPolicy(), sleep=sleep)
         result = RunResult(tier=self.tier)
         seen: set[str] = set()
         url: str | None = config.target
@@ -354,12 +368,17 @@ class Tier1Resolver:
                     result.blocked.append(url)
                     break
                 gate.before_fetch(url)
-                response = client.get(url)
-                response.raise_for_status()
+                outcome = fetcher.get(url)
+                if isinstance(outcome, FetchFailure):
+                    # Classified fetch failure: record it and stop this crawl —
+                    # a failed page has no next-link to follow (§2d).
+                    result.dead_letter.append(outcome)
+                    break
                 result.pages_fetched += 1
-                result.records.extend(extract_records(response.text, config, healer))
-                url = _next_url(response.text, url, config)
+                result.records.extend(extract_records(outcome.text, config, healer))
+                url = _next_url(outcome.text, url, config)
         finally:
+            result.retries = fetcher.retries
             if owns_client:
                 client.close()
         return result
@@ -687,8 +706,12 @@ def _should_escalate(result: RunResult) -> bool:
     all — the hallmark of a listing that only populates in a browser. A
     robots-blocked run is *not* escalated: `blocked` is a non-empty result, and a
     heavier tier is for rendering, never for working around the disallow (§6).
+    A dead-lettered run is likewise not escalated: a classified fetch failure (a
+    404, or a 503 that exhausted its retries, §2d) is a definite answer about the
+    origin, not an empty page a browser might render differently — re-fetching it
+    in a heavier tier would only hit the same failing server.
     """
-    return not result.records and not result.blocked
+    return not result.records and not result.blocked and not result.dead_letter
 
 
 def run_report(

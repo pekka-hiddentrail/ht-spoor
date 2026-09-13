@@ -54,6 +54,9 @@ pagination:
   next: "a.next-page"
 politeness:                      # optional; robots.txt is respected by default
   delay: 1.0                     # min seconds between fetches (overrides crawl-delay)
+retry:                           # optional; transient failures retry by default
+  max_retries: 2                 # retries after the first attempt (0 disables)
+  backoff: 0.5                   # base seconds; grows 0.5, 1.0, 2.0, … per retry
 ```
 
 ```
@@ -67,13 +70,17 @@ against your config's field schema before anything is written. Spoor respects
 `robots.txt` and honors its crawl-delay by default (§2d, §6):
 disallowed URLs are recorded and never fetched. Ignoring `robots.txt` is an
 explicit, deliberate opt-out — `politeness: { respect_robots: false }` — never
-the default.
+the default. Flaky origins are handled honestly too: a transient fetch failure
+(a timeout, a dropped connection, a 5xx, or a 429) is retried with backoff —
+honoring a `Retry-After` the server sends — while a settled error (a 404 and
+other 4xx) is not retried; a URL that can't be fetched lands in a dead-letter
+log on the run summary rather than crashing the run or vanishing silently (§2d).
 
 **What works today:** tier-1 extraction (fast selectors over fetched HTML, no
 browser) — single or repeating (`item`) records, element text or attribute
 (`attr`) values, `number` coercion, and next-link pagination — behind a
-`robots.txt`/crawl-delay politeness gate, with schema-validated JSON/JSON
-Lines/CSV output. Tier 2 (JS rendering via headless Chromium) also works for
+`robots.txt`/crawl-delay politeness gate and a transient-failure retry/dead-letter
+gate, with schema-validated JSON/JSON Lines/CSV output. Tier 2 (JS rendering via headless Chromium) also works for
 its first slice: the dispatcher escalates to it for infinite-scroll pages,
 which it renders and scrolls to exhaustion before reusing the same extraction.
 Every run also looks for a published API spec — probing conventional paths and

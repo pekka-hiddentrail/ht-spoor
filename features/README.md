@@ -24,6 +24,7 @@ are authored when their phase begins, not up front.
 | `signals.feature`, `accessibility.feature`, `response_headers.feature`, `storage_state.feature` | Client-side signals catalog (console, a11y tree, response headers, storage state) | §2c | `spoor/signals` | 2.5 |
 | `redaction.feature` | Data handling: secret redaction before shared output (sandbox registry later) | §2h | `spoor/security` | 2.5 |
 | `observability.feature` | Run summary / observability | §2d | `spoor/operational` | 1 |
+| `retry.feature` | Retry transient fetch failures with backoff (Retry-After honored), dead-letter the unrecoverable | §2d | `spoor/operational` | 3.5 |
 | `resolution.feature` | Tier dispatcher / escalation, then tier-3 self-healing | §2 | `spoor/core` | 1 / 3 |
 | `self_healing.feature` | Tier-3 self-healing: scored element matching, no model call | §2 / §5.3 | `spoor/core` | 3 |
 | `self_healing_runs.feature` | Tier-3 wired into a live run: persist fingerprints, heal across runs, surface counts | §2 / §2d | `spoor/core` | 3 |
@@ -42,9 +43,13 @@ an infinite-scroll scenario that runs a real headless browser (tier 2) against a
 live loopback fixture server. `operational.feature` (§2d) covers politeness —
 respecting `robots.txt` (default on) and honoring the crawl-delay. `output.feature`
 (§2d) covers the output pipeline — schema-validated JSON/JSON Lines/CSV sinks with
-format chosen by extension or `--format` (SQLite/Parquet sinks and the Phase-3.5
-items — retry/error classification, CAPTCHA detection, change detection, run
-observability — are specified for their later turns; see the Phase column).
+format chosen by extension or `--format` (SQLite/Parquet sinks and the remaining
+Phase-3.5 items — CAPTCHA detection, change detection — are specified for their
+later turns; see the Phase column). `retry.feature` (§2d) covers the tier-1
+retry/error-classification slice: a transient fetch failure (timeout, dropped
+connection, 5xx, 429) is retried with backoff — honoring a server-sent
+`Retry-After` — while a permanent one (other 4xx) is not, and a URL that can't be
+fetched lands in a dead-letter log on the run summary instead of crashing the run.
 `resolution.feature` (§2) covers the escalation seam that picks a resolution tier
 and, for a browser-only capability (infinite scroll), routes past the static tier 1
 to the browser-backed tier 2, then tier-3 self-healing. `observability.feature`

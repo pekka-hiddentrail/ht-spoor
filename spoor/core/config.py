@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 FieldType = Literal["string", "number"]
 
@@ -49,14 +49,36 @@ class PolitenessPolicy(BaseModel):
     this by default). `delay`, when set, is a minimum spacing in seconds applied
     between fetches and overrides the robots.txt crawl-delay. `respect_robots`
     may be set to false, but only as an explicit, deliberate opt-out — never the
-    default (§6). Concurrency caps and Retry-After honoring are deferred until a
-    request pool / retry mechanism exists (see the ROADMAP §2d decision note).
+    default (§6). Retry-After honoring now lives on `RetryPolicy` (§2d Phase 3.5);
+    concurrency caps stay deferred until a request pool exists (§2d note).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     respect_robots: bool = True
     delay: float | None = None
+
+
+class RetryPolicy(BaseModel):
+    """How the tier-1 fetch retries transient failures (ROADMAP.md §2d, Phase 3.5).
+
+    A flaky server's 503, a dropped connection, or a timeout is often momentary,
+    so a bounded retry is worth it; a 404 (and other non-429 4xx) is a settled
+    answer that retrying only wastes politeness budget on. `max_retries` caps the
+    retries *after* the first attempt (0 disables retrying), and `backoff` is the
+    base of the exponential wait between them (`backoff * 2**n` seconds).
+    `respect_retry_after` honors a `Retry-After` header the server sends on a 503
+    / 429 in place of that backoff — the item the `PolitenessPolicy` docstring
+    deferred until a retry mechanism existed. Omitted means the defaults below.
+    Nothing here is tier- or site-specific (§0): it is HTTP-category classification
+    driving the sequential tier-1 fetch.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_retries: int = Field(default=2, ge=0)
+    backoff: float = Field(default=0.5, ge=0)
+    respect_retry_after: bool = True
 
 
 class Capture(BaseModel):
@@ -105,6 +127,10 @@ class ExtractionConfig(BaseModel):
     # Politeness is a first-class object (ROADMAP.md §2d), not a README promise;
     # omitted means the default policy (respect robots.txt, honor crawl-delay).
     politeness: PolitenessPolicy | None = None
+    # How transient tier-1 fetch failures are retried (ROADMAP.md §2d, Phase
+    # 3.5); omitted means the default policy (bounded retry with backoff,
+    # honoring Retry-After).
+    retry: RetryPolicy | None = None
     # Opt-in raw network capture (ROADMAP.md §2b/§2c, §2h); omitted means no
     # capture. Only the browser tier acts on it.
     capture: Capture | None = None
