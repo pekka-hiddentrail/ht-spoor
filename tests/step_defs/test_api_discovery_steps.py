@@ -82,6 +82,23 @@ def landing_references_spec(context: dict[str, Any], path: str) -> None:
     context["routes"][_TARGET_PATH] = (200, html, "text/html")
 
 
+@given(parsers.parse('a target whose landing page loads the script "{path}"'))
+def landing_loads_script(context: dict[str, Any], path: str) -> None:
+    # The landing HTML has no direct spec reference — only a <script src>, so the
+    # spec is found (or not) purely by scanning the referenced bundle.
+    html = (
+        f'<html><body><h1 class="t">Hello</h1>'
+        f'<script src="{path}"></script></body></html>'
+    )
+    context["routes"][_TARGET_PATH] = (200, html, "text/html")
+
+
+@given(parsers.parse('the script "{path}" references a spec at "{spec_path}"'))
+def script_references_spec(context: dict[str, Any], path: str, spec_path: str) -> None:
+    js = f'const ui = SwaggerUIBundle({{ url: "{spec_path}", dom_id: "#s" }});'
+    context["routes"][path] = (200, js, "application/javascript")
+
+
 @given(parsers.parse('a target whose landing page has a Redoc spec-url of "{path}"'))
 def landing_redoc_spec_url(context: dict[str, Any], path: str) -> None:
     # A path with none of the spec vocabulary: only the explicit spec-url

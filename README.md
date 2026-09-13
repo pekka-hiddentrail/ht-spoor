@@ -77,8 +77,9 @@ Lines/CSV output. Tier 2 (JS rendering via headless Chromium) also works for
 its first slice: the dispatcher escalates to it for infinite-scroll pages,
 which it renders and scrolls to exhaustion before reusing the same extraction.
 Every run also looks for a published API spec — probing conventional paths and
-scanning the landing page's HTML for a reference to one — and an introspectable
-GraphQL endpoint (§2b), and reports a structured run summary (§2d). The browser tier can
+scanning the landing page's HTML and its same-origin JS bundles for a reference
+to one — and an introspectable GraphQL endpoint (§2b), and reports a structured
+run summary (§2d). The browser tier can
 opt into capturing signals (§2c) — HAR, console output/JS errors, the
 accessibility tree, response-header fingerprints, and client-side storage state
 — written to a local-only, git-ignored cache; only safe derived facts reach

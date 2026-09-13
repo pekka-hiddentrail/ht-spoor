@@ -10,7 +10,10 @@ strict JSON check tested via the feature, not here; this only fixes what gets
 
 from __future__ import annotations
 
-from spoor.api_discovery.discovery import _spec_reference_candidates
+from spoor.api_discovery.discovery import (
+    _script_srcs,
+    _spec_reference_candidates,
+)
 
 _PAGE = "http://localhost:8000/app/index.html"
 
@@ -87,3 +90,51 @@ def test_multiple_distinct_references_preserve_order() -> None:
         "http://localhost:8000/a/spec",
         "http://localhost:8000/openapi.json",
     ]
+
+
+# --- _script_srcs: which bundles get fetched -----------------------------
+
+
+def test_no_scripts_yields_no_srcs() -> None:
+    assert _script_srcs("<html><body>hi</body></html>", _PAGE) == []
+
+
+def test_inline_script_without_src_is_ignored() -> None:
+    assert _script_srcs("<script>var x = 1;</script>", _PAGE) == []
+
+
+def test_same_origin_script_is_kept_and_made_absolute() -> None:
+    html = '<script src="/static/app.js"></script>'
+    assert _script_srcs(html, _PAGE) == ["http://localhost:8000/static/app.js"]
+
+
+def test_relative_script_resolves_against_page() -> None:
+    html = '<script src="bundle.js"></script>'
+    assert _script_srcs(html, _PAGE) == ["http://localhost:8000/app/bundle.js"]
+
+
+def test_cross_origin_script_is_dropped() -> None:
+    # A third-party bundle is never fetched — neither bounded nor polite.
+    html = '<script src="https://cdn.example.com/app.js"></script>'
+    assert _script_srcs(html, _PAGE) == []
+
+
+def test_scheme_relative_cross_origin_script_is_dropped() -> None:
+    html = '<script src="//cdn.example.com/app.js"></script>'
+    assert _script_srcs(html, _PAGE) == []
+
+
+def test_duplicate_scripts_are_collapsed_first_seen() -> None:
+    html = '<script src="/a.js"></script><script src="/a.js"></script>'
+    assert _script_srcs(html, _PAGE) == ["http://localhost:8000/a.js"]
+
+
+def test_data_src_attribute_is_not_treated_as_a_script_src() -> None:
+    # `data-src` (a lazy-load decoy) must not be fetched as if it were `src`.
+    html = '<script data-src="/decoy.js"></script>'
+    assert _script_srcs(html, _PAGE) == []
+
+
+def test_src_survives_other_attributes_before_it() -> None:
+    html = '<script type="module" id="x" src="/real.js"></script>'
+    assert _script_srcs(html, _PAGE) == ["http://localhost:8000/real.js"]
