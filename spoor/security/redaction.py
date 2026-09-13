@@ -15,12 +15,18 @@ Design notes, and the boundaries of the claim:
   parameter to disable it. A caller on the shared path cannot opt out — the
   only way raw values leave the machine is the separate, explicit export of the
   local cache (§2h), which does not route through here.
-- **Known shapes, not entropy.** This redacts *recognized* secret formats
-  (bearer/auth-scheme tokens, common auth-cookie names, common vendor API-key
-  formats, JWTs). It is deliberately not a general high-entropy-string detector:
-  that trades false positives (mangling legitimate data) for a promise this
-  layer does not make. A value in an unknown shape is not caught here — the
-  local-only cache, not redaction, is what keeps raw captures off shared output.
+- **Known shapes, not entropy.** This redacts *recognized* secret formats:
+  auth-scheme credentials (``Bearer``, and ``Basic`` when it rides an
+  Authorization header), common auth/session-cookie *and* secret field names
+  (``sessionid``, ``api_key``, ``client_secret``, ``password``, …), common
+  vendor API-key formats (OpenAI ``sk-``/``sk-proj-``, Stripe ``sk_live_``/
+  ``rk_live_``, AWS ``AKIA…``, Google ``AIza…`` and ``GOCSPX-…``, GitHub, Slack),
+  JWTs, and PEM private-key blocks. It is deliberately not a general
+  high-entropy-string detector: that trades false positives (mangling legitimate
+  data) for a promise this layer does not make — a keyless 40-char blob such as
+  an AWS *secret* access key has no recognizable shape and is not caught here. A
+  value in an unknown shape relies on the local-only cache, not redaction, to
+  stay off shared output.
 - **Structure-preserving.** Where a secret has a non-sensitive prefix (an auth
   scheme, a cookie name), the prefix is kept and only the credential replaced,
   so the redacted output still reads as what it was.
@@ -51,22 +57,50 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"\b(?P<pre>bearer\s+)[\w.~+/=-]{8,}", re.IGNORECASE),
         rf"\g<pre>{REDACTED}",
     ),
-    # Common auth/session-cookie shapes: keep the cookie name, redact the value
-    # up to the next cookie delimiter.
+    # Basic-scheme credential. Unlike Bearer, "Basic" is a common English word
+    # ("Basic authentication"), so this is anchored to an Authorization header to
+    # avoid mangling prose — it keeps the scheme and redacts the base64 blob.
     (
         re.compile(
-            r"\b(?P<pre>(?:session(?:id)?|sessid|sid|auth[_-]?token|access[_-]?token"
-            r"|refresh[_-]?token|csrf[_-]?token|xsrf[_-]?token|phpsessid|jsessionid"
-            r"|connect\.sid)=)[^\s;,]+",
+            r"(?P<pre>(?:proxy-)?authorization:\s*basic\s+)[A-Za-z0-9+/=]{8,}",
             re.IGNORECASE,
         ),
         rf"\g<pre>{REDACTED}",
     ),
+    # Common credential-bearing key=value shapes (auth/session cookies, and the
+    # obvious secret field names): keep the name, redact the value up to the next
+    # delimiter. A curated list of known-sensitive names — not a catch-all — so a
+    # bare opaque value under an unrecognized name still relies on the local-only
+    # cache, never this rule (the known-shapes boundary, §2h).
+    (
+        re.compile(
+            r"\b(?P<pre>(?:session(?:id)?|sessid|sid|auth[_-]?token|access[_-]?token"
+            r"|refresh[_-]?token|id[_-]?token|csrf[_-]?token|xsrf[_-]?token|token"
+            r"|phpsessid|jsessionid|connect\.sid|api[_-]?key|apikey"
+            r"|client[_-]?secret|api[_-]?secret|password|passwd|pwd)=)[^\s;,]+",
+            re.IGNORECASE,
+        ),
+        rf"\g<pre>{REDACTED}",
+    ),
+    # PEM private-key block: redact the whole armored block (any key type).
+    (
+        re.compile(
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+            re.DOTALL,
+        ),
+        REDACTED,
+    ),
     # JSON Web Token: three base64url segments. Matched before the vendor keys so
     # a token-shaped value is caught whole.
     (re.compile(r"\beyJ[\w-]+\.eyJ[\w-]+\.[\w-]+"), REDACTED),
-    # Stripe / OpenAI-style secret keys ("sk-...").
-    (re.compile(r"\bsk-[A-Za-z0-9]{16,}"), REDACTED),
+    # OpenAI-style secret keys: "sk-..." including the modern "sk-proj-..." form,
+    # whose hyphenated body the plain alphanumeric class would truncate.
+    (re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9_-]{15,}"), REDACTED),
+    # Stripe secret ("sk_") and restricted ("rk_") keys — underscore form, live or
+    # test. (Publishable "pk_" keys are not secret and are deliberately excluded.)
+    (re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b"), REDACTED),
+    # Google OAuth client secret.
+    (re.compile(r"\bGOCSPX-[A-Za-z0-9_-]{16,}"), REDACTED),
     # AWS access key id.
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), REDACTED),
     # Google API key.
