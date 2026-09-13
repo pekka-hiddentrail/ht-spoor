@@ -142,6 +142,16 @@ class ExtractionConfig(BaseModel):
     # Opt-in raw network capture (ROADMAP.md §2b/§2c, §2h); omitted means no
     # capture. Only the browser tier acts on it.
     capture: Capture | None = None
+    # Path to a supplied browser session for an authenticated target (ROADMAP.md
+    # §2h "bring-your-own-session"): a storage-state JSON file (the shape
+    # Playwright's context.storage_state() writes — cookies + per-origin
+    # localStorage) captured once in a real browser. Omitted means an anonymous
+    # run. The static tier sends the session's cookies; the browser tier loads the
+    # full state (cookies + localStorage), so a target gated behind a localStorage
+    # token naturally escalates to the browser. The file is a local-only,
+    # secret-bearing input — its contents are never echoed to shared output (§2h).
+    # Spoor performs no login/MFA/SSO flow itself (§2h, §0).
+    session: str | None = None
 
 
 def load_config(text: str) -> ExtractionConfig:

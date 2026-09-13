@@ -57,6 +57,7 @@ from spoor.operational.retry import (
     RetryingNavigator,
 )
 from spoor.security import storage
+from spoor.security.session import apply_cookies, load_session
 from spoor.signals.accessibility import AccessibilityCollector, AccessibilitySignal
 from spoor.signals.console import ConsoleCollector, ConsoleSignal
 from spoor.signals.headers import HeaderCollector, HeaderSignal
@@ -375,7 +376,17 @@ class Tier1Resolver:
         When a `healer` is supplied, single-record field selectors are remembered
         on success and healed on failure through it (§2); its events are surfaced
         by the dispatcher.
+
+        A supplied session (`config.session`, ROADMAP.md §2h) is validated up
+        front — before the client is even built — so a missing or malformed
+        session fails loudly with no fetch, then its cookies are loaded into the
+        fetch client so an authenticated static run carries them. localStorage in
+        the session has no meaning without JS; a localStorage-gated target extracts
+        nothing here and escalates to the browser tier, which applies it (§2h).
         """
+        session = (
+            load_session(config.session) if config.session is not None else None
+        )
         owns_client = client is None
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
         gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
@@ -387,6 +398,8 @@ class Tier1Resolver:
         seen: set[str] = set()
         url: str | None = config.target
         try:
+            if session is not None:
+                apply_cookies(session, client)
             while url and url not in seen and len(seen) < _MAX_PAGES:
                 seen.add(url)
                 if not gate.can_fetch(url):
@@ -537,7 +550,16 @@ class Tier2Resolver:
         all written to one fresh local-only run cache directory (ROADMAP.md
         §2b/§2c/§2h); the HAR is flushed on `context.close()`, the rest after.
         Without capture, nothing is recorded and the paths stay None.
+
+        A supplied session (`config.session`, ROADMAP.md §2h) is validated up
+        front — before Chromium is launched — so a missing or malformed session
+        fails loudly and cheaply, then handed to the browser context so Playwright
+        applies the whole state (cookies *and* per-origin localStorage), reaching
+        content gated behind either.
         """
+        session = (
+            load_session(config.session) if config.session is not None else None
+        )
         owns_client = client is None
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
         gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
@@ -575,12 +597,22 @@ class Tier2Resolver:
                 browser = playwright.chromium.launch()
                 try:
                     # record_har_path is per-context; recording it on the context
-                    # (not per page) captures the whole run in one HAR.
-                    context = (
-                        browser.new_context(record_har_path=har_path)
-                        if har_path is not None
-                        else browser.new_context()
-                    )
+                    # (not per page) captures the whole run in one HAR. A supplied
+                    # session (§2h) is applied here too — Playwright loads the
+                    # storage-state file's cookies + localStorage into the context.
+                    # Branched explicitly (rather than building a kwargs dict) so
+                    # each optional argument keeps its precise Playwright type.
+                    session_path = str(session.path) if session is not None else None
+                    if har_path is not None and session_path is not None:
+                        context = browser.new_context(
+                            record_har_path=har_path, storage_state=session_path
+                        )
+                    elif har_path is not None:
+                        context = browser.new_context(record_har_path=har_path)
+                    elif session_path is not None:
+                        context = browser.new_context(storage_state=session_path)
+                    else:
+                        context = browser.new_context()
                     try:
                         self._crawl(
                             context,
