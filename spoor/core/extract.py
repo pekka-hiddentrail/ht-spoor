@@ -16,6 +16,7 @@ site-specific logic: everything is driven by the config.
 from __future__ import annotations
 
 import functools
+import math
 import re
 import time
 from collections.abc import Callable
@@ -198,14 +199,23 @@ _NUMBER_RE = re.compile(r"(?:(?<![\w.])-)?(?:\d[\d,]*(?:\.\d+)?|\.\d+)")
 
 
 def _coerce_number(text: str) -> float | None:
-    """Best-effort numeric coercion: parse the first number found in the text."""
+    """Best-effort numeric coercion: parse the first number found in the text.
+
+    Returns None when no number is found, and also when the parsed value is not a
+    finite float: a numeral beyond float range (hundreds of digits) coerces to
+    inf/-inf, which has no valid JSON representation (`json.dumps` emits the bare
+    token `Infinity`, which strict parsers reject). Treating a non-finite result as
+    "no usable number" keeps the output contract valid JSON rather than emitting a
+    value that would corrupt the file or a downstream reload.
+    """
     match = _NUMBER_RE.search(text)
     if match is None:
         return None
     try:
-        return float(match.group().replace(",", ""))
+        value = float(match.group().replace(",", ""))
     except ValueError:
         return None
+    return value if math.isfinite(value) else None
 
 
 def _extract_value(
