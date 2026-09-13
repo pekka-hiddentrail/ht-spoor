@@ -26,6 +26,7 @@ are authored when their phase begins, not up front.
 | `observability.feature` | Run summary / observability | §2d | `spoor/operational` | 1 |
 | `retry.feature` | Retry transient fetch failures with backoff (Retry-After honored), dead-letter the unrecoverable | §2d | `spoor/operational` | 3.5 |
 | `anti_bot.feature` | Detect anti-bot/CAPTCHA challenges (reCAPTCHA/hCaptcha/Cloudflare) and fail loudly — detection, never bypass | §2d | `spoor/operational` | 3.5 |
+| `change_detection.feature` | Skip re-extracting pages unchanged since the last run (conditional `ETag`/`Last-Modified` request, content-hash fallback), opt-in | §2d | `spoor/operational` | 3.5 |
 | `resolution.feature` | Tier dispatcher / escalation, then tier-3 self-healing | §2 | `spoor/core` | 1 / 3 |
 | `self_healing.feature` | Tier-3 self-healing: scored element matching, no model call | §2 / §5.3 | `spoor/core` | 3 |
 | `self_healing_runs.feature` | Tier-3 wired into a live run: persist fingerprints, heal across runs, surface counts | §2 / §2d | `spoor/core` | 3 |
@@ -54,7 +55,12 @@ log on the run summary instead of crashing the run. `anti_bot.feature` (§2d)
 covers challenge detection: a fetched page matching a known anti-bot fingerprint
 (a reCAPTCHA/hCaptcha widget, a Cloudflare interstitial) is flagged loudly on the
 run summary rather than scraped as data — detection only, never a bypass attempt.
-`resolution.feature` (§2) covers the escalation seam that picks a resolution tier
+`change_detection.feature` (§2d) covers the opt-in monitoring optimization: with
+`change_detection: true`, a re-run replays the `ETag`/`Last-Modified` a prior run
+recorded as a conditional request and, on a 304 (or a body whose content hash
+matches), records the page as unchanged and skips re-extracting it — off by
+default, since skipping extraction is a behavior change a one-shot scrape
+shouldn't get by surprise. `resolution.feature` (§2) covers the escalation seam that picks a resolution tier
 and, for a browser-only capability (infinite scroll), routes past the static tier 1
 to the browser-backed tier 2, then tier-3 self-healing. `observability.feature`
 (§2d) covers the structured, operator-facing run summary.

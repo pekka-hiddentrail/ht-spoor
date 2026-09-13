@@ -121,7 +121,9 @@ class RetryingFetcher:
         self._sleep = sleep
         self.retries = 0
 
-    def get(self, url: str) -> httpx.Response | FetchFailure:
+    def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> httpx.Response | FetchFailure:
         """Fetch `url`, retrying transient failures; a success or a FetchFailure.
 
         Returns the `Response` on the first 2xx/3xx, a `FetchFailure` immediately
@@ -129,13 +131,17 @@ class RetryingFetcher:
         retries on a transient one. It never raises for a classified HTTP or
         transport failure — that is the whole point, replacing the bare
         `raise_for_status()` that used to crash a run on the first 500.
+
+        `headers` are extra request headers for every attempt — used by change
+        detection to send conditional `If-None-Match` / `If-Modified-Since`
+        validators, so a 304 comes back as an ordinary (3xx, unretried) success.
         """
         attempt = 0
         while True:
             attempt += 1
             retry_after: float | None = None
             try:
-                response = self._client.get(url)
+                response = self._client.get(url, headers=headers)
             except httpx.TimeoutException:
                 # TimeoutException subclasses TransportError, so catch it first.
                 kind, reason, status = "transient", "timeout", None

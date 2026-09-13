@@ -47,6 +47,7 @@ from spoor.core.fingerprint_cache import cache_for_target
 from spoor.core.self_healing import Healer, HealEvent, Screenshotter
 from spoor.core.visual import InvalidImageError, perceptual_hash
 from spoor.operational.challenge import ChallengeSignal, detect_challenge
+from spoor.operational.change_detection import detector_for_target
 from spoor.operational.politeness import Politeness
 from spoor.operational.retry import FetchFailure, RetryingFetcher
 from spoor.security import storage
@@ -123,6 +124,12 @@ class RunResult:
     # that were retried this run (whether or not they eventually succeeded).
     dead_letter: list[FetchFailure] = field(default_factory=list)
     retries: int = 0
+    # URLs a run with change detection on found unchanged since a prior run
+    # (ROADMAP.md §2d Phase 3.5): a 304 Not Modified, or a body whose content hash
+    # matched what was recorded. These pages were deliberately not re-extracted, so
+    # a run whose only "result" is unchanged pages is a legitimate "nothing changed"
+    # answer, not an empty miss to escalate. Empty on a plain (non-monitoring) run.
+    unchanged: list[str] = field(default_factory=list)
     # An anti-bot challenge recognized in a fetched page (ROADMAP.md §2d): a
     # CAPTCHA/interstitial fingerprint, surfaced so the run reports "hit a wall"
     # rather than silently emitting challenge markup as data. Detection, never
@@ -365,6 +372,9 @@ class Tier1Resolver:
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
         gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
         fetcher = RetryingFetcher(client, config.retry or RetryPolicy(), sleep=sleep)
+        detector = (
+            detector_for_target(config.target) if config.change_detection else None
+        )
         result = RunResult(tier=self.tier)
         seen: set[str] = set()
         url: str | None = config.target
@@ -375,22 +385,39 @@ class Tier1Resolver:
                     result.blocked.append(url)
                     break
                 gate.before_fetch(url)
-                outcome = fetcher.get(url)
+                # Conditional-request validators from a prior run, when change
+                # detection is on (empty on a first run or a plain run) (§2d).
+                headers = detector.conditional_headers(url) if detector else None
+                outcome = fetcher.get(url, headers=headers)
                 if isinstance(outcome, FetchFailure):
                     # Classified fetch failure: record it and stop this crawl —
                     # a failed page has no next-link to follow (§2d).
                     result.dead_letter.append(outcome)
                     break
                 result.pages_fetched += 1
+                # Change detection (§2d): an unchanged page (304, or a body whose
+                # content hash matches a prior run) is recorded and *not* re-
+                # extracted. A 304 carries no body, so `_next_url` finds no next
+                # link and the crawl ends naturally; a hash-matched 200 still has a
+                # body, so pagination continues past it.
+                if detector is not None and detector.is_unchanged(url, outcome):
+                    result.unchanged.append(url)
+                    url = _next_url(outcome.text, url, config)
+                    continue
                 # Recognize an anti-bot challenge in the fetched page (§2d): a
                 # 2xx challenge would otherwise be scraped as if it were data.
                 # First page to look like one names the run's challenge.
                 if result.challenge is None:
                     result.challenge = detect_challenge(outcome.text)
                 result.records.extend(extract_records(outcome.text, config, healer))
+                # Remember this page's validators for the next run's comparison.
+                if detector is not None:
+                    detector.record(url, outcome)
                 url = _next_url(outcome.text, url, config)
         finally:
             result.retries = fetcher.retries
+            if detector is not None:
+                detector.save()
             if owns_client:
                 client.close()
         return result
@@ -726,9 +753,18 @@ def _should_escalate(result: RunResult) -> bool:
     A dead-lettered run is likewise not escalated: a classified fetch failure (a
     404, or a 503 that exhausted its retries, §2d) is a definite answer about the
     origin, not an empty page a browser might render differently — re-fetching it
-    in a heavier tier would only hit the same failing server.
+    in a heavier tier would only hit the same failing server. An unchanged run
+    (change detection found the page not modified, §2d) is not escalated either:
+    the page deliberately wasn't re-extracted because it matches a prior run, not
+    because a selector missed — a heavier tier would only re-render what hasn't
+    changed.
     """
-    return not result.records and not result.blocked and not result.dead_letter
+    return (
+        not result.records
+        and not result.blocked
+        and not result.dead_letter
+        and not result.unchanged
+    )
 
 
 def run_report(

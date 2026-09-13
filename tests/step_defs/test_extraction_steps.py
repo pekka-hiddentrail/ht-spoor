@@ -205,9 +205,10 @@ def output_file_is_structured(context: dict[str, Any]) -> None:
 def config_has_no_tier_logic(context: dict[str, Any]) -> None:
     # The schema has no per-tier knobs at all — only extraction intent plus
     # cross-cutting operational policy. `capture` says *what to record* (opt-in
-    # HAR, §2b/§2h), `politeness`/`retry` say *how to behave toward the origin*
-    # (robots + rate-limiting, §6; transient-error retry, §2d) — none names or
-    # selects a tier or decides when to escalate (§2a, §0).
+    # HAR, §2b/§2h), `politeness`/`retry`/`change_detection` say *how to behave
+    # toward the origin* (robots + rate-limiting, §6; transient-error retry, §2d;
+    # skip unchanged pages, §2d) — none names or selects a tier or decides when to
+    # escalate (§2a, §0).
     assert set(ExtractionConfig.model_fields) == {
         "target",
         "item",
@@ -215,6 +216,7 @@ def config_has_no_tier_logic(context: dict[str, Any]) -> None:
         "pagination",
         "politeness",
         "retry",
+        "change_detection",
         "capture",
     }
     assert set(FieldSpec.model_fields) == {"selector", "attr", "type"}

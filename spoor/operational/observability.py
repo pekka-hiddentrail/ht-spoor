@@ -46,6 +46,10 @@ class RunSummary:
     # Transient fetch failures that were retried this run, whether or not they
     # eventually succeeded (§2d) — a resilience signal, quiet when zero.
     retries: int
+    # URLs a change-detection run found unchanged since a prior run (§2d Phase
+    # 3.5): pages deliberately skipped rather than re-extracted. Empty on a plain
+    # run; on a monitoring run it is the "nothing changed here" signal.
+    unchanged: list[str]
     # An anti-bot challenge recognized in a fetched page (§2d): the vendor name,
     # surfaced loudly so a challenged run reads as "hit a wall" rather than an
     # unexplained empty result. Detection only, never bypass; None on a clean run.
@@ -116,6 +120,7 @@ class RunSummary:
             blocked=list(result.blocked),
             dead_letter=list(result.dead_letter),
             retries=result.retries,
+            unchanged=list(result.unchanged),
             challenge=result.challenge,
             har_path=str(result.har_path) if result.har_path is not None else None,
             api_spec=result.api_spec,
@@ -231,6 +236,14 @@ class RunSummary:
             lines.append(
                 f"  retries:       {self.retries} transient failure"
                 f"{'' if self.retries == 1 else 's'} retried"
+            )
+        # Change detection, only when a run skipped an unchanged page (§2d Phase
+        # 3.5). The "nothing changed here" signal a monitoring run wants; stays
+        # quiet on a plain run, which never populates it.
+        if self.unchanged:
+            lines.append(
+                f"  unchanged:     {len(self.unchanged)} page"
+                f"{'' if len(self.unchanged) == 1 else 's'} skipped (not modified)"
             )
         # Self-healing outcome, only when tier 3 actually healed something this run
         # (§2/§2d). Confident heals filled a field; uncertain matches were flagged
