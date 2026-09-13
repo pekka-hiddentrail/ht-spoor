@@ -173,6 +173,7 @@ def _extract_value(
     *,
     healer: Healer | None = None,
     field_name: str | None = None,
+    item_selector: str | None = None,
 ) -> str | float | None:
     """The value for one field, resolving its selector against `root`.
 
@@ -181,6 +182,13 @@ def _extract_value(
     from what it saw before: a confident match fills the field, a weak one leaves
     it null but is flagged for review (see `Healer.attempt`). Without a healer the
     behavior is unchanged — a miss is simply a null field (§2a).
+
+    `item_selector` set marks item mode: `root` is a single listing row, so the
+    fingerprint is keyed per `(item_selector, field_name)` and captured
+    text-agnostic, and healing scores only the candidates *within that row*. In
+    item mode a heal only ever fires against a fingerprint a prior run persisted
+    (see `Healer.attempt`), so a row that genuinely lacks the field is left null
+    rather than filled from a sibling row.
 
     Note the two-step contract: healing resolves the *element*, then
     `_value_from_element` extracts the *value* from it. These are independent, so
@@ -194,9 +202,9 @@ def _extract_value(
     element: Selector | None = matches[0] if matches else None
     if element is not None:
         if healer is not None and field_name is not None:
-            healer.remember(field_name, element)
+            healer.remember(field_name, element, item_selector=item_selector)
     elif healer is not None and field_name is not None:
-        element = healer.attempt(field_name, root)
+        element = healer.attempt(field_name, root, item_selector=item_selector)
     if element is None:
         return None
     return _value_from_element(element, spec)
@@ -207,16 +215,29 @@ def extract_records(
 ) -> list[dict[str, object]]:
     """Extract all records from one page's HTML per the config.
 
-    Tier-3 self-healing (via `healer`) applies only to single-record configs (no
-    `item`), where each field selector maps to at most one element — an
-    unambiguous fingerprint-and-heal. `item`-mode healing (many rows sharing a
-    selector) needs a per-row strategy and is a stated follow-on (§2 tier-3 wiring
-    decision note), so healing is not threaded through the item path.
+    Tier-3 self-healing (via `healer`) applies to both single-record and item
+    (listing) configs. Single-record: each field selector maps to at most one
+    element on the page — an unambiguous fingerprint-and-heal. Item mode: each
+    field selector resolves *within* each matched row, so healing is per-row —
+    the field's fingerprint is keyed by `(item, field_name)` and text-agnostic
+    (a listing's rows share structure but differ in text), and a broken field is
+    re-resolved against the candidates inside each row (§2 item-mode decision
+    note). Healing the `item` selector itself when a row container breaks is a
+    stated follow-on, so a row that stops matching `item` is simply not extracted.
     """
     page = Selector(text=html)
     if config.item:
         return [
-            {name: _extract_value(root, spec) for name, spec in config.fields.items()}
+            {
+                name: _extract_value(
+                    root,
+                    spec,
+                    healer=healer,
+                    field_name=name,
+                    item_selector=config.item,
+                )
+                for name, spec in config.fields.items()
+            }
             for root in page.css(config.item)
         ]
     return [

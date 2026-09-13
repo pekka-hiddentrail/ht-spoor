@@ -55,21 +55,41 @@ class Healer:
     cache: FingerprintCache
     events: list[HealEvent] = field(default_factory=list)
 
-    def remember(self, field_name: str, element: Selector) -> None:
-        """Record the element a field's selector resolved to, for future heals."""
-        self.cache.put(field_name, fingerprint(element))
+    def remember(
+        self, field_name: str, element: Selector, *, item_selector: str | None = None
+    ) -> None:
+        """Record the element a field's selector resolved to, for future heals.
 
-    def attempt(self, field_name: str, root: Selector) -> Selector | None:
+        `item_selector` set = item-mode (a listing row): the fingerprint is keyed
+        per `(item_selector, field_name)` and captured **text-agnostic**, because a
+        listing's rows share structure but differ in text, so text is per-row noise
+        rather than field identity (see `fingerprint`'s `include_text`). Left None
+        for single-record configs, where text is a strong, stable anchor.
+        """
+        self.cache.put(
+            self._key(field_name, item_selector),
+            fingerprint(element, include_text=item_selector is None),
+        )
+
+    def attempt(
+        self, field_name: str, root: Selector, *, item_selector: str | None = None
+    ) -> Selector | None:
         """Heal a field whose selector matched nothing; None if not confidently.
 
         Returns the healed element only when the best candidate clears the
         confidence threshold. A sub-threshold best candidate is recorded as an
         uncertain match (surfaced in the summary) and None is returned — the field
         is never silently filled with a low-confidence guess (§2). Returns None
-        with no event when nothing was remembered for the field or the page offers
-        no candidates.
+        with no event when nothing was remembered for the field or the page (in
+        item mode, the row subtree) offers no candidates.
+
+        Heals only against a **prior-run** fingerprint (`get_persisted`), never one
+        remembered earlier in the *same* run. In item mode this is what stops a
+        field present in one row from being fabricated onto a sibling row that
+        legitimately lacks it: the sibling's absent selector finds no prior print
+        of its own to heal from within this run (§2, §1).
         """
-        stored = self.cache.get(field_name)
+        stored = self.cache.get_persisted(self._key(field_name, item_selector))
         if stored is None:
             return None
         candidates = list(root.css("*"))
@@ -80,6 +100,13 @@ class Healer:
             HealEvent(field=field_name, confidence=result.score, used=result.confident)
         )
         return result.element if result.confident else None
+
+    @staticmethod
+    def _key(field_name: str, item_selector: str | None) -> str:
+        """Cache key for a field: bare in single-record mode, namespaced by the
+        `item` selector in item mode so a listing's fields never collide with a
+        single-record field (or another listing's) of the same name."""
+        return field_name if item_selector is None else f"{item_selector}::{field_name}"
 
     def persist(self) -> None:
         """Persist any newly-remembered fingerprints to the per-domain cache."""

@@ -100,6 +100,10 @@ class FingerprintCache:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._store: dict[str, ElementFingerprint] = {}
+        # Snapshot of what was loaded from disk — i.e. what *prior* runs recorded,
+        # frozen for this run. `get_persisted` reads it so a fingerprint remembered
+        # earlier in the *current* run is never healed against (see `get_persisted`).
+        self._persisted: dict[str, ElementFingerprint] = {}
         self._dirty = False
         self._load()
 
@@ -116,10 +120,23 @@ class FingerprintCache:
                     self._store[field_name] = _fingerprint_from_dict(entry)
                 except (KeyError, TypeError, ValueError):
                     continue  # skip a malformed entry rather than fail the run
+        # Freeze the prior-run view once loading is done.
+        self._persisted = dict(self._store)
 
     def get(self, field_name: str) -> ElementFingerprint | None:
-        """The fingerprint remembered for `field_name`, or None."""
+        """The fingerprint currently remembered for `field_name` (incl. this run)."""
         return self._store.get(field_name)
+
+    def get_persisted(self, field_name: str) -> ElementFingerprint | None:
+        """The fingerprint a *prior* run recorded for `field_name`, or None.
+
+        Reads the load-time snapshot, so a fingerprint `put` during the current run
+        is deliberately not visible here. Healing uses this (not `get`) so that,
+        in a listing, a field present in one row is never used to "heal" a sibling
+        row that legitimately lacks it — a fabricated value would break the
+        reliability-first contract (§2, §1).
+        """
+        return self._persisted.get(field_name)
 
     def put(self, field_name: str, fingerprint: ElementFingerprint) -> None:
         """Remember `fingerprint` for `field_name` (a no-op if unchanged)."""
