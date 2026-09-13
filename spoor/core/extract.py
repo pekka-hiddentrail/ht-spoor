@@ -39,7 +39,8 @@ from spoor.api_discovery.graphql import DiscoveredGraphQL, discover_graphql
 from spoor.api_discovery.synthesis import SynthesizedSpec, synthesize_from_har
 from spoor.core.config import ExtractionConfig, FieldSpec, PolitenessPolicy
 from spoor.core.fingerprint_cache import cache_for_target
-from spoor.core.self_healing import Healer, HealEvent
+from spoor.core.self_healing import Healer, HealEvent, Screenshotter
+from spoor.core.visual import InvalidImageError, perceptual_hash
 from spoor.operational.politeness import Politeness
 from spoor.security import storage
 from spoor.signals.accessibility import AccessibilityCollector, AccessibilitySignal
@@ -59,6 +60,10 @@ _SCROLL_GROWTH_TIMEOUT_MS = 2000
 # load; this waits for the items themselves. A legitimately empty listing waits
 # out this window once, then extracts zero — a bounded cost, not a hang.
 _ITEM_RENDER_TIMEOUT_MS = 5000
+# How long a per-element screenshot may wait for the element before giving up
+# (ms), for the tier-3 visual signal. Short: a hidden or zero-size candidate must
+# fail fast to "no visual signal" (None) rather than stall the heal on it.
+_SCREENSHOT_TIMEOUT_MS = 2000
 
 
 @dataclass
@@ -390,6 +395,32 @@ def _exhaust_infinite_scroll(
             return
 
 
+def _make_screenshotter(page: Page) -> Screenshotter:
+    """A screenshotter bound to `page`: parsel element -> its crop's visual hash.
+
+    Bridges the two worlds tier 3 spans — extraction works on the *parsel* tree
+    parsed from `page.content()`, while a screenshot needs the *live* page — by
+    computing the element's absolute XPath (stable across that identical
+    serialization) and screenshotting it through a Playwright `xpath=` locator,
+    then perceptual-hashing the PNG (§2 tier table). Purely opportunistic (§2c): a
+    hidden, zero-size, unlocatable, or un-decodable element yields None (no visual
+    signal), never an error that would fail the extraction it rode along with.
+    Nothing here is site-specific (§0) — the same bridge runs for every target.
+    """
+
+    def screenshot_hash(element: Selector) -> int | None:
+        try:
+            xpath = element.root.getroottree().getpath(element.root)
+            png = page.locator(f"xpath={xpath}").screenshot(
+                timeout=_SCREENSHOT_TIMEOUT_MS
+            )
+            return perceptual_hash(png)
+        except (PlaywrightError, PlaywrightTimeoutError, InvalidImageError, ValueError):
+            return None
+
+    return screenshot_hash
+
+
 class Tier2Resolver:
     """Tier 2: JS-rendered pages via a headless browser (ROADMAP.md §2).
 
@@ -571,11 +602,39 @@ class Tier2Resolver:
                 # Snapshot the a11y tree after the page has fully rendered.
                 if a11y is not None:
                     a11y.capture(page)
+                # Extract while the page is still open, so tier 3 can screenshot
+                # elements for the perceptual-hash visual signal (§2 tier table).
+                # The screenshotter is bound to this live page and cleared after,
+                # so it never outlives the page it captures from.
+                page_records = self._extract_on_live_page(html, config, healer, page)
             finally:
                 page.close()
             result.pages_fetched += 1
-            result.records.extend(extract_records(html, config, healer))
+            result.records.extend(page_records)
             url = _next_url(html, url, config)
+
+    def _extract_on_live_page(
+        self,
+        html: str,
+        config: ExtractionConfig,
+        healer: Healer | None,
+        page: Page,
+    ) -> list[dict[str, object]]:
+        """Extract `html`'s records with tier 3 able to screenshot the live page.
+
+        Binds a screenshotter (element -> cropped-screenshot perceptual hash) to
+        `page` on the healer for the duration of extraction, so `remember`/`heal`
+        can capture and compare the visual signal (§2 tier table), then clears it —
+        the screenshotter must never be used after the page closes. Without a
+        healer this is a plain extraction; the DOM extraction itself is unchanged.
+        """
+        if healer is None:
+            return extract_records(html, config, None)
+        healer.screenshotter = _make_screenshotter(page)
+        try:
+            return extract_records(html, config, healer)
+        finally:
+            healer.screenshotter = None
 
     def _await_items(self, page: Page, config: ExtractionConfig) -> None:
         """Wait for the config's `item` selector to render before capturing.

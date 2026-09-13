@@ -48,6 +48,7 @@ def _fingerprint_to_dict(fp: ElementFingerprint) -> dict[str, object]:
         "ancestors": list(fp.ancestors),
         "sibling_index": fp.sibling_index,
         "descendants": [[tag, count] for tag, count in fp.descendants],
+        "visual_hash": fp.visual_hash,
     }
 
 
@@ -70,6 +71,11 @@ def _fingerprint_from_dict(data: dict[str, object]) -> ElementFingerprint:
         and isinstance(descendants, list)
     ):
         raise TypeError("malformed fingerprint entry: expected list fields")
+    # Backward-compatible: caches written before the visual signal have no
+    # "visual_hash" key (and a DOM-only/tier-1 print stores it as null), so it
+    # loads as None — the fingerprint is then scored on its DOM signals alone.
+    raw_visual = data.get("visual_hash")
+    visual_hash = int(raw_visual) if isinstance(raw_visual, int) else None
     return ElementFingerprint(
         tag=str(data["tag"]),
         element_id=str(data["element_id"]),
@@ -79,6 +85,7 @@ def _fingerprint_from_dict(data: dict[str, object]) -> ElementFingerprint:
         ancestors=tuple(str(a) for a in ancestors),
         sibling_index=int(str(data["sibling_index"])),
         descendants=tuple((str(pair[0]), int(pair[1])) for pair in descendants),
+        visual_hash=visual_hash,
     )
 
 

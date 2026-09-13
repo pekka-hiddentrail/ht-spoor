@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- Tier-3 visual-signal fixture: the REDESIGN whose appearance is unchanged. The
+     logo's DOM identity churns exactly as in logo_visual_diff.html — the class is
+     renamed (brand-logo -> hero), data-v bumps, the src path changes, and a wrapper
+     <div> is inserted — dropping the DOM-only heal below the confidence bar. But
+     logo-b.png is byte-identical to the original's logo-a.png, so the element still
+     renders pixel-for-pixel the same: the perceptual-hash signal recognises it and
+     lifts the heal back to confident. Only the appearance differs from the diff
+     fixture, isolating the visual signal's contribution. -->
+<html>
+  <head><title>Redesign (same look)</title></head>
+  <body>
+    <header>
+      <div class="hero-wrap">
+        <img class="hero" data-v="2" src="/logo-b.png">
+      </div>
+    </header>
+  </body>
+</html>

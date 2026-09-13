@@ -7,6 +7,8 @@ and `heal`'s selection / confidence / explainability contract. The statistical
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from parsel import Selector
 
@@ -288,3 +290,112 @@ def test_threshold_is_tunable_per_call() -> None:
     assert strict is not None and lenient is not None
     assert not strict.confident
     assert lenient.confident  # any positive score clears a zero threshold
+
+
+# --- Visual (perceptual-hash) signal --------------------------------------
+# The visual hash is an opaque 64-bit int here; visual.py's own tests cover the
+# hashing. These exercise how `score`/`heal` *blend* it: only when both prints
+# carry one, and re-ranking the DOM front-runners at heal time.
+_STORED_VISUAL = 0xABCD1234ABCD1234
+_ALL_ONES_64 = (1 << 64) - 1
+
+# A low-text leaf (an <img>) whose class/attrs churn and which gains a wrapper in
+# the redesign — calibrated so the DOM-only heal lands *below* the confidence bar.
+_IMG_ORIGINAL = (
+    '<html><body><img class="brand-logo" data-v="1" src="/a.png"></body></html>'
+)
+_IMG_REDESIGN = (
+    '<html><body><div><img class="hero" data-v="2" src="/b.png"></div></body></html>'
+)
+
+
+def _img_index(candidates: list) -> int:
+    return next(i for i, c in enumerate(candidates) if c.root.tag == "img")
+
+
+def test_visual_signal_is_skipped_when_the_candidate_has_no_hash() -> None:
+    stored = replace(_fp(_IMG_ORIGINAL, "img"), visual_hash=_STORED_VISUAL)
+    candidate = _fp(_IMG_REDESIGN, "img")  # no visual hash
+    # With no candidate hash the visual signal drops out entirely, so the score is
+    # exactly the DOM-only score a candidate-without-hash would get from any stored
+    # print (whether or not the stored one happens to carry a visual hash).
+    dom_only_stored = _fp(_IMG_ORIGINAL, "img")
+    assert score(stored, candidate) == score(dom_only_stored, candidate)
+
+
+def test_a_matching_visual_hash_raises_the_score() -> None:
+    stored = replace(_fp(_IMG_ORIGINAL, "img"), visual_hash=_STORED_VISUAL)
+    dom_only = score(_fp(_IMG_ORIGINAL, "img"), _fp(_IMG_REDESIGN, "img"))
+    matched = replace(_fp(_IMG_REDESIGN, "img"), visual_hash=_STORED_VISUAL)
+    assert score(stored, matched) > dom_only  # identical appearance pulls it up
+
+
+def test_a_clashing_visual_hash_lowers_the_score() -> None:
+    stored = replace(_fp(_IMG_ORIGINAL, "img"), visual_hash=_STORED_VISUAL)
+    dom_only = score(_fp(_IMG_ORIGINAL, "img"), _fp(_IMG_REDESIGN, "img"))
+    clash_hash = _STORED_VISUAL ^ _ALL_ONES_64
+    clashing = replace(_fp(_IMG_REDESIGN, "img"), visual_hash=clash_hash)
+    assert score(stored, clashing) < dom_only  # a different look drags it down
+
+
+def test_dom_only_heal_of_the_churned_logo_is_uncertain() -> None:
+    # Baseline: without the visual signal the churned logo is a sub-threshold
+    # (uncertain) match — this is the gap the visual signal exists to close.
+    stored = _fp(_IMG_ORIGINAL, "img")
+    result = heal(stored, candidate_elements(_IMG_REDESIGN))
+    assert result is not None
+    assert result.element.root.tag == "img"
+    assert not result.confident
+
+
+def test_a_matching_visual_hash_lifts_the_heal_to_confident() -> None:
+    stored = replace(_fp(_IMG_ORIGINAL, "img"), visual_hash=_STORED_VISUAL)
+    candidates = candidate_elements(_IMG_REDESIGN)
+    img = _img_index(candidates)
+    # The live page would screenshot each front-runner; here the img re-renders
+    # the same (its stored hash) and everything else has no capturable crop.
+    lookup = lambda i: _STORED_VISUAL if i == img else None  # noqa: E731
+    result = heal(stored, candidates, visual_lookup=lookup)
+    assert result is not None
+    assert result.element.root.tag == "img"
+    assert result.confident  # DOM-uncertain + identical appearance -> confident
+
+
+def test_visual_rerank_promotes_the_visually_correct_candidate() -> None:
+    # Two DOM-identical images; DOM scoring ties and would keep the earlier one.
+    # The visual signal (the second one looks like the stored logo, the first does
+    # not) promotes the correct one.
+    stored = replace(_fp(_IMG_ORIGINAL, "img"), visual_hash=_STORED_VISUAL)
+    page = (
+        '<html><body>'
+        '<img class="hero" data-v="2" src="/b.png">'      # decoy, document order 0
+        '<img class="hero" data-v="2" src="/b.png">'      # the real logo
+        '</body></html>'
+    )
+    candidates = candidate_elements(page)
+    imgs = [i for i, c in enumerate(candidates) if c.root.tag == "img"]
+    decoy, correct = imgs[0], imgs[1]
+    lookup = lambda i: (  # noqa: E731
+        _STORED_VISUAL if i == correct
+        else _STORED_VISUAL ^ _ALL_ONES_64 if i == decoy
+        else None
+    )
+    result = heal(stored, candidates, visual_lookup=lookup)
+    assert result is not None
+    assert result.index == correct
+
+
+def test_visual_lookup_is_ignored_without_a_stored_visual_hash() -> None:
+    # A stored print with no visual hash never triggers the visual pass, even if a
+    # lookup is offered (a candidate hash alone must not manufacture the signal).
+    stored = _fp(_IMG_ORIGINAL, "img")  # no visual hash
+    candidates = candidate_elements(_IMG_REDESIGN)
+    called = False
+
+    def lookup(_: int) -> int | None:
+        nonlocal called
+        called = True
+        return _STORED_VISUAL
+
+    heal(stored, candidates, visual_lookup=lookup)
+    assert not called  # the visual pass never ran

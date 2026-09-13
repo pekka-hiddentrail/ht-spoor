@@ -30,26 +30,27 @@ are authored when their phase begins, not up front.
 | `self_healing_items.feature` | Tier-3 in a listing: heal a field selector that breaks *within* rows, per row | §2 / §2d | `spoor/core` | 3 |
 | `self_healing_reanchor.feature` | Tier-3 cross-run re-anchoring: a confident heal becomes the new anchor | §2 / §2d | `spoor/core` | 3 |
 | `self_healing_container.feature` | Tier-3 heals a broken row *container* (`item` selector), with a repeating-group gate + ambiguity refusal | §2 / §2d | `spoor/core` | 3 |
+| `self_healing_visual.feature` | Tier-3 perceptual-hash visual signal: a cropped-screenshot difference hash heals a low-text element whose markup churns | §2 / §2d | `spoor/core` | 3 |
 | `serving.feature` | MCP server & REST API (read-only) | §2f | `spoor/serving` | 5 |
 | `exploration.feature` | Exploration mode + safety | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
-Status: `extraction.feature` (§2a) is authored and green, including its
-infinite-scroll scenario, which now runs a real headless browser (tier 2)
-against a live loopback fixture server. `operational.feature` (§2d) has
-its Phase-1 politeness slice authored and green — respect `robots.txt` (default
-on) and honor the crawl-delay. `output.feature` (§2d) has its Phase-1 output
-pipeline authored and green — schema-validated JSON/JSON Lines/CSV sinks with
-format chosen by extension or `--format`; SQLite/Parquet sinks and the Phase-3.5
-items (retry/error classification, CAPTCHA detection, change detection, run
-observability) are authored when those turns come. `resolution.feature` (§2)
-has its Phase-1 dispatcher slice authored and green — the escalation seam that
-picks a resolution tier and, for a browser-only capability (infinite scroll),
-routes past the static tier 1 to the browser-backed tier 2; tier-3 self-healing
-behaviour is authored when that tier is built. `observability.feature` (§2d) is
-authored and green — a structured, operator-facing run summary.
+The prose below describes what each feature file covers, in the present tense —
+the machine-readable table above carries any planned-vs-built distinction via its
+Phase column. `extraction.feature` (§2a) covers declarative extraction, including
+an infinite-scroll scenario that runs a real headless browser (tier 2) against a
+live loopback fixture server. `operational.feature` (§2d) covers politeness —
+respecting `robots.txt` (default on) and honoring the crawl-delay. `output.feature`
+(§2d) covers the output pipeline — schema-validated JSON/JSON Lines/CSV sinks with
+format chosen by extension or `--format` (SQLite/Parquet sinks and the Phase-3.5
+items — retry/error classification, CAPTCHA detection, change detection, run
+observability — are specified for their later turns; see the Phase column).
+`resolution.feature` (§2) covers the escalation seam that picks a resolution tier
+and, for a browser-only capability (infinite scroll), routes past the static tier 1
+to the browser-backed tier 2, then tier-3 self-healing. `observability.feature`
+(§2d) covers the structured, operator-facing run summary.
 
-Phase-2.5 is under way: `api_discovery.feature` (§2b) covers published-spec
+`api_discovery.feature` (§2b) covers published-spec
 discovery — conventional paths and references scanned from the landing page's
 HTML and its same-origin JS bundles — GraphQL introspection, and spec synthesis
 (layer 4): clustering a captured HAR's requests into templated endpoints and
@@ -64,11 +65,11 @@ is landing signal-by-signal — console output/JS errors, the accessibility tree
 response-header fingerprints, and client-side storage state — each opt-in,
 browser-tier-only, with raw captures kept local-only and only safe/derived facts
 (or, for storage state, redacted entries) surfaced to shared output. The §2h
-secret-redaction pipeline (`redaction.feature`) is authored and green and backs
-that storage-state surfacing.
+secret-redaction pipeline (`redaction.feature`) backs that storage-state surfacing.
 
-Phase 3 has begun: `self_healing.feature` (§2, §5.3) authors the tier-3 scoring
-core — capture an element's fingerprint while its selector works, and when the
+Tier-3 self-healing (§2, §5.3) spans several feature files. `self_healing.feature`
+covers the scoring core — capture an element's fingerprint while its selector
+works, and when the
 selector later breaks, re-resolve by scoring every candidate (tag, id, class,
 attribute, inner-text, structural, and descendant-composition similarity, no
 model call), flagging a
@@ -106,7 +107,20 @@ coherent sibling group (same parent + tag) of two or more members, and is
 reliability-first about refusing to fabricate — a lone look-alike is never promoted
 to a one-row listing (the ≥2-member gate), and two distinct groups both matching
 confidently are refused rather than guessed between (ambiguity refusal); either
-refusal yields zero records surfaced as an uncertain match. The
-perceptual-hash-on-screenshot component is the remaining tier-3 follow-on (see the
-§2 tier-3 decision notes). The sandbox registry
-(§2e/§2h) and the remaining feature files are authored when their phase begins.
+refusal yields zero records surfaced as an uncertain match. Finally,
+`self_healing_visual.feature` (§2, §2d) lands the last tier-3 component — the
+**perceptual-hash visual signal**. Riding with the browser tier (a screenshot
+needs a rendered page), it blends a difference hash of an element's cropped
+screenshot into the same weighted score, applicable only when both the stored
+print and the candidate carry one. Its scenarios drive the real browser tier
+against a live loopback server over two runs sharing one temp cache: a low-text
+logo whose class/attributes churn and which gains a wrapper drops below the
+DOM-only bar, and the visual signal lifts it back to a confident heal only when it
+still renders the same — a genuinely changed appearance leaves the match uncertain
+and the field null (a corroborator, never a blanket boost). Together these six
+feature files make up tier-3 self-healing.
+
+`serving.feature` (§2f), `exploration.feature` (§2e), and `testgen.feature` (§2g),
+along with the sandbox registry (§2e/§2h), are listed in the table above ahead of
+implementation; their feature files are authored when their phase begins (see the
+Phase column).

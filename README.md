@@ -124,8 +124,14 @@ redesign breaks it so no rows match, tier 3 re-resolves the repeating row group,
 refusing to fabricate a listing from a lone look-alike (a ≥2-member gate) or from
 ambiguous look-alike groups (it refuses rather than guess between two), so a
 container break degrades to a reviewable heal, never a confidently-wrong listing.
-The perceptual-hash-on-screenshot component is the remaining Phase-3 tier-3 slice. Default-on capture and the MCP/API serving layer are
-still ahead on the roadmap.
+Finally, a **perceptual-hash visual signal** rides with the browser tier: when a
+low-text element (an icon, a logo, an image thumbnail) has too thin a DOM identity
+to heal confidently after a class/attribute churn, tier 3 blends in a difference
+hash of the element's cropped screenshot — so an element that re-renders the same
+is re-resolved even when its markup churned below the DOM-only bar, while a genuine
+appearance change withholds the signal and the match stays a flagged uncertain one
+(a corroborator, never a blanket boost). That completes Phase-3 tier 3. Default-on
+capture and the MCP/API serving layer are still ahead on the roadmap.
 
 ## Contributing
 

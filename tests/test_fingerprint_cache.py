@@ -118,3 +118,34 @@ def test_save_creates_the_parent_directory(tmp_path: Path) -> None:
     cache.put("name", _fp())
     cache.save()
     assert path.exists()
+
+
+def test_visual_hash_round_trips_through_the_cache(tmp_path: Path) -> None:
+    # A browser-tier print carries a 64-bit visual hash; it must survive a
+    # save/reload so a later run can heal on appearance.
+    from dataclasses import replace
+
+    path = tmp_path / "d.json"
+    cache = FingerprintCache(path)
+    fp = replace(_fp(), visual_hash=0xABCD1234ABCD1234)
+    cache.put("logo", fp)
+    cache.save()
+    reloaded = FingerprintCache(path).get("logo")
+    assert reloaded == fp
+    assert reloaded is not None
+    assert reloaded.visual_hash == 0xABCD1234ABCD1234
+
+
+def test_an_entry_without_a_visual_hash_loads_as_none(tmp_path: Path) -> None:
+    # Backward-compatible: a cache written before the visual signal (or a tier-1,
+    # DOM-only print) has no/null "visual_hash" and must load as None, scored on
+    # its DOM signals alone — never crash.
+    path = tmp_path / "d.json"
+    path.write_text(
+        '{"logo": {"tag": "img", "element_id": "", "classes": [], "attrs": [],'
+        ' "text": "", "ancestors": ["html", "body"], "sibling_index": 0}}',
+        encoding="utf-8",
+    )
+    loaded = FingerprintCache(path).get("logo")
+    assert loaded is not None
+    assert loaded.visual_hash is None
