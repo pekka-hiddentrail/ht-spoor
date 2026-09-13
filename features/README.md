@@ -16,6 +16,7 @@ are authored when their phase begins, not up front.
 | Feature file | Capability | ROADMAP | Package | Phase |
 |---|---|---|---|---|
 | `extraction.feature` | Declarative extraction configs | §2a | `spoor/core`, CLI | 1 |
+| `extraction_robustness.feature` | Graceful degradation on empty / non-HTML / malformed / deep / non-ASCII pages — extract what's there, never crash | §2a | `spoor/core` | 1 |
 | `operational.feature` | Politeness & rate limiting | §2d | `spoor/operational` | 1 |
 | `output.feature` | Output pipeline (pluggable sinks) | §2d | `spoor/operational` | 1 / 3.5 |
 | `interaction.feature` | Interaction execution (native/jittered) | §2 | `spoor/core` | 2 |
@@ -44,7 +45,10 @@ The prose below describes what each feature file covers, in the present tense �
 the machine-readable table above carries any planned-vs-built distinction via its
 Phase column. `extraction.feature` (§2a) covers declarative extraction, including
 an infinite-scroll scenario that runs a real headless browser (tier 2) against a
-live loopback fixture server. `operational.feature` (§2d) covers politeness —
+live loopback fixture server. `extraction_robustness.feature` (§2a) is its
+adversarial counterpart — empty, non-HTML, unclosed/malformed, pathologically deep,
+and non-ASCII pages must degrade gracefully (extract what's there, leave the rest
+null) rather than crash the run. `operational.feature` (§2d) covers politeness —
 respecting `robots.txt` (default on) and honoring the crawl-delay. `output.feature`
 (§2d) covers the output pipeline — schema-validated JSON/JSON Lines/CSV sinks with
 format chosen by extension or `--format` (SQLite/Parquet sinks and the remaining
