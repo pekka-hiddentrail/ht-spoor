@@ -28,6 +28,7 @@ are authored when their phase begins, not up front.
 | `self_healing.feature` | Tier-3 self-healing: scored element matching, no model call | §2 / §5.3 | `spoor/core` | 3 |
 | `self_healing_runs.feature` | Tier-3 wired into a live run: persist fingerprints, heal across runs, surface counts | §2 / §2d | `spoor/core` | 3 |
 | `self_healing_items.feature` | Tier-3 in a listing: heal a field selector that breaks *within* rows, per row | §2 / §2d | `spoor/core` | 3 |
+| `self_healing_reanchor.feature` | Tier-3 cross-run re-anchoring: a confident heal becomes the new anchor | §2 / §2d | `spoor/core` | 3 |
 | `serving.feature` | MCP server & REST API (read-only) | §2f | `spoor/serving` | 5 |
 | `exploration.feature` | Exploration mode + safety | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
@@ -86,8 +87,12 @@ run summary (§2d) surfaces the confident/uncertain counts (never the matched te
 scoring the candidates within each row against a text-agnostic fingerprint (a
 listing's rows share structure but differ in text) — and, because healing only
 matches a fingerprint a *prior* run recorded, a row that genuinely lacks an
-optional field is left null, never filled from a sibling row. Healing the
-row-container (`item`) selector itself when a row breaks, cross-run re-anchoring,
-and the perceptual-hash-on-screenshot component are follow-on slices (see the §2
-tier-3 decision notes). The sandbox registry (§2e/§2h) and the remaining feature
-files are authored when their phase begins.
+optional field is left null, never filled from a sibling row. `self_healing_reanchor.feature`
+(§2, §2d) then adds **cross-run re-anchoring**: when tier 3 heals a field
+confidently, it rewrites the stored fingerprint to the healed element's current
+shape, so a later redesign heals from the most recent shape rather than only the
+first — drift is absorbed one healable step at a time, while an uncertain match
+never overwrites the good anchor. Healing the row-container (`item`) selector
+itself when a row breaks and the perceptual-hash-on-screenshot component are
+follow-on slices (see the §2 tier-3 decision notes). The sandbox registry
+(§2e/§2h) and the remaining feature files are authored when their phase begins.
