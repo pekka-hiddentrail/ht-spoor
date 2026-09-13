@@ -207,8 +207,9 @@ def config_has_no_tier_logic(context: dict[str, Any]) -> None:
     # cross-cutting operational policy. `capture` says *what to record* (opt-in
     # HAR, §2b/§2h), `politeness`/`retry`/`change_detection` say *how to behave
     # toward the origin* (robots + rate-limiting, §6; transient-error retry, §2d;
-    # skip unchanged pages, §2d) — none names or selects a tier or decides when to
-    # escalate (§2a, §0).
+    # skip unchanged pages, §2d), and `session` says *who to authenticate as* (a
+    # supplied browser storage state, §2h bring-your-own-session) — none names or
+    # selects a tier or decides when to escalate (§2a, §0).
     assert set(ExtractionConfig.model_fields) == {
         "target",
         "item",
@@ -218,6 +219,7 @@ def config_has_no_tier_logic(context: dict[str, Any]) -> None:
         "retry",
         "change_detection",
         "capture",
+        "session",
     }
     assert set(FieldSpec.model_fields) == {"selector", "attr", "type"}
 

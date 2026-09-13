@@ -23,6 +23,7 @@ are authored when their phase begins, not up front.
 | `capture.feature` | Raw network capture (HAR) to local-only cache | §2b/§2c/§2h | `spoor/core`, `spoor/security` | 2.5 |
 | `signals.feature`, `accessibility.feature`, `response_headers.feature`, `storage_state.feature` | Client-side signals catalog (console, a11y tree, response headers, storage state) | §2c | `spoor/signals` | 2.5 |
 | `redaction.feature` | Data handling: secret redaction before shared output (sandbox registry later) | §2h | `spoor/security` | 2.5 |
+| `session.feature` | Bring-your-own-session: authenticate a run with a supplied browser storage state (cookies + localStorage); Spoor runs no login flow itself | §2h | `spoor/security`, `spoor/core` | 2.5 |
 | `observability.feature` | Run summary / observability | §2d | `spoor/operational` | 1 |
 | `retry.feature` | Retry transient fetch failures with backoff (Retry-After honored), dead-letter the unrecoverable | §2d | `spoor/operational` | 3.5 |
 | `browser_retry.feature` | Retry transient browser navigations (same classification/backoff) so a failed `page.goto` is dead-lettered, not a crash | §2d | `spoor/operational`, `spoor/core` | 3.5 |
@@ -90,6 +91,14 @@ response-header fingerprints, and client-side storage state — each opt-in,
 browser-tier-only, with raw captures kept local-only and only safe/derived facts
 (or, for storage state, redacted entries) surfaced to shared output. The §2h
 secret-redaction pipeline (`redaction.feature`) backs that storage-state surfacing.
+`session.feature` (§2h) is the input counterpart of that storage-state signal:
+it authenticates a run with a browser session the user captured once themselves —
+the static tier sends the session's cookies, the browser tier loads the whole
+storage state (cookies + localStorage), and a target gated behind a localStorage
+token naturally escalates from the static tier to the browser. A missing or
+malformed session file fails the run loudly rather than scraping anonymously, and
+the supplied secret-bearing state is never echoed to shared output. Spoor performs
+no login/MFA/SSO flow itself (§2h, §0) — bring-your-own-session only.
 
 Tier-3 self-healing (§2, §5.3) spans several feature files. `self_healing.feature`
 covers the scoring core — capture an element's fingerprint while its selector

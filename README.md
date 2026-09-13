@@ -91,6 +91,28 @@ spoor run config.yaml -o out.dat -f jsonl  # force JSON Lines with --format
 
 Ignoring `robots.txt` is an explicit opt-out (`politeness: { respect_robots: false }`), never the default.
 
+## Authenticated targets (bring-your-own-session)
+
+To scrape a login-gated site, authenticate once in your own browser, export the
+session as a storage-state file (the JSON Playwright's `context.storage_state()`
+writes — cookies plus per-origin `localStorage`), and point the config at it:
+
+```yaml
+target: https://example.com/account/orders
+session: ./my-session.json   # a browser session you captured, kept out of git
+fields:
+  order: { selector: ".order-id" }
+```
+
+Spoor sends the session's cookies on the plain fetch and loads the whole state
+(cookies + `localStorage`) into the browser when a page needs rendering, so a
+target gated behind either is reachable. Spoor performs **no** login, MFA, or SSO
+flow itself — you supply an already-authenticated session; for multiple roles,
+run the same config once per session file. The session file is treated as a
+secret: it is read locally and never written into your output or the run summary.
+A missing or malformed session file fails the run loudly rather than quietly
+scraping as an anonymous visitor.
+
 ## Current capabilities
 
 ### Available now
@@ -100,6 +122,7 @@ Ignoring `robots.txt` is an explicit opt-out (`politeness: { respect_robots: fal
 - Run observability: structured run summary for each run
 - API discovery: OpenAPI/Swagger discovery, GraphQL introspection, HAR-based synthesis, and action-to-endpoint correlation
 - Tier-3 self-healing: scored matching, uncertain-match handling, cross-run fingerprint persistence, listing field/container healing, re-anchoring, and visual-signal corroboration
+- Authenticated targets: supply a captured browser session (cookies + `localStorage`) via `session:` to scrape login-gated pages — "bring-your-own-session"; Spoor performs no login itself
 
 ### Optional capture signals (browser tier)
 
