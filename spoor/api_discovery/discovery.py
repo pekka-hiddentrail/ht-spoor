@@ -158,11 +158,13 @@ def _spec_reference_candidates(html: str, page_url: str) -> list[str]:
 
 
 def _script_srcs(html: str, page_url: str) -> list[str]:
-    """Same-origin `<script src>` URLs a page loads, absolute and de-duplicated.
+    """Same-host `<script src>` URLs a page loads, absolute and de-duplicated.
 
-    Cross-origin bundles are dropped: a spec's config usually lives in the app's
-    own bundle, and fetching arbitrary third-party origins would be neither
-    bounded nor polite. Resolved against `page_url`, first-seen order preserved.
+    Third-party hosts are dropped: a spec's config usually lives in the app's own
+    bundle, and fetching arbitrary external hosts would be neither bounded nor
+    polite. The match is host-based (`netloc`), so `http`/`https` variants of the
+    same host are currently treated as in-scope here. Resolved against
+    `page_url`, first-seen order preserved.
     """
     origin = urlsplit(page_url).netloc
     seen: list[str] = []

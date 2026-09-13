@@ -46,7 +46,7 @@ REDACTED = "[REDACTED]"
 # Maintained list (§9): extend deliberately, with a fixture example in
 # redaction.feature for every shape added, never a broad catch-all.
 SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    # Auth-scheme credential: "Bearer <token>" (also matches a raw token value).
+    # Bearer-scheme credential: keeps "bearer " and redacts the token.
     (
         re.compile(r"\b(?P<pre>bearer\s+)[\w.~+/=-]{8,}", re.IGNORECASE),
         rf"\g<pre>{REDACTED}",

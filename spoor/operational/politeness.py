@@ -6,8 +6,8 @@ respecting `robots.txt` and rate-limiting by default, with overriding it an
 explicit opt-out. Per §0 there is nothing site-specific here — robots.txt is
 fetched and parsed the same generic way for every target.
 
-Scope (Phase 1): allow/deny checks and per-host crawl-delay spacing over the
-sequential tier-1 crawl. Concurrency caps and Retry-After honoring are deferred
+Scope (Phase 1): allow/deny checks and run-level crawl-delay spacing over the
+sequential crawl. Concurrency caps and Retry-After honoring are deferred
 until a request pool / retry mechanism exists (see the ROADMAP §2d note).
 """
 
@@ -31,7 +31,8 @@ class Politeness:
 
     Fetches and caches `robots.txt` per origin (scheme + host) on first need,
     answers `can_fetch`, and spaces requests via `before_fetch` using an
-    injectable `sleep` (so tests can assert timing without real waiting).
+    run-level "first fetch happened" flag plus an injectable `sleep` (so tests
+    can assert timing without real waiting).
     """
 
     def __init__(
@@ -94,7 +95,7 @@ class Politeness:
         return float(declared) if declared is not None else 0.0
 
     def before_fetch(self, url: str) -> None:
-        """Sleep the crawl-delay before every fetch but the first (spaces requests)."""
+        """Sleep before every fetch but the first fetch of the run."""
         delay = self.crawl_delay(url)
         if self._fetched_any and delay > 0:
             self._sleep(delay)
