@@ -30,6 +30,18 @@ and current phase. Not yet published to PyPI.
 
 ## Install (from source)
 
+### Prerequisites
+
+- Python 3.11+
+- For browser-tier features (for example infinite-scroll), install Chromium once
+  after `pip install`:
+
+  ```
+  python -m playwright install chromium
+  ```
+
+### Install
+
 ```
 python -m pip install -e ".[dev]"
 ```
@@ -37,108 +49,73 @@ python -m pip install -e ".[dev]"
 The distribution name is `ht-spoor` (`pip install ht-spoor`, once published);
 the import package and CLI are both `spoor`.
 
-## Usage (Phase 1, in progress)
+## Quickstart (taking Spoor into use)
 
-Describe what to extract in a declarative config — the schema is identical for
-every target (§0), so a new site is a new config, never new code:
+1) Create a config file (same schema for every target, §0):
 
 ```yaml
 # config.yaml
 target: https://example.com/products
-item: "li.product-card"          # optional: one output record per match
+item: "li.product-card"  # optional: one output record per match
 fields:
-  title: { selector: "h2.title" }              # element text (default)
-  url:   { selector: "h2.title a", attr: href } # or an attribute's value
+  title: { selector: "h2.title" }               # element text (default)
+  url:   { selector: "h2.title a", attr: href } # or an attribute value
   price: { selector: ".price", type: number }
 pagination:
   next: "a.next-page"
-politeness:                      # optional; robots.txt is respected by default
-  delay: 1.0                     # min seconds between fetches (overrides crawl-delay)
-retry:                           # optional; transient failures retry by default
-  max_retries: 2                 # retries after the first attempt (0 disables)
-  backoff: 0.5                   # base seconds; grows 0.5, 1.0, 2.0, … per retry
 ```
 
+2) Run it:
+
 ```
-spoor run config.yaml -o output.json      # format inferred from the extension
-spoor run config.yaml -o data.csv          # → CSV, columns = your config fields
-spoor run config.yaml -o out.dat -f jsonl  # or force it with --format
+spoor run config.yaml -o output.json
 ```
 
-Output is written as JSON, JSON Lines, or CSV, and every record is validated
-against your config's field schema before anything is written. Spoor respects
-`robots.txt` and honors its crawl-delay by default (§2d, §6):
-disallowed URLs are recorded and never fetched. Ignoring `robots.txt` is an
-explicit, deliberate opt-out — `politeness: { respect_robots: false }` — never
-the default. Flaky origins are handled honestly too: a transient fetch failure
-(a timeout, a dropped connection, a 5xx, or a 429) is retried with backoff —
-honoring a `Retry-After` the server sends — while a settled error (a 404 and
-other 4xx) is not retried; a URL that can't be fetched lands in a dead-letter
-log on the run summary rather than crashing the run or vanishing silently (§2d).
+3) Check the results:
 
-**What works today:** tier-1 extraction (fast selectors over fetched HTML, no
-browser) — single or repeating (`item`) records, element text or attribute
-(`attr`) values, `number` coercion, and next-link pagination — behind a
-`robots.txt`/crawl-delay politeness gate and a transient-failure retry/dead-letter
-gate, with schema-validated JSON/JSON Lines/CSV output. Tier 2 (JS rendering via headless Chromium) also works for
-its first slice: the dispatcher escalates to it for infinite-scroll pages,
-which it renders and scrolls to exhaustion before reusing the same extraction.
-Every run also looks for a published API spec — probing conventional paths and
-scanning the landing page's HTML and its same-origin JS bundles for a reference
-to one — and an introspectable GraphQL endpoint (§2b), and reports a structured
-run summary (§2d). When a run captures a HAR, it additionally synthesizes an API
-spec by clustering the recorded requests into templated endpoints (`/users/1`,
-`/users/2` → `/users/{id}`) and writes that OpenAPI document to the local-only
-cache — a bounded, inference-from-observed-traffic map, never a complete-API
-claim (§2b layer 4). It also correlates those requests back to the actions that
-likely triggered them — marking a checkpoint before each page load and scroll,
-then attributing each request to the action whose time window it fell in — a
-time-window approximation, never proven causation (§2b layer 5); the per-action
-map stays local-only, only counts reach the summary. The browser tier can
-opt into capturing signals (§2c) — HAR, console output/JS errors, the
-accessibility tree, response-header fingerprints, and client-side storage state
-— written to a local-only, git-ignored cache; only safe derived facts reach
-shared output, with known secrets redacted first (§2h). Tier-3 self-healing has
-its scoring core (Phase 3): when a selector breaks, it re-resolves the element by
-scoring every candidate against a fingerprint captured while the selector worked
-— tag, id, class, attribute, inner-text, structural, and descendant-composition
-similarity, no model call
-(§2) — flagging a low-confidence best candidate as an "uncertain match" for review
-rather than guessing, and always recording the winning score plus the runners-up
-it considered. This scoring algorithm is written from scratch — Spoor takes no
-dependency on Healenium and vendors none of its code; Healenium's published,
-permissively-licensed core approach was a conceptual reference only. Its accuracy is guarded by the §5.3 `hypothesis` mutation corpus at
-the merge-blocking ≥95% bar (currently ~99.8%). That core is now wired into a
-live run: while a field's selector resolves, the run fingerprints the element into
-a per-domain cache that persists across runs (local-only, §2h); on a later run, if
-that selector breaks but a fingerprint was remembered, tier 3 re-resolves the
-field — a confident heal fills it, an uncertain match leaves it null and is
-flagged, and the run summary surfaces the confident/uncertain counts (never the
-matched text, §2h). This works for both single-record configs and listings: in a
-listing, a field whose selector breaks *inside* the rows is healed **per row**,
-scoring the candidates within each row against a text-agnostic fingerprint (a
-listing's rows share structure but differ in text) — and, because healing only
-ever matches a fingerprint a *prior* run recorded, a row that genuinely lacks an
-optional field is left null rather than filled in from its sibling rows. And a
-confident heal **re-anchors**: it rewrites the stored fingerprint to the healed
-element's current shape, so successive redesigns each heal from the most recent
-shape rather than only the original — drift is absorbed one healable step at a
-time (an uncertain match never re-anchors). The fingerprint also captures an
-element's **descendant composition** (the multiset of tags it contains) — inert
-for leaf fields, but the identity a *container* keeps when its own class is
-renamed — which powers healing the row-container (`item`) selector itself: when a
-redesign breaks it so no rows match, tier 3 re-resolves the repeating row group,
-refusing to fabricate a listing from a lone look-alike (a ≥2-member gate) or from
-ambiguous look-alike groups (it refuses rather than guess between two), so a
-container break degrades to a reviewable heal, never a confidently-wrong listing.
-Finally, a **perceptual-hash visual signal** rides with the browser tier: when a
-low-text element (an icon, a logo, an image thumbnail) has too thin a DOM identity
-to heal confidently after a class/attribute churn, tier 3 blends in a difference
-hash of the element's cropped screenshot — so an element that re-renders the same
-is re-resolved even when its markup churned below the DOM-only bar, while a genuine
-appearance change withholds the signal and the match stays a flagged uncertain one
-(a corroborator, never a blanket boost). That completes Phase-3 tier 3. Default-on
-capture and the MCP/API serving layer are still ahead on the roadmap.
+- `output.json` contains the extracted records
+- the CLI prints a run summary (`items scraped`, `pages fetched`, `resolved by`, and so on)
+
+Common output options:
+
+```
+spoor run config.yaml -o data.csv          # CSV; columns = your config fields
+spoor run config.yaml -o out.dat -f jsonl  # force JSON Lines with --format
+```
+
+## Runtime behavior (important defaults)
+
+- Output formats: JSON, JSON Lines, CSV (schema-validated before writing)
+- Politeness: `robots.txt` respected by default; crawl-delay honored by default
+- Retry: transient failures (timeouts, dropped connections, 5xx, 429) retry with backoff and `Retry-After`; other 4xx are dead-lettered
+- Safety/data handling: raw captures stay local-only; known secret patterns are redacted before shared output
+
+Ignoring `robots.txt` is an explicit opt-out (`politeness: { respect_robots: false }`), never the default.
+
+## Current capabilities
+
+### Available now
+
+- Tier-1 extraction: single-record and listing (`item`) extraction, text/`attr` field values, `number` coercion, next-link pagination
+- Tier-2 browser slice: escalation for infinite-scroll pages, then extraction from rendered DOM
+- Run observability: structured run summary for each run
+- API discovery: OpenAPI/Swagger discovery, GraphQL introspection, HAR-based synthesis, and action-to-endpoint correlation
+- Tier-3 self-healing: scored matching, uncertain-match handling, cross-run fingerprint persistence, listing field/container healing, re-anchoring, and visual-signal corroboration
+
+### Optional capture signals (browser tier)
+
+- HAR
+- console output / JS errors
+- accessibility tree snapshots
+- response-header fingerprints
+- client-side storage state (with redaction on shared output)
+
+Captured artifacts are written to a local-only, git-ignored cache.
+
+### Still on the roadmap
+
+- Default-on capture behavior (today capture remains opt-in)
+- MCP/API serving layer
 
 ## Contributing
 
