@@ -1,0 +1,19 @@
+# ROADMAP.md §5.1 archetype-bench config — Sauce Demo, the login-gated storefront.
+#
+# Extracts the product inventory from a live, self-hosted Sauce Demo. The inventory
+# is a client-rendered React route behind a login, so this config only resolves
+# under the browser tier (tier 1 sees the empty app shell) AND only when the run
+# carries an authenticated session — the integration test supplies one it captured
+# by logging in as a user would (bring-your-own-session, §2h). Without that session
+# the browser tier is redirected to the login page and extracts nothing, which is
+# exactly the gate this fixture exists to prove.
+#
+# Site-specific selectors are fine here: this is a fixture config, not core code
+# (§0 applies to spoor/core/, not to configs pointed at a target). The default
+# target port matches docker-compose.yml's default (3001); the integration test
+# rewrites the base URL when the bench runs on a different host port.
+target: http://127.0.0.1:3001/inventory.html
+item: ".inventory_item"
+fields:
+  name: { selector: ".inventory_item_name" }
+  price: { selector: ".inventory_item_price", type: number }
