@@ -131,6 +131,14 @@ class ExtractionConfig(BaseModel):
     # 3.5); omitted means the default policy (bounded retry with backoff,
     # honoring Retry-After).
     retry: RetryPolicy | None = None
+    # Skip re-extracting pages unchanged since the last run (ROADMAP.md §2d, Phase
+    # 3.5). Opt-in and default off: on a re-fetch the tier-1 path sends the ETag /
+    # Last-Modified a prior run recorded as a conditional request, and a "304 Not
+    # Modified" (or a body whose content hash matches) marks the page unchanged and
+    # skips its extraction. Off by default because skipping extraction is a
+    # behavior change a one-shot scrape shouldn't get by surprise; a monitoring run
+    # turns it on. Scope is the tier-1 fetch path (browser-tier is a follow-on).
+    change_detection: bool = False
     # Opt-in raw network capture (ROADMAP.md §2b/§2c, §2h); omitted means no
     # capture. Only the browser tier acts on it.
     capture: Capture | None = None
