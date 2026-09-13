@@ -66,6 +66,23 @@ A change that touches tier 3 must report the mutation-corpus success rate in the
 
 Treat a doc that no longer matches the code as a gate failure to fix before the PR, exactly like a failing test — and say in the PR description what docs you checked and reconciled. "Docs unaffected" is a valid outcome only after actually looking.
 
+### Audience matters: user-facing text vs internal text
+
+Not every reader is a contributor. When you edit docs, help text, summaries, errors, or labels, decide first whether the audience is:
+
+- a **user/operator** — someone writing a config and running Spoor; or
+- a **contributor/maintainer** — someone working on the codebase itself.
+
+For **user-facing surfaces** (`README.md`, CLI help/output, config comments users copy, operator-facing summaries/errors):
+
+- Write so the text stands on its own; a user must not need `docs/ROADMAP.md` to decode it.
+- Do **not** use unexplained section references like `§0`, `§2a`, `§2d`, etc. in the primary wording.
+- Do **not** rely on roadmap-phase language (`Phase 1`, `Phase 3.5`, "layer 4") unless the user truly needs that distinction to operate the tool.
+- Say the meaning directly in plain language ("config file", "browser rendering", "run summary", "observed API spec") rather than pointing at internal taxonomy.
+- If a roadmap citation is genuinely useful, keep it secondary — after the plain-language explanation, not instead of it.
+
+For **internal text** (`CLAUDE.md`, `docs/ROADMAP.md`, code comments, maintainer-facing docstrings, contributor docs), section citations like `§2e` are fine and often preferred because they tie behavior back to the source-of-truth decision record.
+
 ## Expected repo layout
 
 ```
