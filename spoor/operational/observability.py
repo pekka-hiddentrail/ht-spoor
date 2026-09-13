@@ -53,7 +53,9 @@ class RunSummary:
     unchanged: list[str]
     # An anti-bot challenge recognized in a fetched page (§2d): the vendor name,
     # surfaced loudly so a challenged run reads as "hit a wall" rather than an
-    # unexplained empty result. Detection only, never bypass; None on a clean run.
+    # unexplained empty result — recognized whether the wall rode a 2xx response
+    # or sat behind an error status (in which case the run is dead-lettered too).
+    # Detection only, never bypass; None on a clean run.
     challenge: ChallengeSignal | None
     # The local-only HAR the browser tier captured, if any (ROADMAP.md §2b/§2h).
     # A string (not a Path) so the summary stays trivially serializable (§2d).

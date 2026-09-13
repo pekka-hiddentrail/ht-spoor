@@ -31,6 +31,7 @@ from typing import Literal, Protocol, TypeVar
 import httpx
 
 from spoor.core.config import RetryPolicy
+from spoor.operational.challenge import ChallengeSignal, detect_challenge
 
 # A server-sent Retry-After is honored, but capped so a hostile or mistaken
 # header (e.g. "Retry-After: 86400") can't freeze a run for hours. The *number*
@@ -50,12 +51,20 @@ class FetchFailure:
     failure (timeout / dropped connection, where no response arrived). `attempts`
     is how many tries were made — 1 for a permanent error taken at its word, up
     to `1 + max_retries` for an exhausted transient one.
+
+    `challenge` names an anti-bot wall recognized *in the failing response body*
+    (§2d): a Cloudflare/CAPTCHA interstitial is often served *behind* a 403/503,
+    so the failure is both an HTTP error and a challenge — surfacing the vendor
+    lets the run read as "hit a wall" rather than an opaque error. Only the
+    generic vendor/marker is kept (never the raw body), so it stays shareable
+    (§2h); None when the body looked ordinary or no response arrived at all.
     """
 
     url: str
     reason: str
     status: int | None
     attempts: int
+    challenge: ChallengeSignal | None = None
 
 
 def _classify_status(status: int) -> tuple[_Kind, str, int]:
@@ -167,6 +176,9 @@ class RetryingFetcher:
         while True:
             attempt += 1
             retry_after: float | None = None
+            # Reset per attempt: a challenge seen behind an earlier error must not
+            # be reported for a *later* attempt that timed out with no body at all.
+            challenge: ChallengeSignal | None = None
             try:
                 response = self._client.get(url, headers=headers)
             except httpx.TimeoutException:
@@ -178,12 +190,20 @@ class RetryingFetcher:
                 kind, reason, status = _classify(response)
                 if kind == "success":
                     return response
+                # A non-success body may itself be an anti-bot wall served behind
+                # the error status (§2d): recognize the vendor now, while we hold
+                # the body — only the generic signal is carried on, never the body.
+                challenge = detect_challenge(response.text)
                 if kind == "transient":
                     retry_after = _parse_retry_after(response)
 
             if kind == "permanent" or attempt > self._policy.max_retries:
                 return FetchFailure(
-                    url=url, reason=reason, status=status, attempts=attempt
+                    url=url,
+                    reason=reason,
+                    status=status,
+                    attempts=attempt,
+                    challenge=challenge,
                 )
             self.retries += 1
             self._sleep(_wait(self._policy, attempt, retry_after))
