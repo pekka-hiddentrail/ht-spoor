@@ -37,7 +37,7 @@ are authored when their phase begins, not up front.
 | `self_healing_reanchor.feature` | Tier-3 cross-run re-anchoring: a confident heal becomes the new anchor | §2 / §2d | `spoor/core` | 3 |
 | `self_healing_container.feature` | Tier-3 heals a broken row *container* (`item` selector), with a repeating-group gate + ambiguity refusal | §2 / §2d | `spoor/core` | 3 |
 | `self_healing_visual.feature` | Tier-3 perceptual-hash visual signal: a cropped-screenshot difference hash heals a low-text element whose markup churns | §2 / §2d | `spoor/core` | 3 |
-| `serving.feature` | MCP server & REST API (read-only) | §2f | `spoor/serving` | 5 |
+| `serving.feature` | Read-only serving of a captured map: REST API delivered (MCP mode + exploration-graph serving later) | §2f | `spoor/serving` | 4 / 5 |
 | `exploration.feature` | Exploration mode + safety | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
@@ -157,7 +157,16 @@ still renders the same — a genuinely changed appearance leaves the match uncer
 and the field null (a corroborator, never a blanket boost). Together these six
 feature files make up tier-3 self-healing.
 
-`serving.feature` (§2f), `exploration.feature` (§2e), and `testgen.feature` (§2g),
+`serving.feature` (§2f) has begun: its first slice is the **read-only REST API**
+over a captured map. A run remembers its extracted records for a URL in a
+persisted per-domain map (`spoor/serving/store.py`, under the local cache root),
+and the API (`spoor/serving/api.py`, FastAPI) answers `GET` queries about it —
+which domains are mapped, and a URL's records with a freshness age — never a
+state-changing operation (the §2f read-only non-negotiable, proven structurally
+by a scenario asserting every route is GET-only). It serves the same records the
+output pipeline writes, never a raw local-only capture (§2h). The **MCP server
+mode** and a **force-recheck** endpoint sit over the same store and are deferred
+to follow-on slices. `exploration.feature` (§2e) and `testgen.feature` (§2g),
 along with the sandbox registry (§2e/§2h), are listed in the table above ahead of
 implementation; their feature files are authored when their phase begins (see the
 Phase column).
