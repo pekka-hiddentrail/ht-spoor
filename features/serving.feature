@@ -10,7 +10,11 @@
 # Every answer carries the capture time and its age; v1 never auto-rechecks (the
 # freshness policy is backlogged, §9) — it always shows the age and waits to be
 # asked to re-verify. It serves the same extracted records the output pipeline
-# already writes, never a raw local-only capture (HAR/storage state), honoring §2h.
+# already writes, plus the §2h-safe projection of the observed API surface (any
+# published spec/GraphQL served whole; the synthesized spec and correlation as
+# counts only — their templated paths stay local-only), never a raw local-only
+# capture (HAR/storage state). Records and surface alike are redacted on the way
+# out, honoring §2h.
 #
 # The MCP server mode (§2f) and a force-recheck endpoint are deliberately deferred
 # to follow-on slices; both sit over this same store and service.
@@ -40,6 +44,18 @@ Feature: A read-only API serves a captured map with freshness
     When I GET "/map?url=https://shop.example/leak"
     Then the response status is 200
     And the first record's "title" equals "Bearer [REDACTED]"
+
+  Scenario: A mapped URL's observed API surface is served alongside its records
+    # §2h split: the published spec and GraphQL endpoint are served whole; the
+    # synthesized spec and action correlation are counts only — their templated
+    # paths (and the local-only doc path) never reach this shared surface.
+    Given the map records an observed API surface for "https://shop.example/api-home"
+    When I GET "/map?url=https://shop.example/api-home"
+    Then the response status is 200
+    And the API surface reports an "openapi" spec
+    And the API surface reports a GraphQL endpoint with 42 types
+    And the API surface reports 3 synthesized endpoints
+    And the served API surface exposes no templated endpoint path
 
   Scenario: An unmapped URL is reported as not found, never fabricated
     When I GET "/map?url=https://shop.example/p/999"

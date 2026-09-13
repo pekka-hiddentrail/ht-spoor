@@ -17,7 +17,7 @@ from spoor.core import extract
 from spoor.core.config import load_config
 from spoor.operational.observability import RunSummary
 from spoor.operational.output import resolve_format, write_records
-from spoor.serving.store import MapStore
+from spoor.serving.store import MapStore, shareable_api_surface
 
 app = typer.Typer(
     name="spoor",
@@ -61,8 +61,17 @@ def run(
     result = extract.run_report(cfg)
     write_records(result.records, cfg, output, fmt)
     # Remember this run in the local map so the read-only serving layer (§2f)
-    # can answer for this URL later without re-crawling.
-    MapStore().record(cfg.target, result.records, tier=result.tier)
+    # can answer for this URL later without re-crawling — the records plus the
+    # §2h-safe projection of the observed API surface.
+    surface = shareable_api_surface(
+        api_spec=result.api_spec,
+        graphql=result.graphql,
+        synthesized_spec=result.synthesized_spec,
+        action_correlation=result.action_correlation,
+    )
+    MapStore().record(
+        cfg.target, result.records, tier=result.tier, api_surface=surface
+    )
     typer.echo(f"Wrote {len(result.records)} record(s) to {output} ({fmt})")
     typer.echo(RunSummary.from_result(result).render())
 
