@@ -7,8 +7,15 @@
 # non-JSON, or a JSON body with no version key (a SPA's /api-docs HTML shell) is
 # not — probes must never produce a false positive. Probing respects robots.txt
 # (§6: never work around a disallow to find a spec) and reports what it observed,
-# never a claim of a complete API. HTML/JS-bundle scanning, GraphQL introspection,
-# and spec synthesis from captured traffic are later §2b slices.
+# never a claim of a complete API.
+#
+# Layer 1's second half (below the conventional-path scenarios): when no
+# conventional path serves a spec, scan the landing page's HTML for a reference
+# to one — a Redoc `spec-url`, a Swagger-UI `url:`, or any link carrying the spec
+# vocabulary (openapi/swagger/api-docs) — and validate each candidate exactly as
+# strictly as a conventional probe, so a false lead is never reported. Scanning
+# referenced JS bundles, and spec synthesis from captured traffic, are later
+# §2b slices.
 
 Feature: A run discovers an official API spec when the target serves one
   As someone mapping a product's API surface
@@ -42,6 +49,34 @@ Feature: A run discovers an official API spec when the target serves one
   Scenario: A spec path disallowed by robots.txt is not probed
     Given a target that serves an OpenAPI 3 document at "/openapi.json"
     And a robots.txt that disallows "/openapi.json"
+    When I run the config and capture the summary
+    Then the run reports no discovered API spec
+
+  # --- Layer 1, second half: spec references in the landing page HTML ------
+
+  Scenario: A spec linked from the landing page HTML is discovered
+    Given a target whose landing page references a spec at "/v3/api-docs"
+    And a target that serves an OpenAPI 3 document at "/v3/api-docs"
+    When I run the config and capture the summary
+    Then the run reports a discovered "openapi" spec at "/v3/api-docs"
+    And the discovered spec version is "3.0.1"
+
+  Scenario: A Redoc spec-url pointing at a non-conventional path is discovered
+    Given a target whose landing page has a Redoc spec-url of "/internal/spec"
+    And a target that serves an OpenAPI 3 document at "/internal/spec"
+    When I run the config and capture the summary
+    Then the run reports a discovered "openapi" spec at "/internal/spec"
+
+  Scenario: A landing-page reference that isn't a real spec is not a false positive
+    Given a target whose landing page references a spec at "/swagger-ui.html"
+    And a target whose "/swagger-ui.html" returns an HTML page, not a spec
+    When I run the config and capture the summary
+    Then the run reports no discovered API spec
+
+  Scenario: A referenced spec path disallowed by robots.txt is not probed
+    Given a target whose landing page references a spec at "/v3/api-docs"
+    And a target that serves an OpenAPI 3 document at "/v3/api-docs"
+    And a robots.txt that disallows "/v3/api-docs"
     When I run the config and capture the summary
     Then the run reports no discovered API spec
 

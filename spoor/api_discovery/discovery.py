@@ -13,13 +13,27 @@ the repeated crawling a crawl-delay guards against, so applying the delay would
 turn a "nearly-free" companion (§2b) into a multi-second per-run tax (recorded as
 a decision in the ROADMAP §2b note). Every probe failure is swallowed into "no
 spec observed there", never an error that fails the run. What is reported is
-*observed*, never "the complete API" (§2b's bounded claim). HTML/JS-bundle
-scanning, GraphQL introspection, and spec synthesis from captured traffic are
-later §2b slices (see the ROADMAP note).
+*observed*, never "the complete API" (§2b's bounded claim).
+
+Two halves, both here (§2b layer 1). First, conventional-path probing (above).
+Second, when that finds nothing, scan the landing page's HTML for a *reference*
+to a spec — a Redoc `spec-url`, a Swagger-UI `url:`, or any link carrying the
+spec vocabulary (`openapi`/`swagger`/`api-docs`) — and validate each candidate
+with the same strict JSON check, so a false lead is never reported. The
+reference-finding is deliberately loose (a bad guess costs one bounded probe);
+the validation is what keeps false positives out. Scanning referenced JS bundles
+(this slice reads only the landing HTML), YAML specs (validation is JSON-only,
+matching the conventional paths), GraphQL introspection, and spec synthesis from
+captured traffic are later §2b slices (see the ROADMAP note). This slice fetches
+the landing page itself to scan it; reusing the HTML the resolver already
+fetched — like sharing one robots cache between resolver and discovery — is a
+known, deferred optimization, not a correctness gap.
 """
 
 from __future__ import annotations
 
+import itertools
+import re
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
 
@@ -39,6 +53,24 @@ CONVENTIONAL_SPEC_PATHS: tuple[str, ...] = (
 
 # Keep a probe cheap and non-blocking; a slow path is treated as "not there".
 _PROBE_TIMEOUT_S = 10.0
+
+# Cap on how many landing-page spec references are probed, keeping the HTML-scan
+# half of layer 1 bounded and near-free even on a page full of matching strings.
+_MAX_HTML_SPEC_CANDIDATES = 10
+
+# Redoc's explicit spec pointer: `<redoc spec-url="...">`. Caught on its own so a
+# reference whose path carries none of the spec vocabulary is still found.
+_SPEC_URL_ATTR = re.compile(r"""spec-url\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
+
+# Any quoted, whitespace-free token carrying the spec vocabulary — covers a
+# Swagger-UI `url: "..."`, a `<link>/<a href>`, or an inline path. Whitespace-free
+# so a prose title like "Swagger Petstore" is not mistaken for a reference. The
+# vocabulary (openapi/swagger/api-docs) is generic convention, not site knowledge
+# (§0).
+_SPEC_VOCAB_REF = re.compile(
+    r"""["']([^"'\s]*(?:openapi|swagger|api[-_]?docs)[^"'\s]*)["']""",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -88,19 +120,73 @@ def _probe(client: httpx.Client, url: str) -> DiscoveredSpec | None:
     return _spec_from_json(body, url)
 
 
+def _spec_reference_candidates(html: str, page_url: str) -> list[str]:
+    """Absolute candidate spec URLs referenced by a page's HTML (§2b layer 1).
+
+    Finds Redoc `spec-url` attributes and any quoted token carrying the spec
+    vocabulary, resolves each against `page_url`, and returns the http(s) ones in
+    first-seen order with duplicates removed. Fragment/`data:`/`javascript:` and
+    non-http references are dropped. Loose by design: each candidate is validated
+    strictly by `_probe`, so a wrong guess is rejected, not reported.
+    """
+    seen: list[str] = []
+    for match in itertools.chain(
+        _SPEC_URL_ATTR.finditer(html), _SPEC_VOCAB_REF.finditer(html)
+    ):
+        ref = match.group(1).strip()
+        if not ref or ref.startswith(("#", "data:", "javascript:")):
+            continue
+        url = urljoin(page_url, ref)
+        if not url.startswith(("http://", "https://")):
+            continue
+        if url not in seen:
+            seen.append(url)
+    return seen
+
+
+def _discover_spec_in_html(
+    client: httpx.Client, target: str, gate: Politeness
+) -> DiscoveredSpec | None:
+    """Fetch the landing page and probe any spec it references (§2b layer 1).
+
+    The second half of layer 1, run only when conventional-path probing found
+    nothing. Honors robots on both the landing fetch and every referenced
+    candidate (§6), is bounded by `_MAX_HTML_SPEC_CANDIDATES`, and never raises —
+    a failed fetch or a candidate that isn't a real spec is simply "not there".
+    """
+    if not gate.can_fetch(target):
+        return None
+    try:
+        response = client.get(target, timeout=_PROBE_TIMEOUT_S)
+    except httpx.HTTPError:
+        return None
+    if response.status_code != 200:
+        return None
+    candidates = _spec_reference_candidates(response.text, str(response.url))
+    for url in candidates[:_MAX_HTML_SPEC_CANDIDATES]:
+        if not gate.can_fetch(url):
+            continue
+        spec = _probe(client, url)
+        if spec is not None:
+            return spec
+    return None
+
+
 def discover_spec(
     target: str,
     client: httpx.Client,
     *,
     policy: PolitenessPolicy | None = None,
 ) -> DiscoveredSpec | None:
-    """Probe the target's origin for a published API spec (§2b layer 1).
+    """Discover a published API spec for the target (§2b layer 1, both halves).
 
-    Probes `CONVENTIONAL_SPEC_PATHS` against `target`'s scheme+host, in order,
-    returning the first valid OpenAPI/Swagger document — or None if none is
-    found. Honors `robots.txt` allow/deny (a disallowed path is skipped, never
-    fetched, §6) but does not apply crawl-delay spacing to the bounded probe set
-    (see the module docstring). Never raises: a probe that errors is "not there".
+    First probes `CONVENTIONAL_SPEC_PATHS` against `target`'s scheme+host, in
+    order, returning the first valid OpenAPI/Swagger document. If none is found,
+    falls back to scanning the landing page's HTML for a reference to a spec and
+    probing that. Returns None if neither half finds one. Honors `robots.txt`
+    allow/deny (a disallowed path is skipped, never fetched, §6) but does not
+    apply crawl-delay spacing to the bounded probe set (see the module
+    docstring). Never raises: a probe that errors is "not there".
     """
     parts = urlsplit(target)
     if not parts.scheme or not parts.netloc:
@@ -114,4 +200,4 @@ def discover_spec(
         spec = _probe(client, url)
         if spec is not None:
             return spec
-    return None
+    return _discover_spec_in_html(client, target, gate)

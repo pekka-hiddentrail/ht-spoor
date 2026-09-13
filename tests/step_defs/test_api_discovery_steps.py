@@ -71,6 +71,28 @@ def serves_html_at_path(context: dict[str, Any], path: str) -> None:
     context["routes"][path] = (200, "<html><body>docs</body></html>", "text/html")
 
 
+@given(parsers.parse('a target whose landing page references a spec at "{path}"'))
+def landing_references_spec(context: dict[str, Any], path: str) -> None:
+    # The landing page stays tier-1 extractable (the h1.t record) and also links
+    # the spec — so the run resolves at tier 1 and the HTML scan has a reference.
+    html = (
+        f'<html><body><h1 class="t">Hello</h1>'
+        f'<a href="{path}">API documentation</a></body></html>'
+    )
+    context["routes"][_TARGET_PATH] = (200, html, "text/html")
+
+
+@given(parsers.parse('a target whose landing page has a Redoc spec-url of "{path}"'))
+def landing_redoc_spec_url(context: dict[str, Any], path: str) -> None:
+    # A path with none of the spec vocabulary: only the explicit spec-url
+    # attribute pattern can find it, so this exercises that branch specifically.
+    html = (
+        f'<html><body><h1 class="t">Hello</h1>'
+        f'<redoc spec-url="{path}"></redoc></body></html>'
+    )
+    context["routes"][_TARGET_PATH] = (200, html, "text/html")
+
+
 @given(
     parsers.parse(
         'a target with a GraphQL endpoint at "{path}" answering introspection'
