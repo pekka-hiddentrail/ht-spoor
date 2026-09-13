@@ -16,6 +16,9 @@ from spoor.core.config import ExtractionConfig, FieldSpec, load_config
 
 # Resolved against bdd_features_base_dir = "features" (see pyproject.toml).
 scenarios("extraction.feature")
+# Adversarial-input robustness (§2a) reuses the same steps and fixtures — an
+# empty/garbage/malformed/deep/unicode page must degrade gracefully, never crash.
+scenarios("extraction_robustness.feature")
 
 _TITLE_ONLY_CONFIG = """
 target: http://localhost:8000/products.html
