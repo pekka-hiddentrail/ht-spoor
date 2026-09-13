@@ -94,7 +94,8 @@ accessibility tree, response-header fingerprints, and client-side storage state
 shared output, with known secrets redacted first (§2h). Tier-3 self-healing has
 its scoring core (Phase 3): when a selector breaks, it re-resolves the element by
 scoring every candidate against a fingerprint captured while the selector worked
-— tag, id, class, attribute, inner-text, and structural similarity, no model call
+— tag, id, class, attribute, inner-text, structural, and descendant-composition
+similarity, no model call
 (§2) — flagging a low-confidence best candidate as an "uncertain match" for review
 rather than guessing, and always recording the winning score plus the runners-up
 it considered. This scoring algorithm is written from scratch — Spoor takes no
@@ -115,8 +116,11 @@ optional field is left null rather than filled in from its sibling rows. And a
 confident heal **re-anchors**: it rewrites the stored fingerprint to the healed
 element's current shape, so successive redesigns each heal from the most recent
 shape rather than only the original — drift is absorbed one healable step at a
-time (an uncertain match never re-anchors). Healing the row-container (`item`)
-selector itself when a row breaks and the perceptual-hash-on-screenshot component
+time (an uncertain match never re-anchors). The fingerprint now also captures an
+element's **descendant composition** (the multiset of tags it contains) — inert
+for leaf fields, but the identity a *container* keeps when its own class is
+renamed — as the groundwork for healing the row-container (`item`) selector itself
+when a whole row breaks, which, with the perceptual-hash-on-screenshot component,
 are the next Phase-3 slices. Default-on capture and the MCP/API serving layer are
 still ahead on the roadmap.
 
