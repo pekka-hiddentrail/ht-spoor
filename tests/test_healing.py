@@ -14,6 +14,7 @@ from spoor.core.healing import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     ElementFingerprint,
     candidate_elements,
+    find_container_groups,
     fingerprint,
     heal,
     score,
@@ -198,6 +199,83 @@ def test_heal_is_deterministic_and_breaks_ties_toward_earlier_candidates() -> No
     again = heal(stored, divs)
     assert again is not None
     assert again.index == first.index
+
+
+# --- find_container_groups (row-container healing) ------------------------
+
+_NAV = '<nav><a class="menu" href="#">Home</a><a class="menu" href="#">About</a></nav>'
+
+
+def _container_row(name: str, price: str, *, li_class: str = "card") -> str:
+    return (
+        f'<li class="{li_class}">'
+        f'<a class="name">{name}</a><span class="price">{price}</span></li>'
+    )
+
+
+def _listing(ul_class: str, rows: list[tuple[str, str]]) -> str:
+    cells = "".join(_container_row(n, p) for n, p in rows)
+    return f'<ul class="{ul_class}">{cells}</ul>'
+
+
+def _container_page(*sections: str) -> str:
+    return "<html><body>" + "".join(sections) + "</body></html>"
+
+
+_STORED_ROWS = [("Alpha", "10"), ("Beta", "20"), ("Gamma", "30")]
+
+
+def _stored_container() -> ElementFingerprint:
+    page = _container_page(_NAV, _listing("products", _STORED_ROWS))
+    # Container fingerprints are text-agnostic, as the Healer captures them.
+    return fingerprint(
+        Selector(text=page).css("ul.products > li")[0], include_text=False
+    )
+
+
+def test_find_container_groups_finds_the_one_repeating_group_after_rename() -> None:
+    stored = _stored_container()
+    # Container class renamed (products -> grid); the rows survive as a group.
+    redesign = _container_page(_NAV, _listing("grid", _STORED_ROWS))
+    match = find_container_groups(stored, candidate_elements(redesign))
+    assert len(match.groups) == 1
+    assert len(match.groups[0]) == len(_STORED_ROWS)
+    assert match.best_score >= DEFAULT_CONFIDENCE_THRESHOLD
+
+
+def test_find_container_groups_returns_both_when_two_groups_match() -> None:
+    stored = _stored_container()
+    # Two structurally-identical listings both survive the rename -> ambiguous.
+    redesign = _container_page(
+        _NAV,
+        _listing("grid", _STORED_ROWS),
+        _listing("recommended", [("D", "4"), ("E", "5")]),
+    )
+    match = find_container_groups(stored, candidate_elements(redesign))
+    assert len(match.groups) == 2
+
+
+def test_find_container_groups_gates_out_a_lone_lookalike() -> None:
+    stored = _stored_container()
+    # A single row-like element is not a repeating group: no group of >= 2.
+    redesign = _container_page(_NAV, _listing("grid", [("Solo", "99")]))
+    match = find_container_groups(stored, candidate_elements(redesign))
+    assert match.groups == ()
+    # ...even though that lone element itself scores confidently.
+    assert match.best_score >= DEFAULT_CONFIDENCE_THRESHOLD
+
+
+def test_find_container_groups_groups_by_parent_not_just_tag() -> None:
+    stored = _stored_container()
+    # Same tag+class rows split across two parents are two groups, not one.
+    redesign = _container_page(
+        _NAV,
+        _listing("grid", [("A", "1"), ("B", "2")]),
+        _listing("other", [("C", "3"), ("D", "4")]),
+    )
+    match = find_container_groups(stored, candidate_elements(redesign))
+    assert len(match.groups) == 2
+    assert all(len(group) == 2 for group in match.groups)
 
 
 def test_threshold_is_tunable_per_call() -> None:

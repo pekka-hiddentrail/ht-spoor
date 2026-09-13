@@ -19,6 +19,17 @@ failure"):
   so successive redesigns each heal from the most recent shape rather than only
   the first; an uncertain match never re-anchors.
 
+- `remember_container(item, row)` / `attempt_container(item, page)` — the same
+  two-phase mechanic for a listing's **row container** (the `item` selector). On a
+  successful run the row's shape is fingerprinted (text-agnostic); when a later run
+  finds the `item` selector matching nothing, `attempt_container` re-resolves the
+  repeating row group. It heals only when exactly one coherent sibling group of two
+  or more members scores confidently — refusing (zero rows, flagged uncertain) when
+  no repeating group is found (a lone look-alike is never promoted to a one-row
+  listing) or when two distinct groups are both confident (ambiguous look-alikes
+  are never guessed between). Reliability-first (§2, §1): better total data loss
+  surfaced for review than a confidently-fabricated listing.
+
 Every heal attempt that finds a fingerprint and a candidate records a `HealEvent`
 carrying the field name and the winning confidence — never the matched text
 (§2h) — for the run summary. `used` distinguishes a confident heal (field filled)
@@ -33,7 +44,12 @@ from dataclasses import dataclass, field
 from parsel import Selector
 
 from spoor.core.fingerprint_cache import FingerprintCache
-from spoor.core.healing import fingerprint, heal
+from spoor.core.healing import find_container_groups, fingerprint, heal
+
+# Sentinel "field name" for a listing's row-container fingerprint. Empty because no
+# real field is (YAML keys are non-empty), so the container key `f"{item}::"` can
+# never collide with a field key `f"{item}::{name}"`.
+_CONTAINER_FIELD = ""
 
 
 @dataclass(frozen=True)
@@ -117,6 +133,71 @@ class Healer:
             key, fingerprint(result.element, include_text=item_selector is None)
         )
         return result.element
+
+    def remember_container(self, item_selector: str, row: Selector) -> None:
+        """Fingerprint a listing's row container on a successful resolve.
+
+        Called with the first matched row when `item_selector` resolves, so a later
+        run can re-find the row group if the selector breaks. Text-agnostic (rows
+        share structure but differ in text), keyed by the container sentinel so it
+        never collides with a field. `put` no-ops when unchanged, so re-running a
+        stable listing writes nothing.
+        """
+        self.cache.put(
+            self._key(_CONTAINER_FIELD, item_selector),
+            fingerprint(row, include_text=False),
+        )
+
+    def attempt_container(
+        self, item_selector: str, page: Selector
+    ) -> list[Selector] | None:
+        """Heal a broken row-container selector; None unless one group is confident.
+
+        The `item` selector matched nothing, so re-resolve the repeating row group
+        by scoring every element on the page against the container fingerprint a
+        **prior** run recorded (`get_persisted`, never one remembered this run — the
+        same fabrication guard as field healing) and grouping the confident matches
+        into coherent sibling groups of two or more (`find_container_groups`).
+
+        Heals only when **exactly one** such group qualifies: it returns that group's
+        rows, records a confident `HealEvent`, and re-anchors the container print to
+        the first healed row's current shape (drift absorbed one step at a time, as
+        for fields). Refuses otherwise — zero qualifying groups (no repeating group:
+        a lone look-alike is not a listing) or two-plus (ambiguous look-alikes we
+        will not guess between) — returning None so the listing yields no records
+        rather than a fabricated one (§2, §1). A refusal records an uncertain
+        `HealEvent` **only when some element actually crossed the confidence
+        threshold** — a genuinely reviewable "I saw a listing-shaped thing but could
+        not safely use it." When nothing on the page resembled a row at all, no
+        event is recorded: that is a legitimately-empty or wholly-different page, not
+        a broken listing to cry wolf over.
+
+        Returns None with no event when nothing was remembered for the container or
+        the page has no candidate elements at all.
+        """
+        key = self._key(_CONTAINER_FIELD, item_selector)
+        stored = self.cache.get_persisted(key)
+        if stored is None:
+            return None
+        candidates = list(page.css("*"))
+        if not candidates:
+            return None
+        match = find_container_groups(stored, candidates)
+        if len(match.groups) == 1:
+            rows = list(match.groups[0])
+            self.events.append(
+                HealEvent(field=item_selector, confidence=match.best_score, used=True)
+            )
+            self.cache.put(key, fingerprint(rows[0], include_text=False))
+            return rows
+        # Zero groups (no repeating group) or 2+ (ambiguous): refuse. Flag it for
+        # review only if something crossed the bar; stay silent on a page where
+        # nothing looked like a row (a legitimately-empty listing, not a break).
+        if match.has_confident:
+            self.events.append(
+                HealEvent(field=item_selector, confidence=match.best_score, used=False)
+            )
+        return None
 
     @staticmethod
     def _key(field_name: str, item_selector: str | None) -> str:

@@ -211,3 +211,120 @@ def test_item_mode_does_not_fabricate_from_a_same_run_row(tmp_path: Path) -> Non
         is None
     )
     assert healer.events == []  # nothing to heal against -> no event at all
+
+
+# --- Row-container healing --------------------------------------------------
+_NAV = '<nav><a class="menu" href="#">Home</a><a class="menu" href="#">About</a></nav>'
+_CONTAINER_ITEM = "ul.products > li"
+_ROWS = (("Alpha", "10"), ("Beta", "20"), ("Gamma", "30"))
+
+
+def _crow(name: str, price: str) -> str:
+    return (
+        f'<li class="card"><a class="name">{name}</a>'
+        f'<span class="price">{price}</span></li>'
+    )
+
+
+def _clisting(ul_class: str, rows: tuple[tuple[str, str], ...]) -> str:
+    return f'<ul class="{ul_class}">' + "".join(_crow(n, p) for n, p in rows) + "</ul>"
+
+
+def _cpage(*sections: str) -> str:
+    return "<html><body>" + "".join(sections) + "</body></html>"
+
+
+def _healer_having_remembered_container(
+    tmp_path: Path, body: str = _cpage(_NAV, _clisting("products", _ROWS))
+) -> Healer:
+    """A fresh healer whose cache holds a prior run's container fingerprint."""
+    path = tmp_path / "d.json"
+    first = Healer(FingerprintCache(path))
+    first.remember_container(
+        _CONTAINER_ITEM, Selector(text=body).css(_CONTAINER_ITEM)[0]
+    )
+    first.persist()
+    return Healer(FingerprintCache(path))
+
+
+def test_container_heal_re_resolves_the_row_group_after_a_rename(
+    tmp_path: Path,
+) -> None:
+    healer = _healer_having_remembered_container(tmp_path)
+    redesign = Selector(text=_cpage(_NAV, _clisting("grid", _ROWS)))
+    rows = healer.attempt_container(_CONTAINER_ITEM, redesign)
+    assert rows is not None
+    assert len(rows) == len(_ROWS)
+    assert healer.confident_count == 1
+    assert healer.uncertain_count == 0
+
+
+def test_container_heal_refuses_two_ambiguous_groups(tmp_path: Path) -> None:
+    healer = _healer_having_remembered_container(tmp_path)
+    redesign = Selector(
+        text=_cpage(
+            _NAV,
+            _clisting("grid", _ROWS),
+            _clisting("recommended", (("D", "4"), ("E", "5"))),
+        )
+    )
+    assert healer.attempt_container(_CONTAINER_ITEM, redesign) is None
+    # Refusal is surfaced as an uncertain match, never a silent empty result.
+    assert healer.uncertain_count == 1
+    assert healer.confident_count == 0
+
+
+def test_container_heal_refuses_a_lone_lookalike(tmp_path: Path) -> None:
+    healer = _healer_having_remembered_container(tmp_path)
+    redesign = Selector(text=_cpage(_NAV, _clisting("grid", (("Solo", "99"),))))
+    assert healer.attempt_container(_CONTAINER_ITEM, redesign) is None
+    assert healer.uncertain_count == 1
+
+
+def test_container_heal_stays_silent_when_nothing_resembles_a_row(
+    tmp_path: Path,
+) -> None:
+    # A prior run remembered the container, but this page has nothing row-like (a
+    # legitimately-empty or wholly-different page). A refusal here must NOT cry wolf
+    # with an uncertain flag — no element crossed the confidence bar.
+    healer = _healer_having_remembered_container(tmp_path)
+    barren = Selector(
+        text=_cpage("<main><p>No results found.</p></main>")
+    )
+    assert healer.attempt_container(_CONTAINER_ITEM, barren) is None
+    assert healer.events == []
+
+
+def test_container_heal_without_a_prior_fingerprint_is_a_noop(tmp_path: Path) -> None:
+    healer = _healer(tmp_path)  # nothing remembered
+    redesign = Selector(text=_cpage(_NAV, _clisting("grid", _ROWS)))
+    assert healer.attempt_container(_CONTAINER_ITEM, redesign) is None
+    assert healer.events == []  # nothing to heal against -> no event at all
+
+
+def test_container_heal_within_same_run_does_not_fabricate(tmp_path: Path) -> None:
+    # Remembering a container this run must not let attempt_container heal from it
+    # (healing reads only prior-run fingerprints) — the guard that stops fabrication.
+    healer = _healer(tmp_path)
+    body = _cpage(_NAV, _clisting("products", _ROWS))
+    row = Selector(text=body).css(_CONTAINER_ITEM)[0]
+    healer.remember_container(_CONTAINER_ITEM, row)
+    redesign = Selector(text=_cpage(_NAV, _clisting("grid", _ROWS)))
+    assert healer.attempt_container(_CONTAINER_ITEM, redesign) is None
+    assert healer.events == []
+
+
+def test_container_key_never_collides_with_a_field_key(tmp_path: Path) -> None:
+    # The container sentinel key must be distinct from any real field's key so a
+    # field named like the container can never overwrite the container print.
+    healer = _healer(tmp_path)
+    body = _cpage(_NAV, _clisting("products", _ROWS))
+    row = Selector(text=body).css(_CONTAINER_ITEM)[0]
+    healer.remember_container(_CONTAINER_ITEM, row)
+    healer.remember("name", row.css("a.name")[0], item_selector=_CONTAINER_ITEM)
+    # Two distinct cache entries: the container print and the field print.
+    assert healer.cache.get(f"{_CONTAINER_ITEM}::") is not None
+    assert healer.cache.get(f"{_CONTAINER_ITEM}::name") is not None
+    assert healer.cache.get(f"{_CONTAINER_ITEM}::") != healer.cache.get(
+        f"{_CONTAINER_ITEM}::name"
+    )
