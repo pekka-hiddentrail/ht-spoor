@@ -19,6 +19,7 @@ from pytest_bdd import given, parsers, scenarios, then, when
 
 from spoor.core import extract
 from spoor.core.config import load_config
+from spoor.core.fingerprint_cache import FINGERPRINT_DIRNAME
 from spoor.operational.observability import RunSummary
 from spoor.security import storage
 
@@ -112,8 +113,13 @@ def summary_reports_har(context: dict[str, Any]) -> None:
 @then("no HAR file is written to the cache")
 def no_har_written(context: dict[str, Any]) -> None:
     assert context["result"].har_path is None
-    # Nothing should have touched the cache root at all.
-    assert not context["cache_root"].exists()
+    # No capture artifact should have been written. Tier-3 fingerprint persistence
+    # is always-on and independent of the capture opt-in (local-only, §2h), so the
+    # only thing a no-capture tier-1 run may leave in the cache root is that
+    # fingerprints/ subdir — never a HAR or any other capture file.
+    cache_root: Path = context["cache_root"]
+    leftovers = {p.name for p in cache_root.iterdir()} if cache_root.exists() else set()
+    assert leftovers <= {FINGERPRINT_DIRNAME}
 
 
 @then("the run summary reports no capture")

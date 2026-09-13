@@ -3,8 +3,11 @@
 Per §1 the highest-priority piece of engineering in the plan. When a resolved
 element's selector later matches nothing (the site changed its markup), tier 3
 re-finds the element by scoring every candidate on the page against a
-*fingerprint* captured while the selector still worked. This reimplements
-Healenium's core scoring idea (Apache-2.0, not the commercial "Pro" tier): a
+*fingerprint* captured while the selector still worked. The scoring algorithm is
+**written from scratch here** — Spoor takes no dependency on Healenium and vendors
+none of its code; Healenium's published, Apache-2.0 core approach (a DOM
+fingerprint + weighted similarity, *not* the commercial "Pro" tier) is only a
+conceptual reference. What runs is entirely this module's own implementation: a
 weighted blend of tag, id, class, other-attribute, inner-text, and structural
 (ancestor-chain + sibling-position) similarity. No LLM, no network — deterministic
 arithmetic over the DOM (§2 tier table: "no model call").

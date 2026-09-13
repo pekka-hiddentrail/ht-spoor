@@ -77,6 +77,13 @@ class RunSummary:
     # `action_correlation.doc_path`, same §2h reasoning as the synthesized spec. A
     # time-window approximation, not proven causation (§2b).
     action_correlation: ActionCorrelation | None
+    # Tier-3 self-healing outcome counts for this run (§2, §2d): fields whose
+    # broken selector tier 3 re-resolved confidently (field filled) versus
+    # uncertain matches it flagged for review (field left null, never guessed).
+    # Counts only — the matched text never reaches the summary (§2h). Both zero
+    # for a run where nothing broke or nothing was remembered.
+    heal_confident: int
+    heal_uncertain: int
 
     @classmethod
     def from_result(cls, result: RunResult) -> RunSummary:
@@ -123,6 +130,8 @@ class RunSummary:
             ),
             synthesized_spec=result.synthesized_spec,
             action_correlation=result.action_correlation,
+            heal_confident=sum(1 for e in result.heal_events if e.used),
+            heal_uncertain=sum(1 for e in result.heal_events if not e.used),
         )
 
     @property
@@ -176,6 +185,15 @@ class RunSummary:
             f"  blocked:       {len(self.blocked)}",
         ]
         lines.extend(f"    - {url} (robots.txt)" for url in self.blocked)
+        # Self-healing outcome, only when tier 3 actually healed something this run
+        # (§2/§2d). Confident heals filled a field; uncertain matches were flagged
+        # for review and left the field null (never silently guessed). Counts only,
+        # never the matched text (§2h). Stays quiet on an ordinary run.
+        if self.heal_confident or self.heal_uncertain:
+            lines.append(
+                f"  self-healing:  {self.heal_confident} confident, "
+                f"{self.heal_uncertain} uncertain (flagged for review)"
+            )
         # Console counts, only when the console was captured (§2c). Counts only —
         # never message text — so nothing sensitive surfaces here (§2h).
         if self.console is not None:

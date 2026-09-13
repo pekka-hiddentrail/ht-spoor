@@ -26,6 +26,7 @@ are authored when their phase begins, not up front.
 | `observability.feature` | Run summary / observability | §2d | `spoor/operational` | 1 |
 | `resolution.feature` | Tier dispatcher / escalation, then tier-3 self-healing | §2 | `spoor/core` | 1 / 3 |
 | `self_healing.feature` | Tier-3 self-healing: scored element matching, no model call | §2 / §5.3 | `spoor/core` | 3 |
+| `self_healing_runs.feature` | Tier-3 wired into a live run: persist fingerprints, heal across runs, surface counts | §2 / §2d | `spoor/core` | 3 |
 | `serving.feature` | MCP server & REST API (read-only) | §2f | `spoor/serving` | 5 |
 | `exploration.feature` | Exploration mode + safety | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
@@ -71,8 +72,15 @@ low-confidence best candidate as an "uncertain match" rather than guessing and
 always recording the winning score plus runners-up. It is backed below the
 Gherkin layer by the §5.3 `hypothesis` mutation corpus (a statistical
 success-rate property, not a shape Gherkin suits), which gates the merge-blocking
-≥95% bar (currently ~99.8%). This first slice is the pure engine over static DOM;
-cross-run fingerprint persistence, dispatcher wiring + surfacing uncertain matches
-in the run summary, and the perceptual-hash-on-screenshot component are follow-on
-slices (see the §2 tier-3 decision note). The sandbox registry (§2e/§2h) and the
-remaining feature files are authored when their phase begins.
+≥95% bar (currently ~99.8%). `self_healing_runs.feature` (§2, §2d) then wires that
+engine into a live run: while a field's selector resolves, the run fingerprints
+the element into a per-domain cache that persists across runs (the §0-sanctioned
+runtime-learned cache, local-only per §2h); on a later run, if that selector
+matches nothing but a fingerprint was remembered, tier 3 re-resolves the field by
+scoring the page's candidates — a confident heal fills the field, a sub-threshold
+best candidate is a flagged "uncertain match" that leaves the field null, and the
+run summary (§2d) surfaces the confident/uncertain counts (never the matched text,
+§2h). This slice threads healing through single-record configs only; `item`-mode
+healing, cross-run re-anchoring, and the perceptual-hash-on-screenshot component
+are follow-on slices (see the §2 tier-3 decision notes). The sandbox registry
+(§2e/§2h) and the remaining feature files are authored when their phase begins.

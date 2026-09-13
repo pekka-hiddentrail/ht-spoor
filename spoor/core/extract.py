@@ -38,6 +38,8 @@ from spoor.api_discovery.discovery import DiscoveredSpec, discover_spec
 from spoor.api_discovery.graphql import DiscoveredGraphQL, discover_graphql
 from spoor.api_discovery.synthesis import SynthesizedSpec, synthesize_from_har
 from spoor.core.config import ExtractionConfig, FieldSpec, PolitenessPolicy
+from spoor.core.fingerprint_cache import cache_for_target
+from spoor.core.self_healing import Healer, HealEvent
 from spoor.operational.politeness import Politeness
 from spoor.security import storage
 from spoor.signals.accessibility import AccessibilityCollector, AccessibilitySignal
@@ -119,23 +121,30 @@ class RunResult:
     synthesized_spec: SynthesizedSpec | None = None
     checkpoints: list[Checkpoint] = field(default_factory=list)
     action_correlation: ActionCorrelation | None = None
+    # Tier-3 self-healing events for this run (§2, §2d): each is a field whose
+    # broken selector tier 3 re-resolved — confidently (field filled) or as an
+    # uncertain match flagged for review (field left null). Field name + winning
+    # confidence only, never the matched text (§2h). Empty when nothing healed.
+    heal_events: list[HealEvent] = field(default_factory=list)
 
 
-def _first_text(root: Selector, css: str) -> str | None:
-    """First matching element's normalized text, or None if nothing matches."""
-    matches = root.css(css)
-    if not matches:
+def _value_from_element(element: Selector, spec: FieldSpec) -> str | float | None:
+    """The field value carried by an already-resolved element, per its spec.
+
+    Text (normalized) by default, or the named `attr`; `number`-typed fields are
+    coerced. Shared by the direct-hit path and the tier-3 heal path so a healed
+    element yields exactly what the selector would have.
+    """
+    if spec.attr is not None:
+        raw = element.attrib.get(spec.attr)
+    else:
+        text = element.xpath("normalize-space(string(.))").get()
+        raw = text if text else None
+    if raw is None:
         return None
-    text = matches[0].xpath("normalize-space(string(.))").get()
-    return text if text else None
-
-
-def _first_attr(root: Selector, css: str, attr: str) -> str | None:
-    """First match's `attr` value, or None if the element or attribute is absent."""
-    matches = root.css(css)
-    if not matches:
-        return None
-    return matches[0].attrib.get(attr)
+    if spec.type == "number":
+        return _coerce_number(raw)
+    return raw
 
 
 # The first numeric run in a string. The optional leading `-` is only taken as
@@ -158,28 +167,64 @@ def _coerce_number(text: str) -> float | None:
         return None
 
 
-def _extract_value(root: Selector, spec: FieldSpec) -> str | float | None:
-    if spec.attr is not None:
-        raw = _first_attr(root, spec.selector, spec.attr)
-    else:
-        raw = _first_text(root, spec.selector)
-    if raw is None:
+def _extract_value(
+    root: Selector,
+    spec: FieldSpec,
+    *,
+    healer: Healer | None = None,
+    field_name: str | None = None,
+) -> str | float | None:
+    """The value for one field, resolving its selector against `root`.
+
+    On a direct hit, the resolved element is remembered for tier-3 self-healing
+    (when a `healer` is supplied). On a miss, tier 3 is asked to heal the field
+    from what it saw before: a confident match fills the field, a weak one leaves
+    it null but is flagged for review (see `Healer.attempt`). Without a healer the
+    behavior is unchanged — a miss is simply a null field (§2a).
+
+    Note the two-step contract: healing resolves the *element*, then
+    `_value_from_element` extracts the *value* from it. These are independent, so
+    a confident heal to the right element can still yield a null value when the
+    field has an `attr` the healed element happens not to carry — the run summary
+    counts it as a confident heal (the element was re-resolved) even though the
+    field is null. This is intentional and honest: the healer's job is element
+    re-resolution, not guaranteeing a value the source markup no longer holds.
+    """
+    matches = root.css(spec.selector)
+    element: Selector | None = matches[0] if matches else None
+    if element is not None:
+        if healer is not None and field_name is not None:
+            healer.remember(field_name, element)
+    elif healer is not None and field_name is not None:
+        element = healer.attempt(field_name, root)
+    if element is None:
         return None
-    if spec.type == "number":
-        return _coerce_number(raw)
-    return raw
+    return _value_from_element(element, spec)
 
 
-def extract_records(html: str, config: ExtractionConfig) -> list[dict[str, object]]:
-    """Extract all records from one page's HTML per the config."""
+def extract_records(
+    html: str, config: ExtractionConfig, healer: Healer | None = None
+) -> list[dict[str, object]]:
+    """Extract all records from one page's HTML per the config.
+
+    Tier-3 self-healing (via `healer`) applies only to single-record configs (no
+    `item`), where each field selector maps to at most one element — an
+    unambiguous fingerprint-and-heal. `item`-mode healing (many rows sharing a
+    selector) needs a per-row strategy and is a stated follow-on (§2 tier-3 wiring
+    decision note), so healing is not threaded through the item path.
+    """
     page = Selector(text=html)
-    roots = page.css(config.item) if config.item else [page]
-    records: list[dict[str, object]] = []
-    for root in roots:
-        records.append(
+    if config.item:
+        return [
             {name: _extract_value(root, spec) for name, spec in config.fields.items()}
-        )
-    return records
+            for root in page.css(config.item)
+        ]
+    return [
+        {
+            name: _extract_value(page, spec, healer=healer, field_name=name)
+            for name, spec in config.fields.items()
+        }
+    ]
 
 
 def _next_url(html: str, current_url: str, config: ExtractionConfig) -> str | None:
@@ -219,6 +264,7 @@ class Resolver(Protocol):
         client: httpx.Client | None = None,
         *,
         sleep: Callable[[float], None] = time.sleep,
+        healer: Healer | None = None,
     ) -> RunResult: ...
 
 
@@ -244,12 +290,16 @@ class Tier1Resolver:
         client: httpx.Client | None = None,
         *,
         sleep: Callable[[float], None] = time.sleep,
+        healer: Healer | None = None,
     ) -> RunResult:
         """Fetch and extract, following next-link pagination to the end.
 
         Honors the politeness policy (ROADMAP.md §2d/§6): robots.txt disallowed
         URLs are recorded as `blocked` and never fetched, and the crawl-delay is
         applied between fetches. `sleep` is injectable so timing can be asserted.
+        When a `healer` is supplied, single-record field selectors are remembered
+        on success and healed on failure through it (§2); its events are surfaced
+        by the dispatcher.
         """
         owns_client = client is None
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
@@ -267,7 +317,7 @@ class Tier1Resolver:
                 response = client.get(url)
                 response.raise_for_status()
                 result.pages_fetched += 1
-                result.records.extend(extract_records(response.text, config))
+                result.records.extend(extract_records(response.text, config, healer))
                 url = _next_url(response.text, url, config)
         finally:
             if owns_client:
@@ -330,6 +380,7 @@ class Tier2Resolver:
         client: httpx.Client | None = None,
         *,
         sleep: Callable[[float], None] = time.sleep,
+        healer: Healer | None = None,
     ) -> RunResult:
         """Render and extract, following the same politeness gate as tier 1.
 
@@ -395,6 +446,7 @@ class Tier2Resolver:
                             a11y,
                             headers,
                             recorder,
+                            healer,
                         )
                         # Storage state is a context-level capture (cookies +
                         # localStorage span pages), taken once after the crawl and
@@ -453,6 +505,7 @@ class Tier2Resolver:
         a11y: AccessibilityCollector | None = None,
         headers: HeaderCollector | None = None,
         recorder: CheckpointRecorder | None = None,
+        healer: Healer | None = None,
     ) -> None:
         seen: set[str] = set()
         url: str | None = config.target
@@ -486,7 +539,7 @@ class Tier2Resolver:
             finally:
                 page.close()
             result.pages_fetched += 1
-            result.records.extend(extract_records(html, config))
+            result.records.extend(extract_records(html, config, healer))
             url = _next_url(html, url, config)
 
     def _await_items(self, page: Page, config: ExtractionConfig) -> None:
@@ -559,18 +612,30 @@ def run_report(
     most capable tier's (empty) result is returned. Alongside extraction, the run
     also probes the target's origin for a published API spec (§2b layer 1) and
     stamps any it observes on the result.
+
+    Tier-3 self-healing (§2) rides along: one `Healer` over the target's
+    persistent per-domain fingerprint cache is created for the run and threaded
+    through whichever tier resolves it, so field selectors are fingerprinted on
+    success and healed on failure. Its newly-learned fingerprints are persisted
+    after the walk, and its heal events (confident fills + uncertain matches) are
+    stamped on the result for the run summary (§2d).
     """
     candidates = [resolver for resolver in tiers if resolver.accepts(config)]
     if not candidates:
         # The last (most capable) tier always accepts; reaching here is defensive.
         raise TierUnavailableError("no resolution tier can handle this config")
+    healer = Healer(cache_for_target(config.target))
     result = RunResult()
     attempted: list[int] = []
     for resolver in candidates:
-        result = resolver.run(config, client, sleep=sleep)
+        result = resolver.run(config, client, sleep=sleep, healer=healer)
         attempted.append(resolver.tier)
         if not _should_escalate(result):
             break
+    # Persist any fingerprints learned this run and surface the heal events on the
+    # resolving tier's result (§2, §2d).
+    healer.persist()
+    result.heal_events = healer.events
     # Record the escalation path on the resolving tier's result, for §2d
     # observability (a directly-invoked resolver leaves this empty).
     result.tiers_attempted = attempted

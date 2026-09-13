@@ -97,12 +97,19 @@ scoring every candidate against a fingerprint captured while the selector worked
 — tag, id, class, attribute, inner-text, and structural similarity, no model call
 (§2) — flagging a low-confidence best candidate as an "uncertain match" for review
 rather than guessing, and always recording the winning score plus the runners-up
-it considered. Its accuracy is guarded by the §5.3 `hypothesis` mutation corpus at
-the merge-blocking ≥95% bar (currently ~99.8%). Wiring that core into a live run
-(cross-run fingerprint persistence, dispatcher escalation, surfacing uncertain
-matches in the run summary) and the perceptual-hash-on-screenshot component are
-the next Phase-3 slices; default-on capture and the MCP/API serving layer are
-still ahead on the roadmap.
+it considered. This scoring algorithm is written from scratch — Spoor takes no
+dependency on Healenium and vendors none of its code; Healenium's published,
+permissively-licensed core approach was a conceptual reference only. Its accuracy is guarded by the §5.3 `hypothesis` mutation corpus at
+the merge-blocking ≥95% bar (currently ~99.8%). That core is now wired into a
+live run: while a field's selector resolves, the run fingerprints the element into
+a per-domain cache that persists across runs (local-only, §2h); on a later run, if
+that selector breaks but a fingerprint was remembered, tier 3 re-resolves the
+field — a confident heal fills it, an uncertain match leaves it null and is
+flagged, and the run summary surfaces the confident/uncertain counts (never the
+matched text, §2h). This wiring covers single-record configs; `item`-mode healing,
+cross-run re-anchoring, and the perceptual-hash-on-screenshot component are the
+next Phase-3 slices. Default-on capture and the MCP/API serving layer are still
+ahead on the roadmap.
 
 ## Contributing
 
