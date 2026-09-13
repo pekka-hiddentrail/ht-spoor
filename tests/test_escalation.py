@@ -44,6 +44,7 @@ class _FakeResolver:
         client: httpx.Client | None = None,
         *,
         sleep: Callable[[float], None] = time.sleep,
+        healer: extract.Healer | None = None,
     ) -> RunResult:
         self.ran = True
         return self._result

@@ -19,6 +19,7 @@ from pytest_bdd import given, parsers, scenarios, then, when
 
 from spoor.core import extract
 from spoor.core.config import load_config
+from spoor.core.fingerprint_cache import FINGERPRINT_DIRNAME
 from spoor.operational.observability import RunSummary
 from spoor.security import storage
 
@@ -124,8 +125,12 @@ def summary_reports_console_path(context: dict[str, Any]) -> None:
 @then("no console log file is written to the cache")
 def no_console_log(context: dict[str, Any]) -> None:
     assert context["result"].console_log_path is None
-    # A tier-1 run touches nothing in the cache at all.
-    assert not context["cache_root"].exists()
+    # No capture artifact was written. Tier-3 fingerprint persistence is always-on
+    # and independent of the capture opt-in (local-only, §2h), so the only thing a
+    # no-capture tier-1 run may leave in the cache root is that fingerprints/ subdir.
+    cache_root: Path = context["cache_root"]
+    leftovers = {p.name for p in cache_root.iterdir()} if cache_root.exists() else set()
+    assert leftovers <= {FINGERPRINT_DIRNAME}
 
 
 @then("the run summary reports no console signal")
