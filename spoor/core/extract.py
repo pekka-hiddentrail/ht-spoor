@@ -14,6 +14,7 @@ everything is driven by the config.
 
 from __future__ import annotations
 
+import functools
 import re
 import time
 from collections.abc import Callable
@@ -49,7 +50,11 @@ from spoor.core.visual import InvalidImageError, perceptual_hash
 from spoor.operational.challenge import ChallengeSignal, detect_challenge
 from spoor.operational.change_detection import detector_for_target
 from spoor.operational.politeness import Politeness
-from spoor.operational.retry import FetchFailure, RetryingFetcher
+from spoor.operational.retry import (
+    FetchFailure,
+    RetryingFetcher,
+    RetryingNavigator,
+)
 from spoor.security import storage
 from spoor.signals.accessibility import AccessibilityCollector, AccessibilitySignal
 from spoor.signals.console import ConsoleCollector, ConsoleSignal
@@ -487,9 +492,12 @@ class Tier2Resolver:
     so field/`item`/pagination semantics stay identical across tiers. The
     dispatcher reaches it for browser-only capabilities — today, JS-driven
     infinite scroll. It honors the same politeness gate as tier 1 (robots.txt +
-    crawl-delay); nothing here is site-specific (§0). When the config opts into
-    capture (`capture.har`), the whole run's network traffic is recorded to a
-    local-only HAR (ROADMAP.md §2b/§2h) — see `run`.
+    crawl-delay) and retries a transient navigation failure through the same
+    `RetryPolicy` (§2d) — a timeout, dropped connection, or 5xx/429 is retried
+    with backoff, and a page it ultimately cannot load is dead-lettered rather
+    than crashing the run. Nothing here is site-specific (§0). When the config
+    opts into capture (`capture.har`), the whole run's network traffic is
+    recorded to a local-only HAR (ROADMAP.md §2b/§2h) — see `run`.
     """
 
     tier = 2
@@ -526,6 +534,12 @@ class Tier2Resolver:
         owns_client = client is None
         client = client or httpx.Client(follow_redirects=True, timeout=10.0)
         gate = Politeness(config.politeness or PolitenessPolicy(), client, sleep=sleep)
+        # Browser-tier navigation retry (§2d, Phase 3.5): a transient navigation
+        # failure (a timeout, a dropped connection, a 5xx/429 on the response) is
+        # retried with the same policy/backoff as tier 1, instead of an uncaught
+        # Playwright error crashing the whole run. Same transport-agnostic
+        # classification — only the transport differs.
+        navigator = RetryingNavigator(config.retry or RetryPolicy(), sleep=sleep)
         result = RunResult(tier=self.tier)
         capture = config.capture
         want_har = bool(capture and capture.har)
@@ -565,6 +579,7 @@ class Tier2Resolver:
                             context,
                             config,
                             gate,
+                            navigator,
                             result,
                             console,
                             a11y,
@@ -615,6 +630,7 @@ class Tier2Resolver:
             if recorder is not None:
                 result.checkpoints = recorder.checkpoints
         finally:
+            result.retries = navigator.retries
             if owns_client:
                 client.close()
         return result
@@ -624,6 +640,7 @@ class Tier2Resolver:
         context: BrowserContext,
         config: ExtractionConfig,
         gate: Politeness,
+        navigator: RetryingNavigator,
         result: RunResult,
         console: ConsoleCollector | None = None,
         a11y: AccessibilityCollector | None = None,
@@ -649,7 +666,23 @@ class Tier2Resolver:
                 # page; a paginated crawl records several.
                 if recorder is not None:
                     recorder.mark("load")
-                response = page.goto(url, wait_until="networkidle")
+                # Navigate through the retrying navigator (§2d): a transient
+                # timeout / dropped connection / 5xx-429 is retried; a permanent
+                # or exhausted failure comes back as a FetchFailure to dead-letter.
+                # `partial` binds this iteration's page/url eagerly (no loop-var
+                # closure), and the navigator invokes it once per attempt.
+                response = navigator.navigate(
+                    functools.partial(page.goto, url, wait_until="networkidle"),
+                    url,
+                    transient_exceptions=(PlaywrightTimeoutError, PlaywrightError),
+                )
+                if isinstance(response, FetchFailure):
+                    # Navigation failed unrecoverably: record it and stop this
+                    # crawl — a page that never loaded has no next-link to follow
+                    # (§2d), the same terminal handling as tier 1. page.close()
+                    # still runs via the finally below.
+                    result.dead_letter.append(response)
+                    break
                 # Record the main document's response headers (§2c), if any.
                 if headers is not None and response is not None:
                     headers.capture(response.headers)

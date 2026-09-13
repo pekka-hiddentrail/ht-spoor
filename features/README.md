@@ -25,6 +25,7 @@ are authored when their phase begins, not up front.
 | `redaction.feature` | Data handling: secret redaction before shared output (sandbox registry later) | §2h | `spoor/security` | 2.5 |
 | `observability.feature` | Run summary / observability | §2d | `spoor/operational` | 1 |
 | `retry.feature` | Retry transient fetch failures with backoff (Retry-After honored), dead-letter the unrecoverable | §2d | `spoor/operational` | 3.5 |
+| `browser_retry.feature` | Retry transient browser navigations (same classification/backoff) so a failed `page.goto` is dead-lettered, not a crash | §2d | `spoor/operational`, `spoor/core` | 3.5 |
 | `anti_bot.feature` | Detect anti-bot/CAPTCHA challenges (reCAPTCHA/hCaptcha/Cloudflare) and fail loudly — detection, never bypass | §2d | `spoor/operational` | 3.5 |
 | `change_detection.feature` | Skip re-extracting pages unchanged since the last run (conditional `ETag`/`Last-Modified` request, content-hash fallback), opt-in | §2d | `spoor/operational` | 3.5 |
 | `resolution.feature` | Tier dispatcher / escalation, then tier-3 self-healing | §2 | `spoor/core` | 1 / 3 |
@@ -51,7 +52,13 @@ column). `retry.feature` (§2d) covers the tier-1 retry/error-classification
 slice: a transient fetch failure (timeout, dropped connection, 5xx, 429) is
 retried with backoff — honoring a server-sent `Retry-After` — while a permanent
 one (other 4xx) is not, and a URL that can't be fetched lands in a dead-letter
-log on the run summary instead of crashing the run. `anti_bot.feature` (§2d)
+log on the run summary instead of crashing the run. `browser_retry.feature` (§2d)
+covers the same reliability at the browser tier: a `page.goto` that meets a
+transient failure (a 5xx/429, or a navigation timeout / dropped connection) is
+retried with the same policy and backoff, and a page it ultimately cannot load is
+dead-lettered rather than crashing the run on an uncaught Playwright error — the
+scenarios drive a real browser against a scripted flaky loopback server.
+`anti_bot.feature` (§2d)
 covers challenge detection: a fetched page matching a known anti-bot fingerprint
 (a reCAPTCHA/hCaptcha widget, a Cloudflare interstitial) is flagged loudly on the
 run summary rather than scraped as data — detection only, never a bypass attempt.

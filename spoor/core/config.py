@@ -60,7 +60,7 @@ class PolitenessPolicy(BaseModel):
 
 
 class RetryPolicy(BaseModel):
-    """How the tier-1 fetch retries transient failures (ROADMAP.md §2d, Phase 3.5).
+    """How a run retries transient failures (ROADMAP.md §2d, Phase 3.5).
 
     A flaky server's 503, a dropped connection, or a timeout is often momentary,
     so a bounded retry is worth it; a 404 (and other non-429 4xx) is a settled
@@ -71,7 +71,7 @@ class RetryPolicy(BaseModel):
     / 429 in place of that backoff — the item the `PolitenessPolicy` docstring
     deferred until a retry mechanism existed. Omitted means the defaults below.
     Nothing here is tier- or site-specific (§0): it is HTTP-category classification
-    driving the sequential tier-1 fetch.
+    that drives both the tier-1 httpx fetch and the browser tier's navigation.
     """
 
     model_config = ConfigDict(extra="forbid")
