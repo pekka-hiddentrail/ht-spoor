@@ -111,11 +111,14 @@ listing, a field whose selector breaks *inside* the rows is healed **per row**,
 scoring the candidates within each row against a text-agnostic fingerprint (a
 listing's rows share structure but differ in text) — and, because healing only
 ever matches a fingerprint a *prior* run recorded, a row that genuinely lacks an
-optional field is left null rather than filled in from its sibling rows. Healing
-the row-container (`item`) selector itself when a row breaks, cross-run
-re-anchoring, and the perceptual-hash-on-screenshot component are the next Phase-3
-slices. Default-on capture and the MCP/API serving layer are still ahead on the
-roadmap.
+optional field is left null rather than filled in from its sibling rows. And a
+confident heal **re-anchors**: it rewrites the stored fingerprint to the healed
+element's current shape, so successive redesigns each heal from the most recent
+shape rather than only the original — drift is absorbed one healable step at a
+time (an uncertain match never re-anchors). Healing the row-container (`item`)
+selector itself when a row breaks and the perceptual-hash-on-screenshot component
+are the next Phase-3 slices. Default-on capture and the MCP/API serving layer are
+still ahead on the roadmap.
 
 ## Contributing
 

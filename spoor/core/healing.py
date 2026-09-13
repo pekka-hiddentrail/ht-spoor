@@ -28,10 +28,12 @@ from the `HealResult` (§2), not a separately bolted-on log.
 every target. This module is the pure scoring engine over static DOM (parsel).
 It is wired into live runs by `self_healing.py` (the run-scoped `Healer`) and
 `fingerprint_cache.py` (cross-run persistence), and reached from the dispatcher
-in `extract.py`, for both single-record and item-mode (listing) configs. Still
-follow-on: healing the `item` selector itself when a row container breaks,
-cross-run re-anchoring, and the perceptual-hash-on-screenshot component (§2 tier
-table) — see the §2 tier-3 decision notes. The merge-blocking ≥95% mutation
+in `extract.py`, for both single-record and item-mode (listing) configs, and a
+confident heal re-anchors the stored fingerprint to the healed shape so drift
+across successive redesigns is absorbed one step at a time. Still follow-on:
+healing the `item` selector itself when a row container breaks, and the
+perceptual-hash-on-screenshot component (§2 tier table) — see the §2 tier-3
+decision notes. The merge-blocking ≥95% mutation
 corpus that guards this math lives in tests/ under `pytest -m mutation` (§5.3).
 """
 

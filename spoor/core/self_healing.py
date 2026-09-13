@@ -14,7 +14,10 @@ failure"):
   remembered, score the page's candidates and return the winning element *only
   when confident*. A best candidate below the threshold is recorded as an
   uncertain match and `None` is returned, so the field stays null rather than
-  being silently filled with a guess (§2, reliability-first).
+  being silently filled with a guess (§2, reliability-first). A confident heal
+  also *re-anchors* the stored fingerprint to the healed element's current shape,
+  so successive redesigns each heal from the most recent shape rather than only
+  the first; an uncertain match never re-anchors.
 
 Every heal attempt that finds a fingerprint and a candidate records a `HealEvent`
 carrying the field name and the winning confidence — never the matched text
@@ -88,8 +91,17 @@ class Healer:
         field present in one row from being fabricated onto a sibling row that
         legitimately lacks it: the sibling's absent selector finds no prior print
         of its own to heal from within this run (§2, §1).
+
+        On a **confident** heal the stored fingerprint is *re-anchored* to the
+        healed element's current shape, so a later run heals from the most recent
+        shape rather than only the first — markup drift is absorbed one healable
+        step at a time. An uncertain match never re-anchors: it would overwrite the
+        good anchor with a guess. The re-anchor is a `put` (visible only to a future
+        run's `get_persisted` snapshot), so it does not change what other fields or
+        rows heal against within this same run.
         """
-        stored = self.cache.get_persisted(self._key(field_name, item_selector))
+        key = self._key(field_name, item_selector)
+        stored = self.cache.get_persisted(key)
         if stored is None:
             return None
         candidates = list(root.css("*"))
@@ -99,7 +111,12 @@ class Healer:
         self.events.append(
             HealEvent(field=field_name, confidence=result.score, used=result.confident)
         )
-        return result.element if result.confident else None
+        if not result.confident:
+            return None
+        self.cache.put(
+            key, fingerprint(result.element, include_text=item_selector is None)
+        )
+        return result.element
 
     @staticmethod
     def _key(field_name: str, item_selector: str | None) -> str:

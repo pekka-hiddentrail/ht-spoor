@@ -14,6 +14,7 @@ from pathlib import Path
 from parsel import Selector
 
 from spoor.core.fingerprint_cache import FingerprintCache
+from spoor.core.healing import fingerprint
 from spoor.core.self_healing import Healer
 
 _ORIGINAL = (
@@ -121,6 +122,31 @@ def test_persist_writes_learned_fingerprints_for_a_later_run(
     # A fresh Healer over the same cache file can heal from the persisted print.
     second = Healer(FingerprintCache(path))
     assert second.attempt("name", Selector(text=_CLASS_RENAMED)) is not None
+
+
+# --- Cross-run re-anchoring -------------------------------------------------
+
+
+def test_a_confident_heal_re_anchors_the_stored_fingerprint(tmp_path: Path) -> None:
+    healer = _healer_having_remembered_original(tmp_path)
+    original = healer.cache.get("name")
+    healed = healer.attempt("name", Selector(text=_CLASS_RENAMED))
+    assert healed is not None
+    # The stored fingerprint is now the healed element's current shape, so a later
+    # run heals from it rather than the (now outdated) original.
+    assert healer.cache.get("name") == fingerprint(healed)
+    assert healer.cache.get("name") != original
+    # ...but the frozen prior-run snapshot is untouched, so anything else healing
+    # within this same run still scores against the original shape.
+    assert healer.cache.get_persisted("name") == original
+
+
+def test_an_uncertain_heal_does_not_re_anchor(tmp_path: Path) -> None:
+    healer = _healer_having_remembered_original(tmp_path)
+    original = healer.cache.get("name")
+    assert healer.attempt("name", Selector(text=_UNRELATED)) is None
+    # An uncertain match must never overwrite the good anchor with a guess.
+    assert healer.cache.get("name") == original
 
 
 # --- Item mode (listing) ----------------------------------------------------
