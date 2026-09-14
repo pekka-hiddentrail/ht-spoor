@@ -36,6 +36,11 @@ dependencies = [
     "playwright>=1.40",
     "pillow>=10.0",
     "numpy>=1.26",
+    # §2e slice 6 renders the exploration graph into a self-contained static wiki
+    # (one page per state/transition + a Mermaid overview) directly from Jinja2
+    # templates — chosen over reusing a full site generator (MkDocs/Docusaurus);
+    # see the §2e slice-6a decision note.
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]

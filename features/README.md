@@ -47,6 +47,7 @@ are authored when their phase begins, not up front.
 | `exploration_browser.feature` | Exploration in a real browser: the `spoor explore` command drives the whole stack against a live site via a headless-Chromium driver | §2e | `spoor/exploration`, CLI | 5 |
 | `exploration_signals.feature` | Exploration per-transition signal capture: a free-signal bundle per state and a before/after diff (a11y, console, storage, network, screenshot) per transition | §2e | `spoor/exploration` | 5 |
 | `exploration_signals_live.feature` | Live per-transition signal capture: the real driver reads console, storage, network, a11y, and a screenshot hash from an actual Chromium page | §2e | `spoor/exploration` | 5 |
+| `exploration_wiki.feature` | Exploration wiki generation: render the state-action graph into a browsable static HTML site (index + Mermaid overview, one page per state/transition), with captured values redacted before rendering | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -325,6 +326,25 @@ against a signal-rich loopback fixture (a page that logs, writes storage, fetche
 and navigates to a visually-distinct second page) and assert both the captured
 bundle and a real click's diff. The signals attach to the graph on every `spoor
 explore` run; rendering them per node and edge is the wiki (slice 6).
+
+`exploration_wiki.feature` (§2e) is **slice 6a** — the pure wiki renderer that turns
+the explored graph into §2e's real product: a browsable static site. `spoor/exploration/wiki.py`
+renders an `ExplorationGraph` into a set of HTML pages — an index with run counts and
+a **Mermaid** graph overview, one page per state showing the free-signal bundle
+captured there (a11y node count, console messages, storage keys, network requests,
+screenshot hash), and one page per transition showing what its action changed (the
+before/after diff). It is a self-contained Jinja2 renderer chosen over reusing a full
+site generator like MkDocs/Docusaurus (see the §2e slice-6a decision note); Mermaid is
+loaded from a CDN by the index, so the pages themselves read offline and only the
+overview *diagram* needs the network. Screenshots are hash-only for now — a transition
+reports whether the screenshot *changed*, no images are embedded. Because the wiki is a
+shared-output surface, every captured value it renders is passed through the §2h
+redaction primitive before rendering, and every template autoescapes, so an injected
+`<script>` becomes inert text; the scenarios pin the structure (index + a page per
+state and per transition, links, overview), each page's bundle/diff, and that a
+console-logged bearer token never appears raw. `build_pages(graph, target)` is pure
+(no disk), with `render_wiki(...)` the thin writer around it. Wiring it to
+`spoor explore --wiki <dir>` and a live-archetype reliability test is slice 6b.
 `testgen.feature` (§2g) is listed in the table
 above ahead of implementation; its feature file is authored when its phase begins
 (see the Phase column).
