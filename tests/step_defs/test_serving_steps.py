@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from _serving_fixtures import EXPLORE_SECRET, explored_graph
 from fastapi.testclient import TestClient
 from pytest_bdd import given, parsers, scenarios, then, when
 from starlette.routing import Route
@@ -21,7 +22,11 @@ from spoor.api_discovery.graphql import DiscoveredGraphQL
 from spoor.api_discovery.synthesis import SynthesizedEndpoint, SynthesizedSpec
 from spoor.security import storage
 from spoor.serving.api import create_app
-from spoor.serving.store import MapStore, shareable_api_surface
+from spoor.serving.store import (
+    MapStore,
+    shareable_api_surface,
+    shareable_exploration_map,
+)
 
 # Marker segments planted in the local-only parts of the surface; the served
 # response must never contain them (§2h counts-only for synthesized paths).
@@ -118,6 +123,19 @@ def record_api_surface(context: dict[str, Any], url: str) -> None:
     )
 
 
+@given(parsers.parse('the map records an explored graph for "{url}"'))
+def record_explored_graph(context: dict[str, Any], url: str) -> None:
+    # Populate the store with the §2h-safe projection of an exploration graph,
+    # exactly as the CLI's explore run will — proving the serving surface returns it.
+    MapStore().record(
+        url,
+        [{"title": "App"}],
+        tier=2,
+        exploration=shareable_exploration_map(explored_graph()),
+        captured_at=datetime.fromisoformat("2020-01-01T00:00:00Z"),
+    )
+
+
 # --- When ----------------------------------------------------------------
 
 
@@ -188,6 +206,42 @@ def surface_hides_paths(context: dict[str, Any]) -> None:
     body = context["response"].text
     assert _SECRET_PATH_MARKER not in body
     assert _LOCAL_DOC_MARKER not in body
+
+
+@then(
+    parsers.parse(
+        "the exploration graph has {states:d} states, {transitions:d} transition "
+        "and {skipped:d} skipped action"
+    )
+)
+def exploration_counts(
+    context: dict[str, Any], states: int, transitions: int, skipped: int
+) -> None:
+    graph = context["response"].json()["exploration"]
+    assert graph["counts"] == {
+        "states": states,
+        "transitions": transitions,
+        "skipped": skipped,
+    }
+
+
+@then(
+    parsers.parse(
+        'the exploration graph has a transition whose action name is "{name}"'
+    )
+)
+def exploration_has_transition(context: dict[str, Any], name: str) -> None:
+    graph = context["response"].json()["exploration"]
+    assert any(t["action"]["name"] == name for t in graph["transitions"])
+
+
+@then("the served exploration graph exposes no raw secret")
+def exploration_redacted(context: dict[str, Any]) -> None:
+    # The whole served payload, as text, must not carry the raw token — and must
+    # show the placeholder, proving it went through the same guard as records.
+    body = context["response"].text
+    assert EXPLORE_SECRET not in body
+    assert "[REDACTED]" in body
 
 
 @then("every serving route is read-only")

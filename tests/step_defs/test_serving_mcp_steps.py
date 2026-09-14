@@ -15,12 +15,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from _serving_fixtures import EXPLORE_SECRET, explored_graph
 from mcp.server.mcpserver.exceptions import ToolError
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from spoor.security import storage
 from spoor.serving.mcp_server import create_mcp_server
-from spoor.serving.store import MapStore
+from spoor.serving.store import MapStore, shareable_exploration_map
 
 scenarios("serving_mcp.feature")
 
@@ -83,6 +84,19 @@ def mcp_allows_recheck(context: dict[str, Any]) -> None:
         )
 
     context["server"] = create_mcp_server(store, recheck=fake_recheck)
+
+
+@given(parsers.parse('an explored graph is mapped for "{url}"'))
+def map_explored_graph(context: dict[str, Any], url: str) -> None:
+    # Record the projected exploration graph after the server was built; the store
+    # reads from disk per call, so the same server serves the freshly-added entry.
+    MapStore().record(
+        url,
+        [{"title": "App"}],
+        tier=2,
+        exploration=shareable_exploration_map(explored_graph()),
+        captured_at=datetime.fromisoformat("2020-01-01T00:00:00Z"),
+    )
 
 
 # --- When ----------------------------------------------------------------
@@ -170,3 +184,26 @@ def call_failed(context: dict[str, Any]) -> None:
 @then(parsers.parse('the MCP domains include "{domain}"'))
 def domains_include(context: dict[str, Any], domain: str) -> None:
     assert domain in context["result"]["domains"]
+
+
+@then(
+    parsers.parse(
+        "the MCP result's exploration graph has {states:d} states "
+        "and {transitions:d} transition"
+    )
+)
+def mcp_exploration_counts(
+    context: dict[str, Any], states: int, transitions: int
+) -> None:
+    counts = context["result"]["exploration"]["counts"]
+    assert counts["states"] == states
+    assert counts["transitions"] == transitions
+
+
+@then("the MCP result's exploration graph exposes no raw secret")
+def mcp_exploration_redacted(context: dict[str, Any]) -> None:
+    # The MCP surface shares `map_view`, so the same redaction guard applies; the
+    # raw token must not survive into the tool result and the placeholder must.
+    body = json.dumps(context["result"])
+    assert EXPLORE_SECRET not in body
+    assert "[REDACTED]" in body

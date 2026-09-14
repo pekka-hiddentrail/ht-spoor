@@ -12,6 +12,10 @@
 # Sub-slice 6b then rides on the same live run to prove the `--wiki` flag: the mapped
 # graph is rendered to a browsable wiki on disk (the slice-6a renderer), and the
 # scenario asserts the wiki is complete and its overview counts match the run.
+#
+# The last scenario proves the §2f producer wiring: the same live run also persists
+# its state-action graph into the local map, so the read-only serving layer can
+# answer "what happens when I click X" for the URL later without re-exploring.
 
 Feature: Exploring a live site with the spoor explore command
   As an operator pointing Spoor at a target with no config
@@ -36,3 +40,11 @@ Feature: Exploring a live site with the spoor explore command
     Then it reports where the wiki was written
     And the wiki has an index page and a page for each state and transition
     And the wiki index reports 2 states and 2 transitions
+
+  Scenario: The mapped graph is remembered so the serving layer can answer for it
+    # The same live run feeds the read-only map the serving layer answers from:
+    # after exploring, the target's state-action graph is stored and servable.
+    Given a live fixture site starting at "explore_home.html"
+    When I run spoor explore against it
+    Then the target's exploration graph is stored for serving
+    And the stored exploration graph reports 2 states and 2 transitions
