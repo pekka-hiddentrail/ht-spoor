@@ -1,0 +1,18 @@
+# ROADMAP.md §5.1 archetype-bench config — PrestaShop, the server-rendered storefront.
+#
+# Extracts the product listing from a live, self-hosted PrestaShop. Unlike the two
+# SPA archetypes (Juice Shop, Sauce Demo), PrestaShop renders its catalog
+# server-side, so this listing resolves under **tier 1** (the plain static fetch) —
+# no browser escalation needed. That is exactly the contrast this archetype adds to
+# the bench: the generic tiers must handle an ordinary server-rendered page as
+# gracefully as a client-rendered SPA, with the same unmodified config shape.
+#
+# Site-specific selectors are fine here: this is a fixture config, not core code
+# (§0 applies to spoor/core/, not to configs pointed at a target). The default
+# target port matches docker-compose.yml's default (8080); override the base if the
+# bench runs on a different host port (PRESTASHOP_PORT).
+target: http://127.0.0.1:8080/
+item: ".product-miniature"
+fields:
+  name: { selector: ".product-title" }
+  price: { selector: ".price", type: number }
