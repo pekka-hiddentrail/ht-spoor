@@ -54,6 +54,7 @@ are authored when their phase begins, not up front.
 | `exploration_settling_live.feature` | Settling + reset fidelity, live driver: reset clears cookies+storage for a true first visit, reads wait for real DOM quiescence, a never-quiet page is flagged unsettled not fatal (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
 | `exploration_recovery.feature` | Layer recovery: deal with a blocking layer as its own state and interact past it, safety-gated and progress-bounded, flagging when unresolved (sub-slice 7c) | §2e | `spoor/exploration` | 5 |
 | `exploration_replay.feature` | Replay resilience: verify each reset-and-replay against the state ids it first reached and retry a transient bad render, flagging a persistently unreachable or divergent step honestly (sub-slice 7d) | §2e | `spoor/exploration` | 5 |
+| `exploration_settling_network.feature` | Settling also waits for the network: treat the page as busy while a request is in flight so a late response can't render a different page after a read, bounded so a never-ending request is flagged unsettled not hung (sub-slice 7e) | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -463,6 +464,28 @@ The pure scenarios pin a transient miss retried, a persistent miss flagged unrea
 divergence flagged, and a transient divergence retried; the live scenario drives the real
 stack against a scripted server whose entry page is degraded on exactly one reset and
 asserts the page behind it is still mapped. Nothing is site-specific (§0).
+
+`exploration_settling_network.feature` (§2e) is **sub-slice 7e** — settling also waits
+for the network. Running exploration against the server-rendered PrestaShop bench (§5.1)
+exposed a gap 7b's DOM-only quiescence left: on a listing page a hydration lull longer
+than the quiet window opens while an AJAX widget and lazy-loaded images are still in
+flight, so DOM-quiet settles *too early* and a late burst of network responses then
+mutates the DOM — two captures of the same screen hash to different state ids and 7d
+flags a spurious divergence, skipping the action. The measured cost was 6 states, 32
+transitions, and 17 skips, every skip a divergence on an ever-present menu link. 7e
+widens the quiet signal: `wait_for_quiescence` gained an optional `busy` predicate, and
+the page counts as quiet only while `busy()` is false *and* mutations have held steady
+for the window, so a late response that will still mutate the DOM can't be settled past.
+The live driver counts in-flight requests (up on `request`, down on
+`requestfinished`/`requestfailed`, floored at zero and zeroed before each awaited
+navigation/click) and passes `busy=lambda: self._inflight > 0`. The bound is unchanged
+and symmetric with 7b: a request that never completes flags the page unsettled at the
+timeout, never hangs. The pure scenarios pin an in-flight request holding the page
+unsettled until it completes and a never-completing request reported unsettled at the
+timeout; the live scenario serves a page that fetches a fragment the server delays past
+the quiet window and asserts the fetched button is discovered (DOM-quiet alone would miss
+it). Re-running against PrestaShop with 7e gave 7 states, 40 transitions, and 0 skips —
+the 17 divergences gone and coverage up. Nothing is site-specific (§0).
 
 `testgen.feature` (§2g) is
 listed in the table
