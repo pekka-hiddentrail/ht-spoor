@@ -27,6 +27,20 @@ reachable more than once. Recovery is bounded by the finite set of the layer's a
 destructive action outside a sandbox stays blocked), and flags what it can't clear with
 a real reason — a covered element as blocked, a genuinely missing one as not located —
 never a mute skip.
+
+Replay resilience (§2e sub-slice 7d) hardens reset-and-replay against the flaky,
+nondeterministic renders a real SPA serves under load. Reset-and-replay assumes the
+target is a deterministic function of the action sequence, but a reset can land on a
+degraded render where a step found on the first visit is gone, or the replay can drift
+onto a different state than the path first mapped. So each reset-and-replay is
+*verified* (the post-reset page must be the start state, and every replayed step must
+land on the state id it first reached) and *retried* a bounded number of times: a
+transient bad render usually clears on the next reset, so coverage that all-or-nothing
+replay used to lose is regained. When retries are exhausted the action is flagged with a
+reason that tells a step that stayed unreachable apart from a replay that *diverged* to
+another state — never a mute skip, and attributed to the replay step that actually
+failed, not the leaf. A stable blocker (recovery's concern above) is reported at once,
+not retried: there is nothing transient to wait out.
 """
 
 from __future__ import annotations
@@ -49,6 +63,13 @@ from spoor.exploration.state import state_id
 # cap is a defensive safety net against a pathological driver that reports an unbounded
 # stream of distinct clearing actions, guaranteeing recovery can never spin forever.
 _MAX_RECOVERY_STEPS = 50
+
+# Replay resilience (§2e, 7d): how many times a reset-and-replay is attempted before an
+# action behind it is flagged. A transient degraded render (an SPA reload landing on a
+# half-rendered or error fallback) almost always clears within one or two fresh resets,
+# so a small bound regains the coverage all-or-nothing replay lost without letting a
+# genuinely nondeterministic path spin: after this many attempts the failure is flagged.
+_MAX_REPLAY_ATTEMPTS = 3
 
 
 class ActionError(Exception):
@@ -173,6 +194,37 @@ def _describe(covering: CoveringElement | None) -> str:
     return covering.role or "a layer"
 
 
+@dataclass(frozen=True)
+class _PathStep:
+    """One replayed step: the action fired and the state id it first reached (§2e, 7d).
+
+    Reset-and-replay carries the path as these steps so replay can be *verified*: after
+    firing `action`, the current state must be `to_state` — the id it landed on when the
+    path was first walked. A mismatch is a replay divergence, not a step to build on.
+    """
+
+    action: ActionableElement
+    to_state: str
+
+
+class _ReplayFailure(Exception):
+    """One reset-and-replay attempt failed; `navigate_and_reach` retries, then reports.
+
+    Internal to the explorer: it carries an already-formatted `detail` (a step that
+    could not be reached, or a divergence to a different state) so the retry loop can
+    turn the last failure into an honest skip reason that records how many attempts
+    it made.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+    def reason(self, attempts: int) -> str:
+        """This failure's skip reason, noting the bounded retries that were spent."""
+        return f"{self.detail} (after {attempts} replay attempts)"
+
+
 def explore(
     driver: BrowserDriver,
     *,
@@ -272,26 +324,74 @@ def explore(
             covering = verdict.covering or covering
         return _Reachability(_Reach.BLOCKED, blocker=_describe(covering))
 
-    def navigate(path: Sequence[ActionableElement]) -> None:
-        """Return to the state reached by `path`, via reset and replay.
+    def replay_once(path: Sequence[_PathStep], root_id: str) -> None:
+        """One reset-and-replay attempt, *verified* against the ids the path first hit.
 
-        Each replayed action is made reachable first (7c): reset restores the covering
-        layers a stateful target shows on a fresh visit, so replay must clear them again
-        to fire the same path — otherwise every state behind an overlay would be lost on
-        the second visit. A step that can't be reached raises `ActionError`, which the
-        caller records as a skip for the action it was replaying toward.
+        Resets, checks the fresh page is the start state, then replays each step: makes
+        it reachable (7c clears any covering layer that reset restored), fires it, and
+        verifies the landed state id matches the one the step first reached. A step
+        that can't be reached or a landing that diverges raises `_ReplayFailure`; the
+        retry in `navigate_and_reach` decides whether a fresh attempt clears a transient
+        bad render or the failure is real. Fidelity matters because firing the target
+        on a divergent state would record a false edge attributed to the wrong `from`
+        state.
         """
         driver.reset()
-        for action in path:
-            outcome = reach(action)
-            if outcome.status is not _Reach.PROCEED:
-                raise ActionError(
-                    f"replay could not reach {action.name!r}: "
-                    f"{outcome.blocker or outcome.status.value}"
+        if state_id(driver.state_html()) != root_id:
+            raise _ReplayFailure(
+                "replay diverged: reset did not return to the start state"
+            )
+        for step in path:
+            outcome = reach(step.action)
+            if outcome.status is _Reach.NOT_LOCATED:
+                raise _ReplayFailure(
+                    f"replay could not reach {step.action.name!r}: not located"
                 )
-            driver.perform(action)
+            if outcome.status is _Reach.BLOCKED:
+                raise _ReplayFailure(
+                    f"replay could not reach {step.action.name!r}: "
+                    f"blocked by {outcome.blocker}"
+                )
+            driver.perform(step.action)
+            if state_id(driver.state_html()) != step.to_state:
+                raise _ReplayFailure(
+                    f"replay diverged: firing {step.action.name!r} reached a "
+                    "different state than when the path was first mapped"
+                )
 
-    def walk(state: str, path: list[ActionableElement]) -> None:
+    def navigate_and_reach(
+        path: Sequence[_PathStep], action: ActionableElement, root_id: str
+    ) -> _Reachability:
+        """Replay `path` and make `action` reachable, retrying a transient bad render.
+
+        Runs a verified reset-and-replay of `path` then reaches `action`, up to
+        `_MAX_REPLAY_ATTEMPTS` times. A step that stayed unreachable, a divergence, or a
+        target that could not be located is retried — a degraded reset render usually
+        clears on the next attempt (§2e, 7d). PROCEED returns with the driver positioned
+        at the path's end and `action` reachable (its covering layer cleared, its
+        `recovered_via` carried through). A stable BLOCKED layer is returned at once,
+        not retried: there is nothing transient to wait out. When the attempts are
+        spent the last failure is raised as an `ActionError`, which the caller records
+        as a skip for `action`, naming the replay step that failed, not the leaf.
+        """
+        last: _ReplayFailure | None = None
+        for _ in range(_MAX_REPLAY_ATTEMPTS):
+            try:
+                replay_once(path, root_id)
+            except _ReplayFailure as failure:
+                last = failure
+                continue
+            outcome = reach(action)
+            if outcome.status is _Reach.NOT_LOCATED:
+                last = _ReplayFailure(
+                    f"{action.role} {action.name!r} not located after replay"
+                )
+                continue
+            return outcome  # PROCEED (reachable) or BLOCKED (stable — do not retry)
+        assert last is not None  # the loop ran at least once, so a failure was recorded
+        raise ActionError(last.reason(_MAX_REPLAY_ATTEMPTS))
+
+    def walk(state: str, path: list[_PathStep], root_id: str) -> None:
         # Snapshot the action list: a deeper call may add states, and we iterate the
         # actions discovered for this state when it was first seen.
         for action in list(graph.node(state).actions):
@@ -303,25 +403,18 @@ def explore(
             if not decision.allowed:
                 graph.record_skip(state, action, decision.reason)
                 continue
+            # Replay to `state` and make the action reachable, retrying a transient bad
+            # render and clearing a recoverable layer (7c/7d). A step that stayed
+            # unreachable or a replay that diverged is flagged honestly (naming the step
+            # that failed); a covered action nothing can clear is flagged as blocked —
+            # never a mute skip.
             try:
-                navigate(path)
+                outcome = navigate_and_reach(path, action, root_id)
             except ActionError as exc:
-                # A replay step along the way couldn't be reached (or recovered):
-                # record this action honestly and carry on — the next iteration resets
-                # and replays afresh, so one dead branch never aborts the whole map.
+                # Replay could not be made faithful within the retry bound: record this
+                # action honestly and carry on — the next iteration resets and replays
+                # afresh, so one dead branch never aborts the whole map.
                 graph.record_skip(state, action, f"could not be performed: {exc}")
-                continue
-            # Make the action reachable, clearing a recoverable layer if one covers it
-            # (7c). A covered action nothing can clear is flagged as blocked, and a
-            # genuinely missing one as not located — never a mute skip.
-            outcome = reach(action)
-            if outcome.status is _Reach.NOT_LOCATED:
-                graph.record_skip(
-                    state,
-                    action,
-                    f"not located: {action.role} {action.name!r} "
-                    "is not present after replay",
-                )
                 continue
             if outcome.status is _Reach.BLOCKED:
                 graph.record_skip(
@@ -352,9 +445,9 @@ def explore(
             # Only recurse into a genuinely new state; a transition back to a known
             # state is recorded but not re-explored — that is what keeps this finite.
             if first_seen:
-                walk(to_state, path + [action])
+                walk(to_state, path + [_PathStep(action, to_state)], root_id)
 
-    navigate([])
+    driver.reset()
     root, _ = capture()
-    walk(root, [])
+    walk(root, [], root)
     return graph
