@@ -401,7 +401,8 @@ document's `elementFromPoint` reach. Nothing is site-specific (§0). Settling (7
 and layer recovery (7c, `exploration_recovery.feature`) are the following sub-slices.
 
 `exploration_settling.feature` + `exploration_settling_live.feature` (§2e) are
-**sub-slice 7b** — state settling and reset fidelity. The same diagnostic showed 7a's
+**sub-slice 7b** — state settling and reset fidelity, specifically the **DOM-quiescence
+half** of the settling rule. The same diagnostic showed 7a's
 robust actuation was necessary but not sufficient: the map stayed shallow because the
 page discovered was not the page acted on. Two coupled defects. First, **no settling** —
 discovery and actuation happened at different rendering instants, so on an asynchronously
@@ -419,11 +420,14 @@ a persistent browser context carried cookies and storage across navigations, so 
 landed on a returning-visitor render. 7b's `reset` clears cookies and both web-storage
 areas before navigating (one context kept; only per-origin state wiped) and waits on
 quiescence instead of `networkidle` (removing a crash when that signal never arrived), so
-every reset is a true first visit. The live feature pins all three behaviours against
-loopback fixtures (reset restores first-visit content, deferred content is discovered, a
-forever-mutating page is flagged unsettled not fatal); the browser-free driver tests pin
-the post-click settle poll and the cookie/storage clear under a fake clock. Nothing is
-site-specific (§0): one quiescence rule and one reset for every target.
+every reset is a true first visit. The live feature pins all three 7b behaviours against
+loopback fixtures (reset restores first-visit content, a timer-delayed DOM mutation is
+discovered, and a forever-mutating page is flagged unsettled not fatal); the browser-free
+driver tests pin the post-click settle poll and the cookie/storage clear under a fake
+clock. Sub-slice 7e below layers the **network-in-flight** half on top of this same wait,
+covering pages whose late render is driven by a request that is still outstanding even
+while the DOM is briefly quiet. Nothing is site-specific (§0): one quiescence rule and
+one reset for every target.
 
 `exploration_recovery.feature` (§2e) is **sub-slice 7c** — layer recovery. The same
 diagnostic that motivated 7a/7b showed the dominant coverage limiter was neither timing
