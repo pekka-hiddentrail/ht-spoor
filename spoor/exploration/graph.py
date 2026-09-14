@@ -40,12 +40,19 @@ class Transition:
 
     `signals` is the before/after diff of what the action changed across the free
     signals (§2e sub-slice 5c); `None` if signals weren't captured for this run.
+
+    `recovered_via` records that the action was only reachable after clearing a covering
+    layer (§2e sub-slice 7c): `None` when the action actuated directly, or a short
+    human-readable description of the layer that was cleared (e.g. "button 'Accept'")
+    when recovery interacted past a blocker to reach it. It lets the map show honestly
+    that an edge was behind an overlay, not on the surface.
     """
 
     from_state: str
     action: ActionableElement
     to_state: str
     signals: TransitionSignals | None = None
+    recovered_via: str | None = None
 
 
 @dataclass(frozen=True)
@@ -95,8 +102,11 @@ class ExplorationGraph:
         action: ActionableElement,
         to_state: str,
         signals: TransitionSignals | None = None,
+        recovered_via: str | None = None,
     ) -> None:
-        self._transitions.append(Transition(from_state, action, to_state, signals))
+        self._transitions.append(
+            Transition(from_state, action, to_state, signals, recovered_via)
+        )
 
     def record_skip(
         self, from_state: str, action: ActionableElement, reason: str

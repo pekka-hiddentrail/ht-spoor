@@ -52,7 +52,7 @@ are authored when their phase begins, not up front.
 | `exploration_actuation_live.feature` | Robust actuation, live driver: relocate via the CDP tree and click by a verified coordinate; detect a covered element without mis-clicking (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_settling.feature` | State settling, pure quiescence policy: settle when DOM mutations go quiet for a window, report unsettled at a bounded timeout — under a fake clock (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
 | `exploration_settling_live.feature` | Settling + reset fidelity, live driver: reset clears cookies+storage for a true first visit, reads wait for real DOM quiescence, a never-quiet page is flagged unsettled not fatal (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
-| `exploration_recovery.feature` | Layer recovery: deal with a blocking layer as its own state and interact past it, safety-gated and progress-bounded, flagging when unresolved (sub-slice 7c — contract authored ahead of implementation) | §2e | `spoor/exploration` | 5 |
+| `exploration_recovery.feature` | Layer recovery: deal with a blocking layer as its own state and interact past it, safety-gated and progress-bounded, flagging when unresolved (sub-slice 7c) | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -422,6 +422,27 @@ loopback fixtures (reset restores first-visit content, deferred content is disco
 forever-mutating page is flagged unsettled not fatal); the browser-free driver tests pin
 the post-click settle poll and the cookie/storage clear under a fake clock. Nothing is
 site-specific (§0): one quiescence rule and one reset for every target.
+
+`exploration_recovery.feature` (§2e) is **sub-slice 7c** — layer recovery. The same
+diagnostic that motivated 7a/7b showed the dominant coverage limiter was neither timing
+nor relocation but *interception*: a welcome dialog or consent overlay sits over every
+click, so the map collapses to the first screen. 7c teaches the explorer to treat a
+blocking layer as its own state and interact past it. A new `BrowserDriver.probe` returns
+the actuation verdict without clicking (in `PlaywrightDriver`, sharing one `_actuation`
+computation with `perform`, so probe and click can't diverge); when `reach` probes
+COVERED, it fires the layer's own on-top actions — the discovered actions that themselves
+probe ACTUATE, gate-permitted, each tried once — re-probing the target until it clears,
+advances, or uncovers, bounded by the finite action set so it never loops. Recovery runs
+inside replay too, so a covered state stays reachable on every reset-and-replay. The §2e
+non-negotiable holds: a layer whose only exit is destructive stays blocked outside a
+sandbox (flagged `blocked by an unresolved layer`, the destructive action recorded as a
+skip), and a genuinely missing element is flagged `not located`, never mistaken for a
+blocker. Recovered edges are marked (`Transition.recovered_via`) and shown in the wiki.
+The pure scenarios pin blocker-cleared, multi-step, destructive-only-exit, unresolvable,
+and missing-vs-covered; the live scenario maps `fixtures/static/explore_gated.html` (a
+full-viewport consent overlay) and asserts the site behind it is reached with ≥1 action
+recovered. Coordinate-level brute-forcing of a layer with no discoverable clearing action
+is deferred — such a layer is flagged blocked, not forced. Nothing is site-specific (§0).
 
 `testgen.feature` (§2g) is
 listed in the table

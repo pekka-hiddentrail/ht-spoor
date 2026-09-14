@@ -14,19 +14,41 @@ reach a state again, the driver is reset to the start and the path of actions th
 first reached it is replayed. That needs no back-button assumption from the target and
 works for any driver whose actions are deterministic. Nothing here is site-specific
 (§0): the same loop maps every target.
+
+Layer recovery (§2e sub-slice 7c) is what keeps a site guarded by a welcome or consent
+overlay from collapsing to its first screen. When an action can't be actuated because a
+layer sits over its click point (`ElementCovered`), the explorer treats the layer as its
+own state and interacts *past* it — firing the layer's own on-top actions (discovered
+and safety-gated the same generic way as everything else) until the target is uncovered,
+then firing it. Because reset restores the overlays a stateful target shows a fresh
+visitor, replay clears them again on every visit, so states behind the overlay are
+reachable more than once. Recovery is bounded by the finite set of the layer's actions
+(so it never loops), honours the §2e non-negotiable (a layer whose only exit is a
+destructive action outside a sandbox stays blocked), and flags what it can't clear with
+a real reason — a covered element as blocked, a genuinely missing one as not located —
+never a mute skip.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from enum import Enum
 from typing import Protocol
 
+from spoor.exploration.actuation import ActuationVerdict, CoveringElement, Verdict
 from spoor.exploration.capture import StateSignals, diff_signals
 from spoor.exploration.control import RunController
 from spoor.exploration.discovery import ActionableElement, discover_actions
 from spoor.exploration.graph import ExplorationGraph
 from spoor.exploration.safety import evaluate_action
 from spoor.exploration.state import state_id
+
+# Layer recovery (§2e, 7c) is bounded by the finite set of a covered state's own
+# on-top actions — each is tried at most once — so it terminates without this cap. The
+# cap is a defensive safety net against a pathological driver that reports an unbounded
+# stream of distinct clearing actions, guaranteeing recovery can never spin forever.
+_MAX_RECOVERY_STEPS = 50
 
 
 class ActionError(Exception):
@@ -104,9 +126,51 @@ class BrowserDriver(Protocol):
         """
         ...
 
+    def probe(self, action: ActionableElement) -> ActuationVerdict:
+        """The actuation verdict for `action` in the current page, *without* firing it.
+
+        Returns ACTUATE (a click would land on it), COVERED (a layer sits over its
+        click point, carrying what covers it), or NOT_LOCATED (no matching element).
+        Layer recovery (7c) uses this to tell whether the target is reachable and to
+        find the layer's own on-top actions, so it can interact past a blocker without
+        clicking blind. A driver hiccup still surfaces as `ActionError`, like `perform`.
+        """
+        ...
+
     def capture_signals(self) -> StateSignals:
         """The free-signal bundle for the current state (§2e sub-slice 5c)."""
         ...
+
+
+class _Reach(Enum):
+    """Whether an action can be actuated now, or why not (§2e, 7c)."""
+
+    PROCEED = "proceed"  # actuatable now (possibly after a layer was cleared)
+    BLOCKED = "blocked"  # covered by a layer nothing available could clear
+    NOT_LOCATED = "not located"  # no matching element — gone, not covered
+
+
+@dataclass(frozen=True)
+class _Reachability:
+    """The outcome of trying to make an action reachable (recovering past a layer).
+
+    `blocker` describes the layer when BLOCKED (for the flagged skip reason);
+    `recovered_via` names the layer that *was* cleared when a covered action became
+    reachable, so the transition can record it was reached from behind a blocker.
+    """
+
+    status: _Reach
+    blocker: str = ""
+    recovered_via: str | None = None
+
+
+def _describe(covering: CoveringElement | None) -> str:
+    """A short human-readable description of a covering element, for a flag/label."""
+    if covering is None:
+        return "a layer"
+    if covering.text:
+        return f"{covering.role} {covering.text!r}"
+    return covering.role or "a layer"
 
 
 def explore(
@@ -143,10 +207,88 @@ def explore(
         controller.record_state()
         return sid, True
 
+    def next_layer_action(
+        action: ActionableElement, attempted: set[tuple[str, str]]
+    ) -> ActionableElement | None:
+        """Pick a layer action to fire toward uncovering `action`, or None if none fit.
+
+        The layer's own actions are the ones actually *on top* here — those that
+        actuate (probe ACTUATE) — never the covered target, never one already tried,
+        and never one the safety gate refuses. That last clause is the §2e
+        non-negotiable holding through recovery: a layer whose only exit is a
+        destructive action on a non-sandbox target yields no candidate, so the layer is
+        never forced open. Returns the first fit in document order, or None when the
+        layer can't be cleared from here.
+        """
+        for candidate in discover_actions(driver.ax_nodes()):
+            if (candidate.role, candidate.name) == (action.role, action.name):
+                continue
+            if (candidate.role, candidate.name) in attempted:
+                continue
+            if not evaluate_action(
+                target, candidate.name, candidate.role, declared_sandbox
+            ).allowed:
+                continue
+            if driver.probe(candidate).verdict is not Verdict.ACTUATE:
+                continue  # covered itself, or gone — not part of the layer on top
+            return candidate
+        return None
+
+    def reach(action: ActionableElement) -> _Reachability:
+        """Make `action` actuatable, clearing a recoverable covering layer (§2e, 7c).
+
+        Probes the action: ACTUATE proceeds immediately; NOT_LOCATED means it is gone
+        (recovery can't help — a missing element is not a blocker). COVERED hands off to
+        recovery, which interacts past the layer with its own gate-permitted, on-top
+        actions, each fired at most once, re-probing the target after each. It converges
+        by *progress* — a cleared or advanced layer exposes a new action or uncovers the
+        target — and is bounded by the finite set of such actions, so it never loops;
+        when none remains it flags the blocker rather than forcing it.
+        """
+        verdict = driver.probe(action)
+        if verdict.verdict is Verdict.ACTUATE:
+            return _Reachability(_Reach.PROCEED)
+        if verdict.verdict is Verdict.NOT_LOCATED:
+            return _Reachability(_Reach.NOT_LOCATED)
+        covering = verdict.covering
+        cleared = _describe(covering)
+        attempted: set[tuple[str, str]] = set()
+        for _ in range(_MAX_RECOVERY_STEPS):
+            candidate = next_layer_action(action, attempted)
+            if candidate is None:
+                return _Reachability(_Reach.BLOCKED, blocker=_describe(covering))
+            attempted.add((candidate.role, candidate.name))
+            try:
+                driver.perform(candidate)
+            except ActionError:
+                # That layer action itself couldn't be fired (covered/gone by the time
+                # we tried): drop it and look for another way past the layer.
+                continue
+            verdict = driver.probe(action)
+            if verdict.verdict is Verdict.ACTUATE:
+                return _Reachability(_Reach.PROCEED, recovered_via=cleared)
+            if verdict.verdict is Verdict.NOT_LOCATED:
+                return _Reachability(_Reach.NOT_LOCATED)
+            covering = verdict.covering or covering
+        return _Reachability(_Reach.BLOCKED, blocker=_describe(covering))
+
     def navigate(path: Sequence[ActionableElement]) -> None:
-        """Return to the state reached by `path`, via reset and replay."""
+        """Return to the state reached by `path`, via reset and replay.
+
+        Each replayed action is made reachable first (7c): reset restores the covering
+        layers a stateful target shows on a fresh visit, so replay must clear them again
+        to fire the same path — otherwise every state behind an overlay would be lost on
+        the second visit. A step that can't be reached raises `ActionError`, which the
+        caller records as a skip for the action it was replaying toward.
+        """
         driver.reset()
         for action in path:
+            outcome = reach(action)
+            if outcome.status is not _Reach.PROCEED:
+                raise ActionError(
+                    f"replay could not reach {action.name!r}: "
+                    f"{outcome.blocker or outcome.status.value}"
+                )
             driver.perform(action)
 
     def walk(state: str, path: list[ActionableElement]) -> None:
@@ -161,25 +303,52 @@ def explore(
             if not decision.allowed:
                 graph.record_skip(state, action, decision.reason)
                 continue
-            # Capture the free signals either side of the action so the transition
-            # records what it changed (§2e sub-slice 5c). `before` is the from-state
-            # as replayed here; `after` doubles as the to-state's node bundle.
             try:
                 navigate(path)
-                before = driver.capture_signals()
+            except ActionError as exc:
+                # A replay step along the way couldn't be reached (or recovered):
+                # record this action honestly and carry on — the next iteration resets
+                # and replays afresh, so one dead branch never aborts the whole map.
+                graph.record_skip(state, action, f"could not be performed: {exc}")
+                continue
+            # Make the action reachable, clearing a recoverable layer if one covers it
+            # (7c). A covered action nothing can clear is flagged as blocked, and a
+            # genuinely missing one as not located — never a mute skip.
+            outcome = reach(action)
+            if outcome.status is _Reach.NOT_LOCATED:
+                graph.record_skip(
+                    state,
+                    action,
+                    f"not located: {action.role} {action.name!r} "
+                    "is not present after replay",
+                )
+                continue
+            if outcome.status is _Reach.BLOCKED:
+                graph.record_skip(
+                    state,
+                    action,
+                    f"blocked by an unresolved layer: {outcome.blocker}",
+                )
+                continue
+            # Capture the free signals either side of the action so the transition
+            # records what it changed (§2e sub-slice 5c). `before` is taken after any
+            # layer was cleared, so the diff is the action's effect, not the layer's.
+            before = driver.capture_signals()
+            try:
                 driver.perform(action)
             except ActionError as exc:
-                # The element couldn't be actuated on a live, dynamic page (or a
-                # replay step along the way couldn't). Record it honestly and carry
-                # on: the next iteration resets and replays afresh, so one dead
-                # element never aborts the whole map. This is what keeps a wiki
-                # reliably produced against a real target.
                 graph.record_skip(state, action, f"could not be performed: {exc}")
                 continue
             controller.record_request()
             after = driver.capture_signals()
             to_state, first_seen = capture(after)
-            graph.add_transition(state, action, to_state, diff_signals(before, after))
+            graph.add_transition(
+                state,
+                action,
+                to_state,
+                diff_signals(before, after),
+                recovered_via=outcome.recovered_via,
+            )
             # Only recurse into a genuinely new state; a transition back to a known
             # state is recorded but not re-explored — that is what keeps this finite.
             if first_seen:
