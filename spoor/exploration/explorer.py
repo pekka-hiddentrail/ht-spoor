@@ -21,6 +21,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
+from spoor.exploration.capture import StateSignals, diff_signals
 from spoor.exploration.control import RunController
 from spoor.exploration.discovery import ActionableElement, discover_actions
 from spoor.exploration.graph import ExplorationGraph
@@ -51,6 +52,10 @@ class BrowserDriver(Protocol):
         """Fire an action (e.g. click the element it names)."""
         ...
 
+    def capture_signals(self) -> StateSignals:
+        """The free-signal bundle for the current state (§2e sub-slice 5c)."""
+        ...
+
 
 def explore(
     driver: BrowserDriver,
@@ -68,12 +73,21 @@ def explore(
     """
     graph = ExplorationGraph()
 
-    def capture() -> tuple[str, bool]:
-        """Record the driver's current state; return its id and whether it's new."""
+    def capture(signals: StateSignals | None = None) -> tuple[str, bool]:
+        """Record the driver's current state; return its id and whether it's new.
+
+        A caller that already captured the current signal bundle (a transition's
+        after-snapshot) passes it in so the driver isn't snapshotted twice for the
+        same state; otherwise the bundle is captured here.
+        """
         sid = state_id(driver.state_html())
         if graph.has_state(sid):
             return sid, False
-        graph.add_state(sid, discover_actions(driver.ax_nodes()))
+        graph.add_state(
+            sid,
+            discover_actions(driver.ax_nodes()),
+            signals if signals is not None else driver.capture_signals(),
+        )
         controller.record_state()
         return sid, True
 
@@ -96,10 +110,15 @@ def explore(
                 graph.record_skip(state, action, decision.reason)
                 continue
             navigate(path)
+            # Capture the free signals either side of the action so the transition
+            # records what it changed (§2e sub-slice 5c). `before` is the from-state
+            # as replayed here; `after` doubles as the to-state's node bundle.
+            before = driver.capture_signals()
             driver.perform(action)
             controller.record_request()
-            to_state, first_seen = capture()
-            graph.add_transition(state, action, to_state)
+            after = driver.capture_signals()
+            to_state, first_seen = capture(after)
+            graph.add_transition(state, action, to_state, diff_signals(before, after))
             # Only recurse into a genuinely new state; a transition back to a known
             # state is recorded but not re-explored — that is what keeps this finite.
             if first_seen:

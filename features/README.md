@@ -45,6 +45,7 @@ are authored when their phase begins, not up front.
 | `exploration_control.feature` | Exploration run-level controls: hard budget (states/requests/wall-clock) + manual kill switch | §2e | `spoor/exploration` | 5 |
 | `exploration_loop.feature` | Exploration explorer loop: the state-action graph orchestrator tying together discovery, safety, state abstraction, and run controls | §2e | `spoor/exploration` | 5 |
 | `exploration_browser.feature` | Exploration in a real browser: the `spoor explore` command drives the whole stack against a live site via a headless-Chromium driver | §2e | `spoor/exploration`, CLI | 5 |
+| `exploration_signals.feature` | Exploration per-transition signal capture: a free-signal bundle per state and a before/after diff (a11y, console, storage, network, screenshot) per transition | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -292,6 +293,26 @@ skipped. The scenario drives real Chromium against a two-page loopback fixture
 (Home ⇄ Next) and asserts the summary reports two states, two transitions, and zero
 skips. Nothing in the driver is site-specific (§0). Per-transition signal capture
 (screenshot / a11y / storage / HAR / console diffs) is sub-slice 5c.
+
+`exploration_signals.feature` (§2e) is **sub-slice 5c** — per-transition signal
+capture — built logic-first as **5c-i**. §2e records a free/near-free signal bundle
+for every transition (the accessibility snapshot, console output, client-side
+storage, the network/HAR trace, and a screenshot) so the map can answer "what
+happens, on every signal level, when I press this button". This slice is the pure
+model behind that: `spoor/exploration/capture.py` holds `StateSignals` (the bundle
+captured at one state — a11y node count, console messages, storage keys, network
+requests, screenshot hash) and `diff_signals`, which computes a `TransitionSignals`
+before/after diff (what console/storage/network entries appeared, what storage was
+removed, the signed a11y-node delta, and whether the screenshot changed). The graph
+now carries a bundle on every state node and a diff on every transition, and the
+`explore` orchestrator captures the bundle either side of each fired action through a
+new `capture_signals()` seam on the `BrowserDriver` protocol. It runs in-process
+against the fake driver; the scenarios pin the full diff of a signal-changing action,
+an honest empty diff when an action changes nothing, storage keys removed as well as
+added, and each state node carrying the bundle captured there. Filling that bundle
+from a live page (a real screenshot hash and live console/network/HAR deltas) is
+**sub-slice 5c-ii**; the real driver already reports the one signal it reads for free
+(the a11y node count) and leaves the rest at their empty defaults until then.
 `testgen.feature` (§2g) is listed in the table
 above ahead of implementation; its feature file is authored when its phase begins
 (see the Phase column).

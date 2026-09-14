@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from spoor.exploration.capture import StateSignals
 from spoor.exploration.control import RunBudget, RunController
 from spoor.exploration.discovery import ActionableElement
 from spoor.exploration.explorer import explore
@@ -82,6 +83,12 @@ class _FakeDriver:
 
     def perform(self, action: ActionableElement) -> None:
         self._current = self._app.next_state(self._current, action)
+
+    def capture_signals(self) -> StateSignals:
+        # This slice's scenarios don't assert on signals; the diff model itself is
+        # exercised by exploration_signals.feature (5c-i). An empty bundle keeps the
+        # loop's own scenarios focused on graph shape.
+        return StateSignals()
 
 
 @pytest.fixture
