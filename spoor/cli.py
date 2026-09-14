@@ -84,6 +84,79 @@ def run(
 
 
 @app.command()
+def explore(
+    url: Annotated[str, typer.Argument(help="URL to start exploring from.")],
+    sandbox: Annotated[
+        bool,
+        typer.Option(
+            "--sandbox",
+            help=(
+                "Declare this target a sandbox so destructive actions (delete, buy, "
+                "pay, ...) are exercised. Only ever use this on a local or test "
+                "system you own; on any real site those actions are always skipped."
+            ),
+        ),
+    ] = False,
+    max_states: Annotated[
+        int | None,
+        typer.Option(help="Stop after discovering this many distinct states."),
+    ] = None,
+    max_requests: Annotated[
+        int | None, typer.Option(help="Stop after firing this many actions.")
+    ] = None,
+    max_seconds: Annotated[
+        float | None, typer.Option(help="Stop after this many seconds of wall-clock.")
+    ] = None,
+) -> None:
+    """Explore a target with no config, mapping its state-action graph.
+
+    Points a headless browser at the URL, discovers the actionable elements on each
+    screen, fires each one, and records where it leads — building a graph of what
+    happens when you press every button. Destructive actions are only ever performed
+    against a sandbox you declare with --sandbox; on any other site they are always
+    skipped and never fired. Bound the run with the budget options, and press Ctrl-C
+    to stop it early at any time.
+    """
+    import signal
+
+    from spoor.exploration.control import RunBudget, RunController
+    from spoor.exploration.driver import PlaywrightDriver
+    from spoor.exploration.explorer import explore as explore_target
+
+    try:
+        budget = RunBudget(
+            max_states=max_states,
+            max_requests=max_requests,
+            max_seconds=max_seconds,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    controller = RunController(budget)
+    # Ctrl-C throws the kill switch, so the run stops gracefully at the next action
+    # rather than aborting mid-click. Restore the previous handler afterwards so the
+    # run doesn't leave a global side effect behind.
+    previous_handler = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, lambda *_: controller.kill())
+    try:
+        with PlaywrightDriver(url) as driver:
+            graph = explore_target(
+                driver, target=url, controller=controller, declared_sandbox=sandbox
+            )
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
+
+    typer.echo(f"Explored {url}")
+    typer.echo(f"  states discovered: {len(graph.states)}")
+    typer.echo(f"  transitions:       {len(graph.transitions)}")
+    typer.echo(f"  actions skipped:   {len(graph.skipped)}")
+    if not sandbox and graph.skipped:
+        typer.echo(
+            "  (destructive actions were skipped — this target is not a declared "
+            "sandbox)"
+        )
+
+
+@app.command()
 def serve(
     host: Annotated[
         str, typer.Option(help="Address to bind the read-only API server to.")

@@ -49,8 +49,11 @@ class ActionableElement:
     """One thing the explorer could interact with on a screen (§2e).
 
     `role` and `name` come straight from the accessibility node (the name is the
-    label the safety gate classifies); `backend_node_id` is the CDP handle the
-    explorer loop uses to locate the element, or None when the node carried none.
+    label the safety gate classifies, and `role`+`name` are what the live driver
+    re-locates the element by when it acts). `backend_node_id` is the CDP node
+    handle *within the snapshot it was discovered in* — it does not survive a page
+    reload, so it is kept for correlation/debugging rather than for clicking after a
+    reset-and-replay; None when the node carried none.
     """
 
     role: str

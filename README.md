@@ -113,6 +113,43 @@ secret: it is read locally and never written into your output or the run summary
 A missing or malformed session file fails the run loudly rather than quietly
 scraping as an anonymous visitor.
 
+## Exploring a site (no config)
+
+When you don't have a config and just want to know what a site *does*, point
+Spoor at a starting URL:
+
+```bash
+spoor explore https://example.com
+
+# Bound the run so it always stops:
+spoor explore https://example.com --max-states 200 --max-requests 1000 --max-seconds 300
+```
+
+Spoor opens the page in a real browser, finds everything you can interact with on
+each screen (buttons, links, form controls), tries each one, and records where it
+leads — building a graph of the site's states and the transitions between them. It
+recognizes a screen it has already seen, so it maps the site instead of looping
+forever, and prints a summary of how many states and transitions it found. Press
+**Ctrl-C** to stop early; it finishes the current step cleanly rather than aborting
+mid-click. Use `--max-states`, `--max-requests`, and `--max-seconds` to cap the run.
+
+**The safety rule — read this before pointing it at anything real.** Some actions
+are destructive: deleting a record, buying, paying, logging out, submitting a form.
+On any normal site Spoor **always skips** those and tells you it skipped them — it
+will never click "Delete" or "Buy" on a live site. The **only** way it will exercise
+a destructive action is if you explicitly declare the target a sandbox you own with
+`--sandbox`:
+
+```bash
+# ONLY for a local or throwaway test system you control:
+spoor explore http://localhost:3000 --sandbox
+```
+
+Never pass `--sandbox` for a site you don't own or can't safely reset. This is a
+hard rule, not a preference: there is no flag or config that makes Spoor perform a
+destructive action on a target it doesn't recognize as a sandbox (a local address,
+or one you declared with `--sandbox`).
+
 ## Current capabilities
 
 ### Available now
@@ -123,6 +160,7 @@ scraping as an anonymous visitor.
 - API discovery: OpenAPI/Swagger discovery, GraphQL introspection, HAR-based synthesis, and action-to-endpoint correlation
 - Tier-3 self-healing: scored matching, uncertain-match handling, cross-run fingerprint persistence, listing field/container healing, re-anchoring, and visual-signal corroboration
 - Authenticated targets: supply a captured browser session (cookies + `localStorage`) via `session:` to scrape login-gated pages — "bring-your-own-session"; Spoor performs no login itself
+- Exploration mode: point Spoor at a URL with no config and it maps the site in a real browser — `spoor explore <url>` presses the buttons and follows the links on each screen, recording where each one leads as a graph of states and transitions (see "Exploring a site" below for the safety rule)
 - Read-only map serving: each run remembers its extracted records — and a safe summary of the API surface it observed (any published spec/GraphQL endpoint, plus endpoint/request counts) — for the target URL. Two ways to consult it without re-crawling: `spoor serve` exposes a small read-only HTTP API, and `spoor serve-mcp` exposes the same data to agents as read-only MCP tools (list mapped domains; fetch a URL's records and observed API surface with how long ago it was captured). By default both only read the stored map. Neither ever changes a site: the strongest thing either can do is re-observe one — opt in with `--recheck` and they also accept a request to re-check a mapped URL, which re-runs that URL's extraction (a fresh read of the site) and refreshes the map. Secrets are redacted from everything they return. Install with `pip install 'ht-spoor[serve]'`
 
 ### Optional capture signals (browser tier)
