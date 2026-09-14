@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  Never-quiet fixture for exploration settling (ROADMAP.md §2e, 7b).
+
+  The DOM mutates forever — a node is appended on a fast interval — so the page never
+  goes quiet, standing in for a busy SPA that polls or animates without end. The driver
+  must not hang or crash on it: the settle wait ends at the bounded timeout, the state
+  is captured flagged as unsettled, and the run proceeds on the last snapshot. The
+  mutation interval is well under any reasonable quiet window, so the mutation count is
+  always rising between polls and quiescence is never reached.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Never-quiet fixture</title>
+  </head>
+  <body>
+    <h1>Live feed</h1>
+    <ul id="feed"></ul>
+    <script>
+      let n = 0;
+      setInterval(() => {
+        const item = document.createElement("li");
+        item.textContent = "tick " + n++;
+        const feed = document.getElementById("feed");
+        feed.appendChild(item);
+        // Keep the list bounded so the page doesn't grow without limit during the run.
+        if (feed.childElementCount > 20) {
+          feed.removeChild(feed.firstChild);
+        }
+      }, 30);
+    </script>
+  </body>
+</html>

@@ -99,6 +99,7 @@ def _state_view(
         "short_id": sid[:_SHORT_ID],
         "filename": f"state-{index}.html",
         "has_signals": signals is not None,
+        "settled": True if signals is None else signals.settled,
         "ax_node_count": None if signals is None else signals.ax_node_count,
         "console": [] if signals is None else _redact_all(signals.console_messages),
         "storage": [] if signals is None else _redact_all(signals.storage_keys),
@@ -299,6 +300,10 @@ _STATE = """{% extends "layout.html" %}
 {% block body %}
 <h1>State {{ state.short_id }}</h1>
 <p>State id: <code>{{ state.id }}</code></p>
+{% if not state.settled %}
+<p><strong>⚠ Did not settle:</strong> the page kept changing until the settle timeout,
+so this snapshot is best-effort and may be incomplete.</p>
+{% endif %}
 {% if state.has_signals %}
 <ul>
   <li>Accessibility nodes: <strong>{{ state.ax_node_count }}</strong></li>

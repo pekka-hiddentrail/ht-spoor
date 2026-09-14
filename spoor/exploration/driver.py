@@ -36,13 +36,25 @@ is pinned to a fixed size at device-scale 1 so CSS pixels equal device pixels eq
 coordinate space, and every computed centre is reproducible run to run, headless or
 headed. When several elements share a role and name it acts on the first in document
 order (deterministic; a known first-cut limitation, as are elements hosted in an
-iframe, which the top document's `elementFromPoint` cannot reach). Nothing here is
-site-specific (§0): the same relocation, verification, and click drive every target.
+iframe, which the top document's `elementFromPoint` cannot reach).
+
+Settling and reset fidelity (§2e sub-slice 7b) make reset-and-replay deterministic on a
+real, stateful, asynchronously-rendered target. After a reset or a click the driver
+waits for DOM mutations to go quiet — a real `MutationObserver` feeding the pure
+`wait_for_quiescence` decision — before it reads the DOM or accessibility tree, so
+discovery and actuation see the same settled render rather than two different rendering
+instants. The wait is bounded: a page that never quiesces is recorded as unsettled (a
+`settled=False` flag on its captured signals) and the run proceeds on the last snapshot,
+where an earlier cut hung or crashed. And `reset` clears cookies and web storage before
+navigating, so every reset is a true first visit rather than a returning-visitor render
+that replay would diverge from. Nothing here is site-specific (§0): the same relocation,
+verification, click, settle, and reset drive every target.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from playwright.sync_api import (
@@ -55,7 +67,6 @@ from playwright.sync_api import (
     sync_playwright,
 )
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from spoor.core.visual import InvalidImageError, perceptual_hash
 from spoor.exploration.actuation import (
@@ -71,6 +82,7 @@ from spoor.exploration.explorer import (
     ElementCovered,
     ElementNotLocated,
 )
+from spoor.exploration.settling import SettleResult, wait_for_quiescence
 
 # JS that lists both web-storage areas' keys — the "storage-state diff" §2e signal.
 _STORAGE_KEYS_JS = (
@@ -81,6 +93,42 @@ _STORAGE_KEYS_JS = (
 # call the §2c accessibility signal uses, in the shape `discover_actions` expects.
 _AX_TREE_COMMAND = "Accessibility.getFullAXTree"
 _NAV_TIMEOUT_MS = 15_000
+
+# Settling policy (§2e, 7b), in seconds to match `time.monotonic`. After a reset or a
+# click the driver waits for DOM mutations to go quiet for `_QUIET_WINDOW_S` before it
+# reads the page, so discovery and actuation see the same settled render; a page that
+# never quiesces is reported unsettled at `_SETTLE_TIMEOUT_S` (a bounded safety net,
+# never the normal path) rather than hanging or crashing the run.
+_QUIET_WINDOW_S = 0.4
+_SETTLE_TIMEOUT_S = 10.0
+_POLL_INTERVAL_S = 0.05
+
+# Installed on every document (via add_init_script, which runs before page scripts on
+# each navigation): a cumulative DOM-mutation counter behind a MutationObserver. The
+# settle wait polls `window.__spoorMutations`; the page is quiet while it stops rising.
+# Observing the document node itself is safe at document-start (documentElement may not
+# exist yet); subtree/attributes/characterData catch every kind of render churn.
+_MUTATION_OBSERVER_JS = """
+(() => {
+  window.__spoorMutations = 0;
+  try {
+    const observer = new MutationObserver((records) => {
+      window.__spoorMutations += records.length;
+    });
+    observer.observe(document, {
+      childList: true, subtree: true, attributes: true, characterData: true
+    });
+  } catch (e) { /* observation unsupported: count simply stays 0 (reads as quiet) */ }
+})();
+"""
+
+# Clears both web-storage areas so a reset is a true first visit (§2e, 7b). Run on the
+# previous document before navigating; harmless if an area is empty or unavailable.
+_CLEAR_STORAGE_JS = "() => { localStorage.clear(); sessionStorage.clear(); }"
+
+# Reads the cumulative mutation count the observer maintains; missing (a fresh document
+# before the init script ran) reads as 0, i.e. quiet.
+_MUTATION_COUNT_JS = "() => window.__spoorMutations || 0"
 
 # A fixed viewport at device-scale 1: CSS pixels equal device pixels equal the
 # coordinate space `elementFromPoint` and the mouse both use, so every computed click
@@ -132,7 +180,16 @@ class PlaywrightDriver:
     replaying the same actions returns to the same state, as long as the target is.
     """
 
-    def __init__(self, target: str) -> None:
+    def __init__(
+        self,
+        target: str,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+        quiet_window: float = _QUIET_WINDOW_S,
+        settle_timeout: float = _SETTLE_TIMEOUT_S,
+        poll_interval: float = _POLL_INTERVAL_S,
+    ) -> None:
         self._target = target
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
@@ -143,6 +200,17 @@ class PlaywrightDriver:
         # before- and after-snapshots, so the running buffers are exactly right.
         self._console: list[str] = []
         self._network: list[str] = []
+        # Settling seams (§2e, 7b), mirroring the RunController clock seam so the wait
+        # is deterministic in tests; production defaults use the real clock and sleep.
+        self._clock = clock
+        self._sleep = sleep
+        self._quiet_window = quiet_window
+        self._settle_timeout = settle_timeout
+        self._poll_interval = poll_interval
+        # Whether the last reset/click quiesced, and the last mutation count seen. The
+        # settled flag rides the next captured StateSignals into the map and wiki.
+        self._last_settled = True
+        self._last_mutations = 0
 
     def __enter__(self) -> PlaywrightDriver:
         self._playwright = sync_playwright().start()
@@ -151,6 +219,10 @@ class PlaywrightDriver:
             viewport={"width": _VIEWPORT_WIDTH, "height": _VIEWPORT_HEIGHT},
             device_scale_factor=1,
         )
+        # Install the mutation counter on every document the context loads, so the
+        # settle wait (§2e, 7b) has a real rendering-stopped signal after each reset
+        # and each in-page navigation.
+        self._context.add_init_script(_MUTATION_OBSERVER_JS)
         self._page = self._context.new_page()
         self._page.on("console", self._on_console)
         self._page.on("request", self._on_request)
@@ -186,11 +258,35 @@ class PlaywrightDriver:
             raise RuntimeError("driver not started — use it as a context manager")
         return self._page
 
+    @property
+    def _live_context(self) -> BrowserContext:
+        if self._context is None:
+            raise RuntimeError("driver not started — use it as a context manager")
+        return self._context
+
     def reset(self) -> None:
-        """Navigate back to the entry URL (the explorer's start state)."""
-        self._live_page.goto(
-            self._target, wait_until="networkidle", timeout=_NAV_TIMEOUT_MS
-        )
+        """Return to the entry URL as a true first visit, then wait to settle (§2e, 7b).
+
+        Reset-and-replay assumes reset restores the app's initial state, but a browser
+        context persists cookies and web storage across navigations, so a plain
+        re-navigation lands on a returning-visitor render and replay diverges from what
+        discovery saw. So this clears cookies and both web-storage areas *before*
+        navigating, making every reset a first visit. The storage clear runs on the
+        previous document and is skipped when there isn't one yet (the first reset,
+        still on about:blank). Navigation waits only for the document, then the settle
+        wait waits for real DOM quiescence — so a page that never reaches "network idle"
+        (which used to raise straight through and abort the run) is now a recorded
+        unsettled fact, not a crash.
+        """
+        page = self._live_page
+        self._live_context.clear_cookies()
+        try:
+            page.evaluate(_CLEAR_STORAGE_JS)
+        except PlaywrightError:
+            # No same-origin document to clear yet (first reset, or a blank page).
+            pass
+        page.goto(self._target, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
+        self._wait_for_settle()
 
     def state_html(self) -> str:
         """The current rendered DOM, for computing the abstract state id."""
@@ -224,7 +320,38 @@ class PlaywrightDriver:
             storage_keys=self._storage_keys(page),
             network_requests=tuple(self._network),
             screenshot_hash=self._screenshot_hash(page),
+            settled=self._last_settled,
         )
+
+    def _wait_for_settle(self) -> SettleResult:
+        """Wait for DOM mutations to go quiet, recording whether the page settled (7b).
+
+        Feeds the live mutation counter into the pure quiescence decision
+        (`wait_for_quiescence`) through this driver's clock/sleep seams. A read that
+        fails because the execution context was torn down mid-navigation reuses the
+        last count rather than crashing, so the wait tolerates a full-page navigation in
+        flight. Stores the settled verdict for the next captured bundle.
+        """
+        page = self._live_page
+
+        def observe() -> int:
+            try:
+                value = page.evaluate(_MUTATION_COUNT_JS)
+            except PlaywrightError:
+                return self._last_mutations
+            self._last_mutations = int(value) if isinstance(value, (int, float)) else 0
+            return self._last_mutations
+
+        result = wait_for_quiescence(
+            observe=observe,
+            clock=self._clock,
+            sleep=self._sleep,
+            quiet_window=self._quiet_window,
+            timeout=self._settle_timeout,
+            poll_interval=self._poll_interval,
+        )
+        self._last_settled = result.settled
+        return result
 
     @staticmethod
     def _storage_keys(page: Page) -> tuple[str, ...]:
@@ -295,12 +422,11 @@ class PlaywrightDriver:
             raise ElementCovered(verdict.covering.role, verdict.covering.text)
         # ACTUATE: a real trusted mouse click at the verified centre.
         page.mouse.click(float(cx), float(cy))
-        try:
-            page.wait_for_load_state("networkidle", timeout=_NAV_TIMEOUT_MS)
-        except PlaywrightTimeoutError:
-            # A click that triggers no navigation (an in-page state change) leaves
-            # the page already idle; a slow tail shouldn't fail the exploration.
-            pass
+        # Wait for the resulting render to go quiet before the explorer reads the new
+        # state, so discovery and the state id see the settled page (§2e, 7b). A click
+        # that only changes the page in place and one that navigates both resolve
+        # through DOM quiescence; a page that never settles is recorded, not fatal.
+        self._wait_for_settle()
 
     def _probe_click_point(
         self, page: Page, backend_node_id: int
