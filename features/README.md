@@ -39,7 +39,8 @@ are authored when their phase begins, not up front.
 | `self_healing_visual.feature` | Tier-3 perceptual-hash visual signal: a cropped-screenshot difference hash heals a low-text element whose markup churns | §2 / §2d | `spoor/core` | 3 |
 | `serving.feature` | Read-only serving of a captured map over a REST API (records + observed API surface, with freshness) | §2f | `spoor/serving` | 4 / 5 |
 | `serving_mcp.feature` | Read-only serving of the same map over an MCP server (agent-facing tools; exploration-graph serving later) | §2f | `spoor/serving` | 4 / 5 |
-| `exploration.feature` | Exploration mode + safety | §2e | `spoor/exploration` | 6 |
+| `exploration_safety.feature` | Exploration safety gate: destructive actions are sandbox-only, non-configurable | §2e | `spoor/exploration`, `spoor/security` | 5 |
+| `exploration.feature` | Exploration mode: the state-graph explorer loop (later §2e slice) | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -187,7 +188,22 @@ non-GET route": both files pin that a plain server stays GET-only / read-tools-o
 while a recheck-enabled server adds exactly the one seam — non-destructive, and (on
 MCP) honestly marked non-read-only since it fetches and rewrites the local map. The
 config needed to reproduce a run is persisted with each entry but stays local-only,
-never served. `exploration.feature` (§2e) and `testgen.feature` (§2g),
-along with the sandbox registry (§2e/§2h), are listed in the table above ahead of
-implementation; their feature files are authored when their phase begins (see the
-Phase column).
+never served.
+
+`exploration_safety.feature` (§2e) opens exploration mode with its **safety
+foundation**, built before anything that can fire an action exists. Two pure-logic
+pieces plus the gate that combines them: a **sandbox registry**
+(`spoor/security/sandbox.py`) that recognizes a target as a sandbox only when its
+host is loopback (`localhost` / `127.*` / `::1`) or the operator explicitly declared
+it one; and a **destructive-action classifier** (`spoor/exploration/safety.py`) that
+matches the §2e keyword list (delete, remove, buy, purchase, pay, confirm, send,
+submit-payment, log out) as whole words in an action's label. The gate
+(`evaluate_action`) permits a non-destructive action anywhere, permits a destructive
+one only inside a sandbox, and otherwise skips it with a log-ready reason. The §2e
+non-negotiable — destructive actions are sandbox-only and **non-configurable** — is
+pinned both behaviorally (a destructive action on a real target is skipped) and
+structurally (a scenario asserts the gate's parameters are exactly target/action,
+so no bypass flag can exist). The state-graph explorer loop that drives this gate is
+a later §2e slice (`exploration.feature`). `testgen.feature` (§2g) is listed in the
+table above ahead of implementation; its feature file is authored when its phase
+begins (see the Phase column).
