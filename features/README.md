@@ -53,6 +53,7 @@ are authored when their phase begins, not up front.
 | `exploration_settling.feature` | State settling, pure quiescence policy: settle when DOM mutations go quiet for a window, report unsettled at a bounded timeout — under a fake clock (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
 | `exploration_settling_live.feature` | Settling + reset fidelity, live driver: reset clears cookies+storage for a true first visit, reads wait for real DOM quiescence, a never-quiet page is flagged unsettled not fatal (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
 | `exploration_recovery.feature` | Layer recovery: deal with a blocking layer as its own state and interact past it, safety-gated and progress-bounded, flagging when unresolved (sub-slice 7c) | §2e | `spoor/exploration` | 5 |
+| `exploration_replay.feature` | Replay resilience: verify each reset-and-replay against the state ids it first reached and retry a transient bad render, flagging a persistently unreachable or divergent step honestly (sub-slice 7d) | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -443,6 +444,25 @@ and missing-vs-covered; the live scenario maps `fixtures/static/explore_gated.ht
 full-viewport consent overlay) and asserts the site behind it is reached with ≥1 action
 recovered. Coordinate-level brute-forcing of a layer with no discoverable clearing action
 is deferred — such a layer is flagged blocked, not forced. Nothing is site-specific (§0).
+
+`exploration_replay.feature` (§2e) is **sub-slice 7d** — replay resilience. A follow-on
+diagnostic showed 7b's settling did not fully cure the nondeterminism: under load the same
+reset still intermittently lands on a *degraded* render (Angular's "Force page reload"
+fallback), so a step found on the first visit can be gone by the time reset-and-replay
+returns to it — and because replay was all-or-nothing, one flaky step killed the whole
+subtree behind it, with the skip mis-attributed to the leaf. 7d makes replay resilient and
+honest. The replay path now carries the state id each step first reached, so every
+reset-and-replay is *verified*: the post-reset page must be the start state and each
+replayed step must land on the id it first mapped to, or the attempt is *retried* a bounded
+number of times — a transient bad render usually clears on the next reset, regaining
+coverage. When retries are exhausted the action is flagged with a reason that tells a step
+that stayed unreachable (`replay could not reach …`) apart from one that *diverged* to
+another state (`replay diverged: …`), never a mute skip and attributed to the replay step
+that failed, not the leaf; a stably blocked layer (7c) is reported at once, not retried.
+The pure scenarios pin a transient miss retried, a persistent miss flagged unreachable, a
+divergence flagged, and a transient divergence retried; the live scenario drives the real
+stack against a scripted server whose entry page is degraded on exactly one reset and
+asserts the page behind it is still mapped. Nothing is site-specific (§0).
 
 `testgen.feature` (§2g) is
 listed in the table
