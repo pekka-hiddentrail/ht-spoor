@@ -40,6 +40,7 @@ are authored when their phase begins, not up front.
 | `serving.feature` | Read-only serving of a captured map over a REST API (records + observed API surface, with freshness) | §2f | `spoor/serving` | 4 / 5 |
 | `serving_mcp.feature` | Read-only serving of the same map over an MCP server (agent-facing tools; exploration-graph serving later) | §2f | `spoor/serving` | 4 / 5 |
 | `exploration_safety.feature` | Exploration safety gate: destructive actions are sandbox-only, non-configurable | §2e | `spoor/exploration`, `spoor/security` | 5 |
+| `exploration_state.feature` | Exploration state abstraction: normalize + hash the DOM so equivalent screens share one state id | §2e | `spoor/exploration` | 5 |
 | `exploration.feature` | Exploration mode: the state-graph explorer loop (later §2e slice) | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
@@ -203,7 +204,24 @@ one only inside a sandbox, and otherwise skips it with a log-ready reason. The �
 non-negotiable — destructive actions are sandbox-only and **non-configurable** — is
 pinned both behaviorally (a destructive action on a real target is skipped) and
 structurally (a scenario asserts the gate's parameters are exactly target/action,
-so no bypass flag can exist). The state-graph explorer loop that drives this gate is
-a later §2e slice (`exploration.feature`). `testgen.feature` (§2g) is listed in the
-table above ahead of implementation; its feature file is authored when its phase
-begins (see the Phase column).
+so no bypass flag can exist).
+
+`exploration_state.feature` (§2e) is the second slice — still pure logic — porting
+Crawljax's **state abstraction**: `spoor/exploration/state.py:state_id(html)`
+normalizes a page's DOM and hashes it to a stable id, so revisiting an equivalent
+screen is recognized instead of exploding into near-duplicates (what lets the later
+explorer build a *finite* state graph). Identity is the page's tag structure plus a
+small allowlist of stable, state-bearing attributes (role/type and
+disabled/checked/expanded…), plus its visible text with volatile spans (timestamps,
+clock times, UUIDs/long tokens, digit runs) masked. Every other attribute value —
+`id`/`class`/`href`/`value`/`nonce`/`data-*` — and all volatile text is ignored, so
+a session token, a clock, or a cart-badge counter never forks a state, while a
+"Maintenance" vs. "Orders" heading or a changed state-bearing attribute does. The
+scenarios pin both directions (volatile-only edits collapse; genuine differences
+separate) and that the id is a deterministic 64-char hex digest. This is a first,
+PR-tunable cut (§2e notes state-abstraction tuning takes real iteration).
+
+The state-graph explorer loop that drives the gate and the state function is a later
+§2e slice (`exploration.feature`). `testgen.feature` (§2g) is listed in the table
+above ahead of implementation; its feature file is authored when its phase begins
+(see the Phase column).
