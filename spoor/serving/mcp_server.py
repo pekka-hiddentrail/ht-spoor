@@ -20,6 +20,7 @@ by the `spoor serve-mcp` command and the serving tests, never by the core engine
 from __future__ import annotations
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from spoor.serving.store import MapStore
@@ -64,7 +65,7 @@ def create_mcp_server(store: MapStore) -> MCPServer:
         """
         entry = store.get(url)
         if entry is None:
-            raise ValueError(f"URL not mapped: {url}")
+            raise ToolError(f"URL not mapped: {url}")
         return map_view(entry)
 
     return server
