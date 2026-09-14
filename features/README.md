@@ -43,7 +43,7 @@ are authored when their phase begins, not up front.
 | `exploration_state.feature` | Exploration state abstraction: normalize + hash the DOM so equivalent screens share one state id | §2e | `spoor/exploration` | 5 |
 | `exploration_discovery.feature` | Exploration element discovery: pull the interactive elements from the accessibility tree as candidate actions | §2e | `spoor/exploration` | 5 |
 | `exploration_control.feature` | Exploration run-level controls: hard budget (states/requests/wall-clock) + manual kill switch | §2e | `spoor/exploration` | 5 |
-| `exploration.feature` | Exploration mode: the state-graph explorer loop (later §2e slice) | §2e | `spoor/exploration` | 6 |
+| `exploration_loop.feature` | Exploration explorer loop: the state-action graph orchestrator tying together discovery, safety, state abstraction, and run controls | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -253,8 +253,27 @@ that the kill switch stops even an unbounded run and takes precedence over a
 reached budget bound. The explorer loop that records progress and honours these
 decisions is the next slice.
 
-The state-graph explorer loop that drives the gate, the state function, this
-discovery, and these run-level controls is a later §2e slice
-(`exploration.feature`). `testgen.feature` (§2g) is listed in the table
+`exploration_loop.feature` (§2e) is the fifth slice — the **explorer loop** that
+finally drives the gate, the state function, discovery, and the run controls
+together — built logic-first in sub-slices (see the §2e decomposition note in
+ROADMAP.md). This file covers **sub-slice 5a**: the pure-logic graph model
+(`spoor/exploration/graph.py` — `ExplorationGraph`, nodes = states keyed by
+`state_id` and carrying their discovered actions, edges = fired actions, plus a
+separate record of gate-skipped actions) and the `explore` orchestrator
+(`spoor/exploration/explorer.py`). `explore` walks a target depth-first with
+**reset-and-replay** navigation (to revisit a state it resets the driver and
+replays the path that first reached it, assuming no back button), discovering each
+state's actions (slice 3), asking the safety gate which may be fired (slice 1),
+recognising a revisited state by its `state_id` so the walk terminates instead of
+looping (slice 2), and checking the run controller before every action so a budget
+or the kill switch always stops it (slice 4). A destructive action on a non-sandbox
+target is recorded as a skip and its state never reached — worst case "missed a
+state", never "deleted real data". The browser sits behind a `BrowserDriver`
+protocol, so the whole loop is exercised in-process against a fake deterministic
+app; the scenarios pin mapping a two-state app, collapsing a revisited state to one
+node, skipping-vs-firing a destructive action by sandbox status, and stopping on a
+state budget or a thrown kill switch. The real Playwright driver, a live-browser
+run, and the `spoor explore` command are sub-slice 5b; per-transition signal
+capture is 5c. `testgen.feature` (§2g) is listed in the table
 above ahead of implementation; its feature file is authored when its phase begins
 (see the Phase column).
