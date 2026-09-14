@@ -43,12 +43,19 @@ real, stateful, asynchronously-rendered target. After a reset or a click the dri
 waits for DOM mutations to go quiet — a real `MutationObserver` feeding the pure
 `wait_for_quiescence` decision — before it reads the DOM or accessibility tree, so
 discovery and actuation see the same settled render rather than two different rendering
-instants. The wait is bounded: a page that never quiesces is recorded as unsettled (a
-`settled=False` flag on its captured signals) and the run proceeds on the last snapshot,
-where an earlier cut hung or crashed. And `reset` clears cookies and web storage before
-navigating, so every reset is a true first visit rather than a returning-visitor render
-that replay would diverge from. Nothing here is site-specific (§0): the same relocation,
-verification, click, settle, and reset drive every target.
+instants. Sub-slice 7e widens that quiet signal to the network: the driver counts
+in-flight requests (up on request start, down on finish/fail) and the settle wait treats
+the page as active while any request is outstanding, so a late AJAX response or a
+lazy-loaded image that would mutate the DOM after a hydration lull cannot be settled
+past — the divergence this fixed was measured on the server-rendered PrestaShop bench,
+where DOM-quiet alone captured a transient mid-hydration render. The wait is bounded: a
+page that never quiesces — mutating forever *or* holding a request open forever — is
+recorded as unsettled (a `settled=False` flag on its captured signals) and the run
+proceeds on the last snapshot, where an earlier cut hung or crashed. And `reset` clears
+cookies and web storage before navigating, so every reset is a true first visit rather
+than a returning-visitor render that replay would diverge from. Nothing here is
+site-specific (§0): the same relocation, verification, click, settle, and reset drive
+every target.
 """
 
 from __future__ import annotations
@@ -212,6 +219,13 @@ class PlaywrightDriver:
         # settled flag rides the next captured StateSignals into the map and wiki.
         self._last_settled = True
         self._last_mutations = 0
+        # In-flight request count, feeding the settle wait's network signal (§2e, 7e):
+        # the page is not quiet while a request is outstanding, so a late response that
+        # will mutate the DOM cannot be settled past. Incremented on request start,
+        # decremented on finish/fail; floored at zero so a finish event whose start was
+        # missed (a request begun on a torn-down document) can't drive it negative, and
+        # zeroed before each awaited navigation/click so a leak can't wedge it high.
+        self._inflight = 0
 
     def __enter__(self) -> PlaywrightDriver:
         self._playwright = sync_playwright().start()
@@ -227,6 +241,8 @@ class PlaywrightDriver:
         self._page = self._context.new_page()
         self._page.on("console", self._on_console)
         self._page.on("request", self._on_request)
+        self._page.on("requestfinished", self._on_request_done)
+        self._page.on("requestfailed", self._on_request_done)
         return self
 
     def _on_console(self, message: ConsoleMessage) -> None:
@@ -234,6 +250,12 @@ class PlaywrightDriver:
 
     def _on_request(self, request: Request) -> None:
         self._network.append(request.url)
+        self._inflight += 1
+
+    def _on_request_done(self, request: Request) -> None:
+        # Floor at zero: a finish/fail whose matching start wasn't counted (a request
+        # begun on a document torn down mid-navigation) must not push it negative.
+        self._inflight = max(0, self._inflight - 1)
 
     def __exit__(self, *exc: object) -> None:
         self.close()
@@ -286,6 +308,9 @@ class PlaywrightDriver:
         except PlaywrightError:
             # No same-origin document to clear yet (first reset, or a blank page).
             pass
+        # Zero the in-flight count before navigating so any leaked request from the
+        # previous page can't hold the fresh load "busy" forever (§2e, 7e).
+        self._inflight = 0
         page.goto(self._target, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
         self._wait_for_settle()
 
@@ -350,6 +375,7 @@ class PlaywrightDriver:
             quiet_window=self._quiet_window,
             timeout=self._settle_timeout,
             poll_interval=self._poll_interval,
+            busy=lambda: self._inflight > 0,
         )
         self._last_settled = result.settled
         return result
@@ -416,6 +442,9 @@ class PlaywrightDriver:
             raise ElementCovered(verdict.covering.role, verdict.covering.text)
         # ACTUATE: a real trusted mouse click at the verified centre.
         assert cx is not None and cy is not None  # ACTUATE always has a point
+        # Zero the in-flight count just before the click so the settle wait measures the
+        # network activity this click causes, not any residue from before it (§2e, 7e).
+        self._inflight = 0
         self._live_page.mouse.click(float(cx), float(cy))
         # Wait for the resulting render to go quiet before the explorer reads the new
         # state, so discovery and the state id see the settled page (§2e, 7b). A click
