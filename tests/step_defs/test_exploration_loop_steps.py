@@ -19,7 +19,7 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from spoor.exploration.capture import StateSignals
 from spoor.exploration.control import RunBudget, RunController
 from spoor.exploration.discovery import ActionableElement
-from spoor.exploration.explorer import explore
+from spoor.exploration.explorer import ActionError, explore
 from spoor.exploration.state import state_id
 
 scenarios("exploration_loop.feature")
@@ -32,7 +32,15 @@ class _FakeApp:
         self.root = ""
         self._actions: dict[str, list[ActionableElement]] = {}
         self._transitions: dict[tuple[str, ActionableElement], str] = {}
+        self._unperformable: set[str] = set()
         self._next_id = 0
+
+    def break_action(self, label: str) -> None:
+        """Mark an action's element as one that can't be actuated (see driver §2e)."""
+        self._unperformable.add(label)
+
+    def is_performable(self, action: ActionableElement) -> bool:
+        return action.name not in self._unperformable
 
     def add(self, from_state: str, label: str, role: str, to_state: str) -> None:
         self._next_id += 1
@@ -82,6 +90,11 @@ class _FakeDriver:
         return self._app.ax_nodes(self._current)
 
     def perform(self, action: ActionableElement) -> None:
+        # A real driver raises when the element can't be actuated (gone, hidden,
+        # covered); the fake mirrors that for the marked action so the explorer's
+        # graceful-degradation path is exercised in-process.
+        if not self._app.is_performable(action):
+            raise ActionError(f"{action.name!r} could not be performed")
         self._current = self._app.next_state(self._current, action)
 
     def capture_signals(self) -> StateSignals:
@@ -125,6 +138,11 @@ def sandbox_target_with_budget(context: dict[str, Any], n: int) -> None:
 def sandbox_target_killed(context: dict[str, Any]) -> None:
     context["target"] = "http://localhost:8000/"
     context["kill"] = True
+
+
+@given(parsers.parse('the action "{label}" cannot be performed'))
+def action_cannot_be_performed(context: dict[str, Any], label: str) -> None:
+    context["app"].break_action(label)
 
 
 @given("an app whose actions are:")

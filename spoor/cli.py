@@ -107,6 +107,17 @@ def explore(
     max_seconds: Annotated[
         float | None, typer.Option(help="Stop after this many seconds of wall-clock.")
     ] = None,
+    wiki: Annotated[
+        Path | None,
+        typer.Option(
+            "--wiki",
+            help=(
+                "Also write a browsable wiki of the map (one HTML page per state and "
+                "transition, plus an overview) into this directory. Open its "
+                "index.html in a browser."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Explore a target with no config, mapping its state-action graph.
 
@@ -114,8 +125,10 @@ def explore(
     screen, fires each one, and records where it leads — building a graph of what
     happens when you press every button. Destructive actions are only ever performed
     against a sandbox you declare with --sandbox; on any other site they are always
-    skipped and never fired. Bound the run with the budget options, and press Ctrl-C
-    to stop it early at any time.
+    skipped and never fired. An element that can't actually be clicked (gone, hidden,
+    or covered by the time it's reached) is recorded as skipped and the run continues.
+    Bound the run with the budget options, and press Ctrl-C to stop it early at any
+    time. Pass --wiki to also write a browsable wiki of the result.
     """
     import signal
 
@@ -154,6 +167,12 @@ def explore(
             "  (destructive actions were skipped — this target is not a declared "
             "sandbox)"
         )
+
+    if wiki is not None:
+        from spoor.exploration.wiki import render_wiki
+
+        render_wiki(graph, wiki, target=url)
+        typer.echo(f"  wiki written to:   {wiki / 'index.html'}")
 
 
 @app.command()

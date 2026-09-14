@@ -275,10 +275,13 @@ target is recorded as a skip and its state never reached — worst case "missed 
 state", never "deleted real data". The browser sits behind a `BrowserDriver`
 protocol, so the whole loop is exercised in-process against a fake deterministic
 app; the scenarios pin mapping a two-state app, collapsing a revisited state to one
-node, skipping-vs-firing a destructive action by sandbox status, and stopping on a
-state budget or a thrown kill switch. The browser sits behind a `BrowserDriver`
-protocol so the loop runs in-process against a fake; **sub-slice 5b**
-(`exploration_browser.feature`) supplies the real one.
+node, skipping-vs-firing a destructive action by sandbox status, stopping on a
+state budget or a thrown kill switch, and — for robustness against a live, dynamic
+target — recording a discovered action the driver **can't actuate** (a `perform`
+that raises `ActionError`: the element is gone/hidden/covered by replay time) as a
+skip and carrying on with the rest of the map rather than aborting the run. The
+browser sits behind a `BrowserDriver` protocol so the loop runs in-process against a
+fake; **sub-slice 5b** (`exploration_browser.feature`) supplies the real one.
 
 `exploration_browser.feature` (§2e) is **sub-slice 5b**: the real Playwright
 `BrowserDriver` (`spoor/exploration/driver.py`) and the `spoor explore <url>`
@@ -291,10 +294,16 @@ than by the captured backend node id, which is only meaningful within the snapsh
 it was discovered in. `spoor explore` bounds the run with the same `RunBudget`
 options as the loop, throws the kill switch on Ctrl-C (restoring the prior handler
 afterwards), and prints a summary of states discovered / transitions / actions
-skipped. The scenario drives real Chromium against a two-page loopback fixture
+skipped. The first scenario drives real Chromium against a two-page loopback fixture
 (Home ⇄ Next) and asserts the summary reports two states, two transitions, and zero
-skips. Nothing in the driver is site-specific (§0). Per-transition signal capture
-(screenshot / a11y / storage / HAR / console diffs) is sub-slice 5c.
+skips. A second scenario (**sub-slice 6b**) reruns the same live crawl with
+`--wiki <dir>` and asserts the command reports where the wiki was written and
+produces a complete browsable site — an index plus a page per state and per
+transition — whose overview counts match the run. When `perform` re-locates an
+element that's no longer actuatable it raises `ActionError`, which the loop records
+as a skip so one dead element never crashes the run. Nothing in the driver is
+site-specific (§0). Per-transition signal capture (screenshot / a11y / storage / HAR
+/ console diffs) is sub-slice 5c.
 
 `exploration_signals.feature` (§2e) is **sub-slice 5c** — per-transition signal
 capture — built logic-first as **5c-i**. §2e records a free/near-free signal bundle
@@ -343,8 +352,16 @@ redaction primitive before rendering, and every template autoescapes, so an inje
 `<script>` becomes inert text; the scenarios pin the structure (index + a page per
 state and per transition, links, overview), each page's bundle/diff, and that a
 console-logged bearer token never appears raw. `build_pages(graph, target)` is pure
-(no disk), with `render_wiki(...)` the thin writer around it. Wiring it to
-`spoor explore --wiki <dir>` and a live-archetype reliability test is slice 6b.
-`testgen.feature` (§2g) is listed in the table
+(no disk), with `render_wiki(...)` the thin writer around it. **Slice 6b** then wires
+it to the CLI — `spoor explore --wiki <dir>` renders the mapped graph to a browsable
+site after the crawl and reports its `index.html` — pinned live in
+`exploration_browser.feature`, and proven against the real archetype bench by a
+reliability integration test (`tests/test_integration_wiki.py`) that crawls Juice
+Shop and Sauce Demo under a small budget and asserts a complete, internally
+consistent wiki is produced every run (a page per state and per transition, index
+counts and links matching the graph, well-formed HTML). Surfacing the live crawl's
+un-actuatable elements as skips (the loop's `ActionError` path) rather than a crash
+is what makes that reliability hold against a dynamic SPA. `testgen.feature` (§2g) is
+listed in the table
 above ahead of implementation; its feature file is authored when its phase begins
 (see the Phase column).

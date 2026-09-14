@@ -67,6 +67,23 @@ Feature: The explorer builds a state-action graph
     Then the graph has states: home, gone
     And the graph has a transition "home --Delete account--> gone"
 
+  Scenario: An action that cannot be performed is recorded, and the run continues
+    # On a live, dynamic site a discovered element can be gone, hidden, or otherwise
+    # unclickable by the time reset-and-replay returns to it. That must never abort the
+    # whole run: the action is recorded as skipped (with why), and exploration carries
+    # on with the rest of the map. This is what makes a wiki reliably produced against
+    # a real target rather than only against a static fixture.
+    Given a sandbox target
+    And an app whose actions are:
+      | from | label  | role   | to   |
+      | home | Broken | button | dead |
+      | home | Open   | button | menu |
+    And the action "Broken" cannot be performed
+    When I explore from "home"
+    Then the action "Broken" from "home" is skipped
+    And the graph has a transition "home --Open--> menu"
+    And the graph has states: home, menu
+
   Scenario: The run stops when the state budget is reached
     Given a sandbox target with a budget of max_states 2
     And an app whose actions are:
