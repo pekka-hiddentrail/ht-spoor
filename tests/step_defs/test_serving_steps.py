@@ -8,7 +8,7 @@ mapped URLs come back with freshness, unmapped URLs 404, and every route is GET.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -58,7 +58,32 @@ def served_map(context: dict[str, Any], datatable: list[list[str]]) -> None:
             tier=1,
             captured_at=datetime.fromisoformat(fields["captured_at"]),
         )
+    context["store"] = store
     context["client"] = TestClient(create_app(store))
+    context["app"] = context["client"].app
+
+
+@given("the served map allows force-recheck")
+def served_map_allows_recheck(context: dict[str, Any]) -> None:
+    # Rebuild the app with a recheck seam wired in. The fake stands in for a real
+    # read/observation run: it re-records the URL (title marked "(rechecked)") with
+    # a fresh capture time and returns the new entry — or None for an unmapped URL,
+    # which the POST route turns into a 404. No real target is touched.
+    store: MapStore = context["store"]
+
+    def fake_recheck(url: str) -> Any:
+        existing = store.get(url)
+        if existing is None:
+            return None
+        old_title = existing.records[0]["title"]
+        return store.record(
+            url,
+            [{"title": f"{old_title} (rechecked)"}],
+            tier=existing.tier,
+            captured_at=datetime.now(UTC),
+        )
+
+    context["client"] = TestClient(create_app(store, recheck=fake_recheck))
     context["app"] = context["client"].app
 
 
@@ -103,6 +128,11 @@ def do_get(context: dict[str, Any], path: str) -> None:
         context["client"] = TestClient(create_app(MapStore()))
         context["app"] = context["client"].app
     context["response"] = context["client"].get(path)
+
+
+@when(parsers.parse('I POST "{path}"'))
+def do_post(context: dict[str, Any], path: str) -> None:
+    context["response"] = context["client"].post(path)
 
 
 # --- Then ----------------------------------------------------------------
@@ -171,3 +201,21 @@ def every_route_read_only(context: dict[str, Any]) -> None:
     for route in app_routes:
         methods = set(route.methods or set())
         assert methods <= {"GET", "HEAD"}, f"{route.path} allows {methods}"
+
+
+@then("the only non-GET serving route is the force-recheck route")
+def only_recheck_is_non_get(context: dict[str, Any]) -> None:
+    # The reframed §2f guarantee: with recheck enabled the app is still read-only
+    # w.r.t. the target — the *sole* non-GET route is the force-recheck, and its
+    # only non-read method is POST. Everything else stays GET/HEAD.
+    app_routes = [r for r in context["app"].routes if isinstance(r, Route)]
+    non_get = [
+        route
+        for route in app_routes
+        if not (set(route.methods or set()) <= {"GET", "HEAD"})
+    ]
+    assert len(non_get) == 1, f"expected exactly one non-GET route, got {non_get}"
+    (recheck_route,) = non_get
+    assert recheck_route.path == "/map/recheck", recheck_route.path
+    extra = set(recheck_route.methods or set()) - {"GET", "HEAD"}
+    assert extra == {"POST"}, extra

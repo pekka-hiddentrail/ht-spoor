@@ -8,6 +8,7 @@ run summary (§2d observability); later phases add their own commands as they la
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
 
@@ -17,7 +18,7 @@ from spoor.core import extract
 from spoor.core.config import load_config
 from spoor.operational.observability import RunSummary
 from spoor.operational.output import resolve_format, write_records
-from spoor.serving.store import MapStore, shareable_api_surface
+from spoor.serving.store import MapEntry, MapStore, shareable_api_surface
 
 app = typer.Typer(
     name="spoor",
@@ -70,7 +71,13 @@ def run(
         action_correlation=result.action_correlation,
     )
     MapStore().record(
-        cfg.target, result.records, tier=result.tier, api_surface=surface
+        cfg.target,
+        result.records,
+        tier=result.tier,
+        api_surface=surface,
+        # Kept local-only so a caller-forced recheck (§2f) can re-run this exact
+        # extraction; never projected into a served response.
+        config=cfg.model_dump(mode="json"),
     )
     typer.echo(f"Wrote {len(result.records)} record(s) to {output} ({fmt})")
     typer.echo(RunSummary.from_result(result).render())
@@ -82,12 +89,24 @@ def serve(
         str, typer.Option(help="Address to bind the read-only API server to.")
     ] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="Port to serve on.")] = 8000,
+    recheck: Annotated[
+        bool,
+        typer.Option(
+            "--recheck",
+            help=(
+                "Also allow forcing a re-check of a mapped URL (re-runs its "
+                "extraction and refreshes the map). Off by default."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Serve the captured map over a read-only REST API (ROADMAP.md §2f).
 
-    Answers questions about what earlier runs mapped; it never changes a target
-    or the stored map. Requires the optional serving extras: pip install
-    'ht-spoor[serve]'.
+    Answers questions about what earlier runs mapped; it never changes a target.
+    By default every route only reads the stored map. With --recheck it also
+    accepts a request to re-check a mapped URL: that re-runs the URL's extraction
+    (a fresh read of the site, never a change to it) and refreshes the map.
+    Requires the optional serving extras: pip install 'ht-spoor[serve]'.
     """
     try:
         import uvicorn
@@ -97,16 +116,33 @@ def serve(
         ) from exc
     from spoor.serving.api import create_app
 
-    uvicorn.run(create_app(MapStore()), host=host, port=port)  # pragma: no cover
+    store = MapStore()
+    recheck_fn = _build_recheck(store) if recheck else None
+    uvicorn.run(  # pragma: no cover
+        create_app(store, recheck=recheck_fn), host=host, port=port
+    )
 
 
 @app.command(name="serve-mcp")
-def serve_mcp() -> None:
+def serve_mcp(
+    recheck: Annotated[
+        bool,
+        typer.Option(
+            "--recheck",
+            help=(
+                "Also expose a tool to force a re-check of a mapped URL (re-runs "
+                "its extraction and refreshes the map). Off by default."
+            ),
+        ),
+    ] = False,
+) -> None:
     """Serve the captured map to agents over a read-only MCP server (stdio).
 
-    The same read-only answers as `spoor serve`, exposed as MCP tools for an
-    agent to consult; it never changes a target or the stored map. Requires the
-    optional serving extras: pip install 'ht-spoor[serve]'.
+    The same answers as `spoor serve`, exposed as MCP tools for an agent to
+    consult; it never changes a target. With --recheck it also exposes a tool to
+    re-check a mapped URL (re-runs the URL's extraction and refreshes the map — a
+    fresh read of the site, never a change to it). Requires the optional serving
+    extras: pip install 'ht-spoor[serve]'.
     """
     try:
         from spoor.serving.mcp_server import create_mcp_server
@@ -116,8 +152,20 @@ def serve_mcp() -> None:
         ) from exc
     import asyncio
 
-    server = create_mcp_server(MapStore())
+    store = MapStore()
+    recheck_fn = _build_recheck(store) if recheck else None
+    server = create_mcp_server(store, recheck=recheck_fn)
     asyncio.run(server.run_stdio_async())  # pragma: no cover
+
+
+def _build_recheck(store: MapStore) -> Callable[[str], MapEntry | None]:
+    """Bind the force-recheck seam to a store (lazy import keeps core light)."""
+    from spoor.serving.recheck import recheck_url
+
+    def recheck(url: str) -> MapEntry | None:
+        return recheck_url(store, url)
+
+    return recheck
 
 
 if __name__ == "__main__":  # pragma: no cover
