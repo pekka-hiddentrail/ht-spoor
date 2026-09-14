@@ -44,6 +44,7 @@ are authored when their phase begins, not up front.
 | `exploration_discovery.feature` | Exploration element discovery: pull the interactive elements from the accessibility tree as candidate actions | §2e | `spoor/exploration` | 5 |
 | `exploration_control.feature` | Exploration run-level controls: hard budget (states/requests/wall-clock) + manual kill switch | §2e | `spoor/exploration` | 5 |
 | `exploration_loop.feature` | Exploration explorer loop: the state-action graph orchestrator tying together discovery, safety, state abstraction, and run controls | §2e | `spoor/exploration` | 5 |
+| `exploration_browser.feature` | Exploration in a real browser: the `spoor explore` command drives the whole stack against a live site via a headless-Chromium driver | §2e | `spoor/exploration`, CLI | 5 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -272,8 +273,25 @@ state", never "deleted real data". The browser sits behind a `BrowserDriver`
 protocol, so the whole loop is exercised in-process against a fake deterministic
 app; the scenarios pin mapping a two-state app, collapsing a revisited state to one
 node, skipping-vs-firing a destructive action by sandbox status, and stopping on a
-state budget or a thrown kill switch. The real Playwright driver, a live-browser
-run, and the `spoor explore` command are sub-slice 5b; per-transition signal
-capture is 5c. `testgen.feature` (§2g) is listed in the table
+state budget or a thrown kill switch. The browser sits behind a `BrowserDriver`
+protocol so the loop runs in-process against a fake; **sub-slice 5b**
+(`exploration_browser.feature`) supplies the real one.
+
+`exploration_browser.feature` (§2e) is **sub-slice 5b**: the real Playwright
+`BrowserDriver` (`spoor/exploration/driver.py`) and the `spoor explore <url>`
+command that drives the whole exploration stack in a headless Chromium against a
+live site. The driver keeps one page open for the run, reads the accessibility tree
+over CDP for discovery, and — because reset-and-replay reloads the page and every
+DOM/accessibility node id changes — `perform` **re-locates** each element by its
+accessibility role and name (Playwright's role locator, which auto-waits) rather
+than by the captured backend node id, which is only meaningful within the snapshot
+it was discovered in. `spoor explore` bounds the run with the same `RunBudget`
+options as the loop, throws the kill switch on Ctrl-C (restoring the prior handler
+afterwards), and prints a summary of states discovered / transitions / actions
+skipped. The scenario drives real Chromium against a two-page loopback fixture
+(Home ⇄ Next) and asserts the summary reports two states, two transitions, and zero
+skips. Nothing in the driver is site-specific (§0). Per-transition signal capture
+(screenshot / a11y / storage / HAR / console diffs) is sub-slice 5c.
+`testgen.feature` (§2g) is listed in the table
 above ahead of implementation; its feature file is authored when its phase begins
 (see the Phase column).
