@@ -38,7 +38,41 @@ class ActionError(Exception):
     fired here" without aborting the run; the explorer records it as a skip and keeps
     mapping the rest of the site. It is *not* for programming errors or a broken
     driver — those should still propagate.
+
+    Robust actuation (§2e sub-slice 7a) tells two of these cases apart with the
+    subclasses below, so recovery (7c) can react to a covered element specifically and
+    a user reads why an action was skipped. Both subclass `ActionError`, so the
+    explorer's existing `except ActionError` still records a skip for either.
     """
+
+
+class ElementCovered(ActionError):
+    """The element is present but a different element sits over its click point (§2e).
+
+    The precise, generic signal that a layer is in the way: clicking the coordinate
+    would hit `role`/`text` instead of the target. Layer recovery (7c) catches this
+    specifically to interact past the layer; until then the explorer records it as a
+    skip like any other `ActionError`.
+    """
+
+    def __init__(self, role: str, text: str) -> None:
+        super().__init__(f"covered by {role} {text!r}")
+        self.role = role
+        self.text = text
+
+
+class ElementNotLocated(ActionError):
+    """No discovered node matches the action in the current page — it is gone (§2e).
+
+    Distinct from `ElementCovered`: nothing is intercepting the click, the element
+    simply is not there after reset-and-replay, so recovery cannot help. The explorer
+    records it as a skip.
+    """
+
+    def __init__(self, role: str, name: str) -> None:
+        super().__init__(f"{role} {name!r} could not be located")
+        self.role = role
+        self.name = name
 
 
 class BrowserDriver(Protocol):
@@ -63,9 +97,10 @@ class BrowserDriver(Protocol):
     def perform(self, action: ActionableElement) -> None:
         """Fire an action (e.g. click the element it names).
 
-        Raises `ActionError` if the element can't be actuated in the current page
-        (gone, hidden, covered); the explorer treats that as a recorded skip rather
-        than a failed run.
+        Raises `ActionError` if the element can't be actuated in the current page;
+        the explorer treats that as a recorded skip rather than a failed run. Robust
+        actuation (7a) narrows this to `ElementCovered` when a layer sits over the
+        click point and `ElementNotLocated` when the element is gone.
         """
         ...
 

@@ -48,6 +48,9 @@ are authored when their phase begins, not up front.
 | `exploration_signals.feature` | Exploration per-transition signal capture: a free-signal bundle per state and a before/after diff (a11y, console, storage, network, screenshot) per transition | §2e | `spoor/exploration` | 5 |
 | `exploration_signals_live.feature` | Live per-transition signal capture: the real driver reads console, storage, network, a11y, and a screenshot hash from an actual Chromium page | §2e | `spoor/exploration` | 5 |
 | `exploration_wiki.feature` | Exploration wiki generation: render the state-action graph into a browsable static HTML site (index + Mermaid overview, one page per state/transition), with captured values redacted before rendering | §2e | `spoor/exploration` | 5 |
+| `exploration_actuation.feature` | Robust actuation, pure verdict: classify a discovered element's click point as ACTUATE / COVERED / NOT LOCATED (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
+| `exploration_actuation_live.feature` | Robust actuation, live driver: relocate via the CDP tree and click by a verified coordinate; detect a covered element without mis-clicking (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
+| `exploration_recovery.feature` | Layer recovery: deal with a blocking layer as its own state and interact past it, safety-gated and progress-bounded, flagging when unresolved (sub-slice 7c — contract authored ahead of implementation) | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -293,10 +296,10 @@ fake; **sub-slice 5b** (`exploration_browser.feature`) supplies the real one.
 command that drives the whole exploration stack in a headless Chromium against a
 live site. The driver keeps one page open for the run, reads the accessibility tree
 over CDP for discovery, and — because reset-and-replay reloads the page and every
-DOM/accessibility node id changes — `perform` **re-locates** each element by its
-accessibility role and name (Playwright's role locator, which auto-waits) rather
-than by the captured backend node id, which is only meaningful within the snapshot
-it was discovered in. `spoor explore` bounds the run with the same `RunBudget`
+DOM/accessibility node id changes — `perform` **re-locates** each element in the live
+CDP accessibility tree (robust actuation, sub-slice 7a, below) rather than by the
+captured backend node id, which is only meaningful within the snapshot it was
+discovered in. `spoor explore` bounds the run with the same `RunBudget`
 options as the loop, throws the kill switch on Ctrl-C (restoring the prior handler
 afterwards), and prints a summary of states discovered / transitions / actions
 skipped. The first scenario drives real Chromium against a two-page loopback fixture
@@ -366,7 +369,34 @@ Shop and Sauce Demo under a small budget and asserts a complete, internally
 consistent wiki is produced every run (a page per state and per transition, index
 counts and links matching the graph, well-formed HTML). Surfacing the live crawl's
 un-actuatable elements as skips (the loop's `ActionError` path) rather than a crash
-is what makes that reliability hold against a dynamic SPA. `testgen.feature` (§2g) is
+is what makes that reliability hold against a dynamic SPA.
+
+`exploration_actuation.feature` + `exploration_actuation_live.feature` (§2e) are
+**sub-slice 7a** — robust actuation. A live diagnostic showed the explorer's skips on
+a real SPA were not overlay interception but a *relocation* failure: discovery reads an
+element from the CDP accessibility tree, while the old `perform` re-found it through
+Playwright's separate ARIA-name engine, so the two computed accessible names
+differently and a visible, uncovered element could match nothing and be skipped. 7a
+removes the divergence. `spoor/exploration/actuation.py` holds the pure verdict —
+`classify` returns ACTUATE / COVERED / NOT LOCATED — and `find_target`, which relocates
+by running `discover_actions` *itself*, so act-time and discovery-time matching cannot
+drift. `PlaywrightDriver.perform` re-reads the live tree, resolves the node over CDP
+(`DOM.resolveNode`), and runs scroll-into-view + box-centre + `elementFromPoint` in one
+call (so the point it verifies is the point it clicks), then clicks by coordinate with
+Playwright's trusted, CDP-backed mouse — identical headless or headed. COVERED raises
+`ElementCovered(role, text)` (carrying the layer, for recovery in 7c) and NOT LOCATED
+raises `ElementNotLocated`; both subclass `ActionError`, so the loop still records
+either as a skip until 7c. The context runs at a pinned 1280×800 viewport (device-scale
+1) so every computed coordinate is reproducible. The pure feature pins the verdict
+browser-free; the live feature drives real Chromium against a loopback fixture — an
+aria-label-only icon button is clicked, a below-the-fold button is scrolled into view
+and clicked, a covered button is reported covered *without activating the overlay*, and
+the viewport is fixed. First-cut limitations recorded honestly: duplicate role+name
+acts on the first in document order, and an iframe-hosted element is out of the top
+document's `elementFromPoint` reach. Nothing is site-specific (§0). Settling (7b) and
+layer recovery (7c, `exploration_recovery.feature`) are the following sub-slices.
+
+`testgen.feature` (§2g) is
 listed in the table
 above ahead of implementation; its feature file is authored when its phase begins
 (see the Phase column).
