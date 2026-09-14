@@ -34,6 +34,7 @@ from playwright.sync_api import (
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from spoor.exploration.capture import StateSignals
 from spoor.exploration.discovery import ActionableElement
 
 # The CDP command that returns the page's full accessibility node list — the same
@@ -113,6 +114,17 @@ class PlaywrightDriver:
             session.detach()
         nodes = result.get("nodes", [])
         return nodes if isinstance(nodes, list) else []
+
+    def capture_signals(self) -> StateSignals:
+        """The free-signal bundle for the current page (§2e sub-slice 5c).
+
+        Sub-slice 5c-i wires the seam and fills the one signal already read for free
+        here — the accessibility-node count. The screenshot hash, storage keys, and
+        the console and network/HAR deltas are sub-slice 5c-ii; until then they stay
+        at their empty defaults, so a transition's diff carries a real a11y delta and
+        empty (not wrong) values elsewhere.
+        """
+        return StateSignals(ax_node_count=len(self.ax_nodes()))
 
     def perform(self, action: ActionableElement) -> None:
         """Fire an action by re-locating its element in the current page.

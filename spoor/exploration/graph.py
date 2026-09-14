@@ -7,33 +7,45 @@ into a directed graph whose **nodes are abstract states** (keyed by the slice-2
 refused to fire are recorded separately as skips, so the map honestly shows both
 what was explored and what was deliberately left alone.
 
-This is just the data structure the orchestrator (`explorer.py`) fills; the signal
-bundle each node/edge will carry (screenshots, diffs) is a later sub-slice (5c).
-Nothing here is site-specific (§0).
+Each state node carries the free-signal bundle captured there and each transition
+carries the before/after diff of what its action changed (§2e sub-slice 5c); both
+are optional so the graph is usable before signal capture is wired in. Nothing here
+is site-specific (§0).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from spoor.exploration.capture import StateSignals, TransitionSignals
 from spoor.exploration.discovery import ActionableElement
 
 
 @dataclass
 class StateNode:
-    """One abstract state: its id and the actions discovered in it (§2e)."""
+    """One abstract state: its id, the actions discovered in it, and its signals (§2e).
+
+    `signals` is the free-signal bundle captured when the state was first reached
+    (§2e sub-slice 5c); `None` if signals weren't captured for this run.
+    """
 
     state_id: str
     actions: list[ActionableElement] = field(default_factory=list)
+    signals: StateSignals | None = None
 
 
 @dataclass(frozen=True)
 class Transition:
-    """A fired action and the state it led to: `from_state --action--> to_state`."""
+    """A fired action and the state it led to: `from_state --action--> to_state`.
+
+    `signals` is the before/after diff of what the action changed across the free
+    signals (§2e sub-slice 5c); `None` if signals weren't captured for this run.
+    """
 
     from_state: str
     action: ActionableElement
     to_state: str
+    signals: TransitionSignals | None = None
 
 
 @dataclass(frozen=True)
@@ -58,11 +70,16 @@ class ExplorationGraph:
         self._transitions: list[Transition] = []
         self._skipped: list[SkippedAction] = []
 
-    def add_state(self, state_id: str, actions: list[ActionableElement]) -> StateNode:
-        """Add a state and its discovered actions; a no-op if already present."""
+    def add_state(
+        self,
+        state_id: str,
+        actions: list[ActionableElement],
+        signals: StateSignals | None = None,
+    ) -> StateNode:
+        """Add a state, its discovered actions, and its signals; no-op if present."""
         node = self._states.get(state_id)
         if node is None:
-            node = StateNode(state_id=state_id, actions=list(actions))
+            node = StateNode(state_id=state_id, actions=list(actions), signals=signals)
             self._states[state_id] = node
         return node
 
@@ -73,9 +90,13 @@ class ExplorationGraph:
         return self._states[state_id]
 
     def add_transition(
-        self, from_state: str, action: ActionableElement, to_state: str
+        self,
+        from_state: str,
+        action: ActionableElement,
+        to_state: str,
+        signals: TransitionSignals | None = None,
     ) -> None:
-        self._transitions.append(Transition(from_state, action, to_state))
+        self._transitions.append(Transition(from_state, action, to_state, signals))
 
     def record_skip(
         self, from_state: str, action: ActionableElement, reason: str
