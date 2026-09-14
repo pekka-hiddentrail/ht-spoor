@@ -41,6 +41,7 @@ are authored when their phase begins, not up front.
 | `serving_mcp.feature` | Read-only serving of the same map over an MCP server (agent-facing tools; exploration-graph serving later) | §2f | `spoor/serving` | 4 / 5 |
 | `exploration_safety.feature` | Exploration safety gate: destructive actions are sandbox-only, non-configurable | §2e | `spoor/exploration`, `spoor/security` | 5 |
 | `exploration_state.feature` | Exploration state abstraction: normalize + hash the DOM so equivalent screens share one state id | §2e | `spoor/exploration` | 5 |
+| `exploration_discovery.feature` | Exploration element discovery: pull the interactive elements from the accessibility tree as candidate actions | §2e | `spoor/exploration` | 5 |
 | `exploration.feature` | Exploration mode: the state-graph explorer loop (later §2e slice) | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
@@ -221,7 +222,20 @@ scenarios pin both directions (volatile-only edits collapse; genuine differences
 separate) and that the id is a deterministic 64-char hex digest. This is a first,
 PR-tunable cut (§2e notes state-abstraction tuning takes real iteration).
 
-The state-graph explorer loop that drives the gate and the state function is a later
-§2e slice (`exploration.feature`). `testgen.feature` (§2g) is listed in the table
+`exploration_discovery.feature` (§2e) is the third slice — still pure logic —
+answering "what can the explorer act on here?" without a new mechanism. It reuses
+the §2c accessibility-tree signal, which already labels every node with a generic
+ARIA role: `spoor/exploration/discovery.py:discover_actions` keeps the nodes whose
+role is interactive (button/link/textbox/checkbox/menuitem/…) and that aren't
+ignored, and reads each one's role, accessible name, and backend DOM node id into an
+`ActionableElement`. The accessible name doubles as the label the safety gate (slice
+1) classifies; the backend node id is the handle the later explorer loop uses to
+locate the element. Document order and every interactive occurrence are preserved —
+deduplication and driving the actions are the explorer loop's job, not this slice's.
+An unnamed element (an icon-only button) is still a candidate, just with an empty
+label. The role set is the same for every target (§0).
+
+The state-graph explorer loop that drives the gate, the state function, and this
+discovery is a later §2e slice (`exploration.feature`). `testgen.feature` (§2g) is listed in the table
 above ahead of implementation; its feature file is authored when its phase begins
 (see the Phase column).
