@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<!--
+  Signal-capture fixture (ROADMAP.md §2e, sub-slice 5c-ii). Exercises the live
+  driver's capture_signals against a real page: on load it writes a storage key and
+  logs to the console; the "Go next" button logs, writes another storage key, fires
+  a network request, then navigates to a visually-distinct second page. The tall
+  black bar at the top gives the screenshot real gradient structure so the
+  perceptual hash differs from the next page (whose bar sits lower) — a robust,
+  non-flat visual change to detect.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Home</title>
+    <style>
+      body { margin: 0; font-family: sans-serif; }
+      .bar { height: 300px; background: #000; }
+    </style>
+  </head>
+  <body>
+    <div class="bar"></div>
+    <h1>Home</h1>
+    <button id="go">Go next</button>
+    <script>
+      console.log("home ready");
+      localStorage.setItem("session", "s1");
+      document.getElementById("go").addEventListener("click", function () {
+        console.log("going next");
+        localStorage.setItem("opened", "1");
+        fetch("/ping.txt").catch(function () {});
+        location.assign("/explore_signals_next.html");
+      });
+    </script>
+  </body>
+</html>

@@ -46,6 +46,7 @@ are authored when their phase begins, not up front.
 | `exploration_loop.feature` | Exploration explorer loop: the state-action graph orchestrator tying together discovery, safety, state abstraction, and run controls | §2e | `spoor/exploration` | 5 |
 | `exploration_browser.feature` | Exploration in a real browser: the `spoor explore` command drives the whole stack against a live site via a headless-Chromium driver | §2e | `spoor/exploration`, CLI | 5 |
 | `exploration_signals.feature` | Exploration per-transition signal capture: a free-signal bundle per state and a before/after diff (a11y, console, storage, network, screenshot) per transition | §2e | `spoor/exploration` | 5 |
+| `exploration_signals_live.feature` | Live per-transition signal capture: the real driver reads console, storage, network, a11y, and a screenshot hash from an actual Chromium page | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -309,10 +310,21 @@ now carries a bundle on every state node and a diff on every transition, and the
 new `capture_signals()` seam on the `BrowserDriver` protocol. It runs in-process
 against the fake driver; the scenarios pin the full diff of a signal-changing action,
 an honest empty diff when an action changes nothing, storage keys removed as well as
-added, and each state node carrying the bundle captured there. Filling that bundle
-from a live page (a real screenshot hash and live console/network/HAR deltas) is
-**sub-slice 5c-ii**; the real driver already reports the one signal it reads for free
-(the a11y node count) and leaves the rest at their empty defaults until then.
+added, and each state node carrying the bundle captured there. `exploration_signals_live.feature` (§2e)
+is **sub-slice 5c-ii**: filling that bundle from a real page. `PlaywrightDriver`
+now reads all five §2e free signals from live Chromium — the CDP accessibility-node
+count, the console messages and network requests accumulated by page listeners
+attached at launch (so a transition's diff is exactly the slice between its
+before/after snapshots, correct even under reset-and-replay's reloads), the current
+`localStorage`+`sessionStorage` keys, and a **perceptual (dHash) hash of a
+screenshot**, reusing the tier-3 visual hasher (`spoor/core/visual.py`) so a
+transition is flagged as changing the screenshot only on a real visual change, not
+on anti-aliasing noise. Every signal is opportunistic — one that can't be read is
+recorded empty rather than failing the run. Its scenarios drive the real driver
+against a signal-rich loopback fixture (a page that logs, writes storage, fetches,
+and navigates to a visually-distinct second page) and assert both the captured
+bundle and a real click's diff. The signals attach to the graph on every `spoor
+explore` run; rendering them per node and edge is the wiki (slice 6).
 `testgen.feature` (§2g) is listed in the table
 above ahead of implementation; its feature file is authored when its phase begins
 (see the Phase column).
