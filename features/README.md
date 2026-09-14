@@ -50,6 +50,8 @@ are authored when their phase begins, not up front.
 | `exploration_wiki.feature` | Exploration wiki generation: render the state-action graph into a browsable static HTML site (index + Mermaid overview, one page per state/transition), with captured values redacted before rendering | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation.feature` | Robust actuation, pure verdict: classify a discovered element's click point as ACTUATE / COVERED / NOT LOCATED (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation_live.feature` | Robust actuation, live driver: relocate via the CDP tree and click by a verified coordinate; detect a covered element without mis-clicking (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
+| `exploration_settling.feature` | State settling, pure quiescence policy: settle when DOM mutations go quiet for a window, report unsettled at a bounded timeout — under a fake clock (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
+| `exploration_settling_live.feature` | Settling + reset fidelity, live driver: reset clears cookies+storage for a true first visit, reads wait for real DOM quiescence, a never-quiet page is flagged unsettled not fatal (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
 | `exploration_recovery.feature` | Layer recovery: deal with a blocking layer as its own state and interact past it, safety-gated and progress-bounded, flagging when unresolved (sub-slice 7c — contract authored ahead of implementation) | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
@@ -393,8 +395,33 @@ aria-label-only icon button is clicked, a below-the-fold button is scrolled into
 and clicked, a covered button is reported covered *without activating the overlay*, and
 the viewport is fixed. First-cut limitations recorded honestly: duplicate role+name
 acts on the first in document order, and an iframe-hosted element is out of the top
-document's `elementFromPoint` reach. Nothing is site-specific (§0). Settling (7b) and
-layer recovery (7c, `exploration_recovery.feature`) are the following sub-slices.
+document's `elementFromPoint` reach. Nothing is site-specific (§0). Settling (7b, below)
+and layer recovery (7c, `exploration_recovery.feature`) are the following sub-slices.
+
+`exploration_settling.feature` + `exploration_settling_live.feature` (§2e) are
+**sub-slice 7b** — state settling and reset fidelity. The same diagnostic showed 7a's
+robust actuation was necessary but not sufficient: the map stayed shallow because the
+page discovered was not the page acted on. Two coupled defects. First, **no settling** —
+discovery and actuation happened at different rendering instants, so on an asynchronously
+rendered SPA an element present at discovery time was gone by click time. 7b waits for a
+*real* rendering-stopped signal: `spoor/exploration/settling.py:wait_for_quiescence`
+settles once a monotonic DOM-mutation count holds steady for a quiet window and reports
+**unsettled** at a bounded safety timeout, driven by an injectable clock/sleep (the
+`RunController` seam) so the pure feature exercises it with no browser. The live driver
+feeds it a real `MutationObserver` counter (installed on every document via
+`add_init_script`) and waits after each reset and each click, so reads and post-action
+returns see the settled page; a page that never quiesces is captured with a
+`settled=False` flag (shown in the wiki as "Did not settle") and the run proceeds on the
+last snapshot rather than hanging or crashing. Second, **reset didn't reset the app** —
+a persistent browser context carried cookies and storage across navigations, so replay
+landed on a returning-visitor render. 7b's `reset` clears cookies and both web-storage
+areas before navigating (one context kept; only per-origin state wiped) and waits on
+quiescence instead of `networkidle` (removing a crash when that signal never arrived), so
+every reset is a true first visit. The live feature pins all three behaviours against
+loopback fixtures (reset restores first-visit content, deferred content is discovered, a
+forever-mutating page is flagged unsettled not fatal); the browser-free driver tests pin
+the post-click settle poll and the cookie/storage clear under a fake clock. Nothing is
+site-specific (§0): one quiescence rule and one reset for every target.
 
 `testgen.feature` (§2g) is
 listed in the table

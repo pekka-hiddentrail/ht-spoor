@@ -1,0 +1,47 @@
+<!doctype html>
+<!--
+  Reset-fidelity fixture for exploration settling (ROADMAP.md §2e, 7b).
+
+  A page that remembers a prior visit in BOTH a cookie and localStorage. On load it
+  shows first-visit content unless either marker is present, in which case it shows
+  returning-visitor content. `window.__recordReturn()` sets both markers and re-renders
+  as a returning visitor. A plain reload would keep showing returning-visitor content
+  (the markers persist); only a reset that clears cookies AND storage returns the page
+  to its first-visit state — which is exactly what 7b's reset must do. Requiring BOTH
+  markers cleared proves the reset clears cookies and web storage, not just one.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Returning-visitor fixture</title>
+  </head>
+  <body>
+    <h1>Account</h1>
+    <p id="visit">…</p>
+    <script>
+      const MARKER = "spoor_returned";
+
+      function hasReturned() {
+        const inStorage = localStorage.getItem(MARKER) !== null;
+        const inCookie = document.cookie.split(";").some(
+          (c) => c.trim().startsWith(MARKER + "=")
+        );
+        return inStorage || inCookie;
+      }
+
+      function render() {
+        document.getElementById("visit").textContent = hasReturned()
+          ? "Welcome back, returning visitor"
+          : "Welcome, new visitor";
+      }
+
+      window.__recordReturn = function () {
+        localStorage.setItem(MARKER, "1");
+        document.cookie = MARKER + "=1; path=/";
+        render();
+      };
+
+      render();
+    </script>
+  </body>
+</html>

@@ -27,6 +27,13 @@ class StateSignals:
     the network requests seen (the HAR trace, as request identifiers), and a hash
     of the screenshot (`None` when no screenshot was captured). Tuples, not lists,
     so the bundle is hashable and safe to share between a node and its diffs.
+
+    `settled` records whether the page went quiet before this bundle was read (§2e,
+    7b): `True` when DOM mutations stopped within the settle timeout, `False` when the
+    page never quiesced and the snapshot is best-effort. It defaults to `True` so a
+    state captured by a driver that does not track settling (or a fake app that is
+    always settled) reads as settled; only the live driver flips it to `False` for a
+    page that would not stop rendering.
     """
 
     ax_node_count: int = 0
@@ -34,6 +41,7 @@ class StateSignals:
     storage_keys: tuple[str, ...] = ()
     network_requests: tuple[str, ...] = ()
     screenshot_hash: str | None = None
+    settled: bool = True
 
 
 @dataclass(frozen=True)

@@ -1,18 +1,23 @@
 """Unit tests for the live browser driver's action contract (ROADMAP.md §2e).
 
 The full driver is exercised end to end against real pages by the live scenarios
-(`exploration_actuation_live.feature`), which need a headless Chromium. These
-browser-free tests pin the pieces of robust actuation (7a) that must hold without a
-live page: `perform` re-locates through the accessibility tree, resolves the node and
-hit-tests its click point over CDP, and turns the result into one of three honest
-outcomes — a coordinate click (ACTUATE), `ElementCovered`, or `ElementNotLocated` —
-while a CDP failure becomes a plain `ActionError` (a recorded skip, not a crash) and a
-post-click load-state timeout is swallowed (an in-page change leaves the page idle).
+(`exploration_actuation_live.feature` and `exploration_settling_live.feature`), which
+need a headless Chromium. These browser-free tests pin the pieces of robust actuation
+(7a) and settling/reset fidelity (7b) that must hold without a live page: `perform`
+re-locates through the accessibility tree, resolves the node and hit-tests its click
+point over CDP, and turns the result into one of three honest outcomes — a coordinate
+click (ACTUATE), `ElementCovered`, or `ElementNotLocated` — while a CDP failure becomes
+a plain `ActionError` (a recorded skip, not a crash); after a click it waits for DOM
+quiescence; and `reset` clears cookies and web storage before navigating so replay is a
+true first visit.
 
 A hand-rolled fake page stands in for the Playwright `Page`, injected onto the driver
 directly. `perform` touches `ax_nodes()` (a CDP accessibility-tree read), a second CDP
 session for `DOM.resolveNode` + `Runtime.callFunctionOn`, `page.mouse.click(...)`, and
-`wait_for_load_state(...)`, so the fake implements exactly those.
+`page.evaluate(...)` (the mutation-count read the settle wait polls); `reset` touches
+`context.clear_cookies()`, `page.evaluate(...)` (the storage clear), and `page.goto`.
+The fake implements exactly those, and the driver is built with a fake clock/sleep so
+the settle wait resolves instantly and deterministically.
 """
 
 from __future__ import annotations
@@ -21,7 +26,6 @@ from typing import Any
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from spoor.exploration.discovery import ActionableElement
 from spoor.exploration.driver import PlaywrightDriver
@@ -87,9 +91,13 @@ class _FakeCDPSession:
 class _FakeContext:
     def __init__(self, session: _FakeCDPSession) -> None:
         self._session = session
+        self.cookies_cleared = 0
 
     def new_cdp_session(self, page: object) -> _FakeCDPSession:
         return self._session
+
+    def clear_cookies(self) -> None:
+        self.cookies_cleared += 1
 
 
 class _FakeMouse:
@@ -107,23 +115,40 @@ class _FakePage:
         nodes: list[dict[str, object]] = _MATCHING_NODES,
         probe_value: dict[str, Any] | None = None,
         call_error: Exception | None = None,
-        load_error: Exception | None = None,
     ) -> None:
         self.session = _FakeCDPSession(
             nodes=nodes, probe_value=probe_value, call_error=call_error
         )
         self.context = _FakeContext(self.session)
         self.mouse = _FakeMouse()
-        self._load_error = load_error
+        self.goto_urls: list[str] = []
+        self.evaluated: list[str] = []
 
-    def wait_for_load_state(self, state: str, timeout: float | None = None) -> None:
-        if self._load_error is not None:
-            raise self._load_error
+    def evaluate(self, expression: str) -> Any:
+        # The settle wait polls the mutation counter (always 0 here — quiet); the reset
+        # clears web storage. Record every call so tests can assert what ran.
+        self.evaluated.append(expression)
+        return 0
+
+    def goto(self, url: str, **kwargs: Any) -> None:
+        self.goto_urls.append(url)
 
 
 def _driver_with_page(page: _FakePage) -> PlaywrightDriver:
-    driver = PlaywrightDriver("http://127.0.0.1:0/")
+    # A fake clock advanced only by the fake sleep, so the settle wait's quiet window
+    # elapses in a handful of no-op iterations rather than real wall-clock time.
+    clock = {"now": 0.0}
+
+    def fake_sleep(dt: float) -> None:
+        clock["now"] += dt
+
+    driver = PlaywrightDriver(
+        "http://127.0.0.1:0/",
+        clock=lambda: clock["now"],
+        sleep=fake_sleep,
+    )
     driver._page = page  # type: ignore[assignment]
+    driver._context = page.context  # type: ignore[assignment]
     return driver
 
 
@@ -134,16 +159,25 @@ def test_perform_clicks_verified_point() -> None:
     assert page.mouse.clicked_at == (10.0, 20.0)
 
 
-def test_perform_swallows_post_click_load_timeout() -> None:
-    # A click that triggers only an in-page change leaves the page already idle, so a
-    # networkidle timeout afterwards must not fail the action.
-    page = _FakePage(
-        probe_value=_HITS_TARGET,
-        load_error=PlaywrightTimeoutError("networkidle timeout"),
-    )
+def test_perform_waits_for_settle_after_click() -> None:
+    # After the click the driver polls the mutation counter to wait for the resulting
+    # render to go quiet, so the explorer's next read sees the settled page (7b).
+    page = _FakePage(probe_value=_HITS_TARGET)
     driver = _driver_with_page(page)
-    driver.perform(_ACTION)  # does not raise
+    driver.perform(_ACTION)
     assert page.mouse.clicked_at == (10.0, 20.0)
+    assert page.evaluated, "expected the settle wait to poll the mutation counter"
+
+
+def test_reset_clears_cookies_and_storage_then_navigates() -> None:
+    # Reset fidelity (7b): a reset must clear cookies and web storage before navigating,
+    # so replay lands on a true first visit rather than a returning-visitor render.
+    page = _FakePage(probe_value=_HITS_TARGET)
+    driver = _driver_with_page(page)
+    driver.reset()
+    assert page.context.cookies_cleared == 1
+    assert any("localStorage" in expr for expr in page.evaluated)
+    assert page.goto_urls == ["http://127.0.0.1:0/"]
 
 
 def test_perform_covered_raises_element_covered() -> None:

@@ -1,0 +1,28 @@
+<!doctype html>
+<!--
+  Deferred-render fixture for exploration settling (ROADMAP.md §2e, 7b).
+
+  An actionable button is appended a short time after the load event, standing in for
+  the asynchronous hydration a real SPA does after "network idle". Discovery that reads
+  the accessibility tree the instant the page loads would miss it; discovery that first
+  waits for DOM mutations to go quiet finds it. The delay is shorter than the driver's
+  quiet window, so the deferred mutation resets the quiet timer and the settle wait does
+  not conclude before the button appears.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Deferred-content fixture</title>
+  </head>
+  <body>
+    <h1>Dashboard</h1>
+    <div id="host"></div>
+    <script>
+      setTimeout(() => {
+        const button = document.createElement("button");
+        button.textContent = "Deferred action";
+        document.getElementById("host").appendChild(button);
+      }, 250);
+    </script>
+  </body>
+</html>
