@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<!--
+  Robust-actuation fixture (ROADMAP.md §2e, sub-slice 7a). Reproduces the *class* of
+  actuation problem the live diagnostic found, with nothing site-specific:
+
+    * "Open account menu" is an icon button named only by an aria-label (its visible
+      text is a glyph) — the shape the old role+name relocation could fail to click.
+    * "Far below the fold" sits below a tall spacer, so it must be scrolled into view
+      before its centre is on screen.
+    * "Checkout" is covered by an overlay sitting directly over it, so its click point
+      resolves to the overlay, not the button — the driver must report it covered and
+      must NOT activate the overlay. The overlay covers only Checkout, leaving the
+      other two buttons clickable.
+
+  Each clickable records that it (and only it) was clicked into window.__clicked, which
+  the step definitions read back. The overlay records into window.__overlayActivated so
+  a test can assert a covered element was never mis-clicked.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Actuation</title>
+    <style>
+      body { margin: 0; font-family: sans-serif; }
+      .spacer { height: 2000px; }
+      .covered { position: relative; display: inline-block; }
+      .covered #overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 10;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Actuation</h1>
+
+    <!-- Icon button: accessible name comes from aria-label, not the glyph text. -->
+    <button id="menu" aria-label="Open account menu">&#9776;</button>
+
+    <!-- Covered button: the overlay sits directly over its click point. -->
+    <span class="covered">
+      <button id="checkout">Checkout</button>
+      <div id="overlay"></div>
+    </span>
+
+    <div class="spacer"></div>
+
+    <!-- Below-the-fold button: needs scrolling into view. -->
+    <button id="far">Far below the fold</button>
+
+    <script>
+      window.__clicked = null;
+      window.__overlayActivated = false;
+      function record(label) {
+        return function () {
+          window.__clicked = label;
+        };
+      }
+      document.getElementById("menu").addEventListener("click", record("Open account menu"));
+      document.getElementById("far").addEventListener("click", record("Far below the fold"));
+      document.getElementById("checkout").addEventListener("click", record("Checkout"));
+      document.getElementById("overlay").addEventListener("click", function () {
+        window.__overlayActivated = true;
+      });
+    </script>
+  </body>
+</html>

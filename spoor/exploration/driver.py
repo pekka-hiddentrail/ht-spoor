@@ -13,22 +13,37 @@ buffers accumulated by the page listeners, the current web-storage keys, and a
 perceptual hash of a screenshot (reusing the tier-3 visual hasher). Each signal is
 opportunistic: one that can't be read is recorded empty rather than failing the run.
 
-`perform` is the subtler of the two. The explorer walks with reset-and-replay:
-to revisit a state it resets the driver and replays the actions that first reached
-it. A reload reassigns every DOM/accessibility node id, so an action's captured
-`backend_node_id` is only meaningful within the snapshot it was discovered in and
-cannot be used to click after a replay. Instead `perform` **re-locates** the element
-in the *current* page by its accessibility role and name — exactly what the action
-carries — using Playwright's role locator, which also gives auto-waiting and
-actionability checks for free. When several elements share a role and name it acts on
-the first in document order (deterministic; a known first-cut limitation). Nothing
-here is site-specific (§0): the same driver drives every target.
+`perform` is the subtler of the two, and robust actuation (§2e sub-slice 7a) is why.
+The explorer walks with reset-and-replay: to revisit a state it resets the driver and
+replays the actions that first reached it. A reload reassigns every DOM/accessibility
+node id, so an action's captured `backend_node_id` is only meaningful within the
+snapshot it was discovered in and cannot be used to click after a replay. So `perform`
+**re-locates** the element in the *current* page — but through the *same* engine
+discovery used: it re-reads the live CDP accessibility tree and finds the node with
+`find_target` (which runs `discover_actions` itself), so the act-time match cannot
+diverge from the discovery-time match. An earlier cut re-located through Playwright's
+separate ARIA-name engine, and the two computed accessible names differently, so a
+visible, uncovered element could match nothing and be skipped — the bug 7a fixes.
+
+Having the node, `perform` resolves it to a live DOM element over CDP, scrolls it into
+view, reads its box centre live, and **verifies** with `elementFromPoint` that the
+point resolves to the element (or a descendant) before clicking it by coordinate with
+a real trusted mouse click — so a click is never fired blind at whatever happens to be
+on top. The verification yields three outcomes: it clicks (ACTUATE), raises
+`ElementCovered` when a different element is on top (COVERED — the hand-off to layer
+recovery, 7c), or raises `ElementNotLocated` when no node matches (gone). The viewport
+is pinned to a fixed size at device-scale 1 so CSS pixels equal device pixels equal the
+coordinate space, and every computed centre is reproducible run to run, headless or
+headed. When several elements share a role and name it acts on the first in document
+order (deterministic; a known first-cut limitation, as are elements hosted in an
+iframe, which the top document's `elementFromPoint` cannot reach). Nothing here is
+site-specific (§0): the same relocation, verification, and click drive every target.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from typing import Any
 
 from playwright.sync_api import (
     Browser,
@@ -43,9 +58,19 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from spoor.core.visual import InvalidImageError, perceptual_hash
+from spoor.exploration.actuation import (
+    CoveringElement,
+    Verdict,
+    classify,
+    find_target,
+)
 from spoor.exploration.capture import StateSignals
 from spoor.exploration.discovery import ActionableElement
-from spoor.exploration.explorer import ActionError
+from spoor.exploration.explorer import (
+    ActionError,
+    ElementCovered,
+    ElementNotLocated,
+)
 
 # JS that lists both web-storage areas' keys — the "storage-state diff" §2e signal.
 _STORAGE_KEYS_JS = (
@@ -56,7 +81,43 @@ _STORAGE_KEYS_JS = (
 # call the §2c accessibility signal uses, in the shape `discover_actions` expects.
 _AX_TREE_COMMAND = "Accessibility.getFullAXTree"
 _NAV_TIMEOUT_MS = 15_000
-_CLICK_TIMEOUT_MS = 5_000
+
+# A fixed viewport at device-scale 1: CSS pixels equal device pixels equal the
+# coordinate space `elementFromPoint` and the mouse both use, so every computed click
+# centre is reproducible run to run — the reproducibility robust actuation needs (7a).
+_VIEWPORT_WIDTH = 1280
+_VIEWPORT_HEIGHT = 800
+
+# Run on the element `perform` resolved: scroll it into view, read its box centre, and
+# hit-test that point in one call — so the point we verify is the point we click, with
+# no window for a layout shift to open between reading and clicking. Returns the centre
+# and whether the point lands on the element (or a descendant); when it does not, a
+# best-effort description of what is on top, for the covered flag and recovery (7c).
+_ACTUATION_PROBE_JS = """
+function() {
+  this.scrollIntoView({block: 'center', inline: 'center'});
+  const r = this.getBoundingClientRect();
+  if (r.width === 0 && r.height === 0) {
+    return {hitsTarget: false, covering: null, cx: null, cy: null};
+  }
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  const hit = document.elementFromPoint(cx, cy);
+  if (hit === null) {
+    return {hitsTarget: false, covering: null, cx: null, cy: null};
+  }
+  const hitsTarget = hit === this || this.contains(hit);
+  let covering = null;
+  if (!hitsTarget) {
+    const label = hit.getAttribute('aria-label') || hit.textContent || '';
+    covering = {
+      role: hit.getAttribute('role') || hit.tagName.toLowerCase(),
+      text: label.trim().slice(0, 200)
+    };
+  }
+  return {hitsTarget, covering, cx, cy};
+}
+"""
 
 
 class PlaywrightDriver:
@@ -86,7 +147,10 @@ class PlaywrightDriver:
     def __enter__(self) -> PlaywrightDriver:
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch()
-        self._context = self._browser.new_context()
+        self._context = self._browser.new_context(
+            viewport={"width": _VIEWPORT_WIDTH, "height": _VIEWPORT_HEIGHT},
+            device_scale_factor=1,
+        )
         self._page = self._context.new_page()
         self._page.on("console", self._on_console)
         self._page.on("request", self._on_request)
@@ -189,36 +253,87 @@ class PlaywrightDriver:
             return None
 
     def perform(self, action: ActionableElement) -> None:
-        """Fire an action by re-locating its element in the current page.
+        """Fire an action by re-locating its element and clicking a verified point.
 
-        Locates by accessibility role and name (not the captured backend id, which
-        does not survive a reload), clicks the first match, then waits for the page
-        to settle so `state_html` reflects the resulting state. Raises `ActionError`
-        if the element can't be actuated (gone, hidden, covered, or no longer
-        matching after a re-render) so the explorer can record a skip and carry on
-        rather than the whole run failing on one dead element (§2e).
+        Re-reads the live accessibility tree and finds the node through the *same*
+        function discovery uses (`find_target`), resolves it to a live DOM element over
+        CDP, scrolls it into view, reads its box centre, and verifies with
+        `elementFromPoint` that the point lands on the element before clicking it by
+        coordinate. Three honest outcomes (7a): a real trusted click on ACTUATE;
+        `ElementCovered` when a different element is on top (COVERED); or
+        `ElementNotLocated` when no node matches (gone). Both raises are subclasses of
+        `ActionError`, so the explorer records a skip and carries on rather than the
+        whole run failing on one element (§2e). After a click, waits for the page to
+        settle so `state_html` reflects the resulting state.
         """
         page = self._live_page
-        # Playwright types the role as a Literal of ARIA roles; discovery only ever
-        # yields real ARIA role strings, so the cast is safe.
-        role = cast(Any, action.role)
-        if action.name:
-            locator = page.get_by_role(role, name=action.name, exact=True)
-        else:
-            locator = page.get_by_role(role)
-        try:
-            locator.first.click(timeout=_CLICK_TIMEOUT_MS)
-        except PlaywrightError as exc:
-            # Covers the click timeout (PlaywrightTimeoutError is a PlaywrightError)
-            # and the "element is not attached / not visible" family. The reason is
-            # kept terse and free of the run-varying timeout value so it's stable; the
-            # chained cause keeps the full Playwright detail for local debugging.
-            raise ActionError(
-                f"{action.role} {action.name!r} could not be clicked"
-            ) from exc
+        target = find_target(self.ax_nodes(), action.role, action.name)
+        if target is None or target.backend_node_id is None:
+            # No matching node in the current page — or one without a resolvable DOM
+            # id, so it cannot be actuated by coordinate. Either way it is gone.
+            raise ElementNotLocated(action.role, action.name)
+        probe = self._probe_click_point(page, target.backend_node_id)
+        cx, cy = probe["cx"], probe["cy"]
+        covering = probe["covering"]
+        cover = (
+            CoveringElement(str(covering["role"]), str(covering["text"]))
+            if isinstance(covering, Mapping)
+            else None
+        )
+        if cx is None or cy is None:
+            # The element resolved but offers no clickable point (zero-size, or its
+            # centre falls outside the page even after scrolling) — not actuatable and
+            # nothing is on top of it, so it is effectively gone rather than covered.
+            raise ElementNotLocated(action.role, action.name)
+        verdict = classify(
+            located=True,
+            point_hits_target=bool(probe["hitsTarget"]),
+            covering=cover,
+        )
+        if verdict.verdict is Verdict.COVERED:
+            assert verdict.covering is not None  # COVERED always carries the layer
+            raise ElementCovered(verdict.covering.role, verdict.covering.text)
+        # ACTUATE: a real trusted mouse click at the verified centre.
+        page.mouse.click(float(cx), float(cy))
         try:
             page.wait_for_load_state("networkidle", timeout=_NAV_TIMEOUT_MS)
         except PlaywrightTimeoutError:
             # A click that triggers no navigation (an in-page state change) leaves
             # the page already idle; a slow tail shouldn't fail the exploration.
             pass
+
+    def _probe_click_point(
+        self, page: Page, backend_node_id: int
+    ) -> Mapping[str, Any]:
+        """Resolve a backend node id to a live element and hit-test its centre.
+
+        Bridges the CDP accessibility node (whose backend id we hold) to a live DOM
+        element via `DOM.resolveNode`, then runs the scroll + centre + hit-test probe
+        on it in one call. Staying on CDP end to end keeps us in Chrome's own
+        engine — the same one discovery read — so the element we click is exactly the
+        one we discovered. A CDP failure is wrapped as a plain `ActionError` (a skip),
+        not a covered/not-located verdict, since it is a driver hiccup, not a fact
+        about the element.
+        """
+        session = page.context.new_cdp_session(page)
+        try:
+            resolved = session.send(
+                "DOM.resolveNode", {"backendNodeId": backend_node_id}
+            )
+            object_id = resolved["object"]["objectId"]
+            result = session.send(
+                "Runtime.callFunctionOn",
+                {
+                    "objectId": object_id,
+                    "functionDeclaration": _ACTUATION_PROBE_JS,
+                    "returnByValue": True,
+                },
+            )
+        except PlaywrightError as exc:
+            raise ActionError("element could not be probed for actuation") from exc
+        finally:
+            session.detach()
+        value = result.get("result", {}).get("value")
+        if not isinstance(value, Mapping):
+            raise ActionError("actuation probe returned no result")
+        return value
