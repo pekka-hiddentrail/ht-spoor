@@ -46,8 +46,8 @@ are authored when their phase begins, not up front.
 | `exploration_loop.feature` | Exploration explorer loop: the state-action graph orchestrator tying together discovery, safety, state abstraction, and run controls | §2e | `spoor/exploration` | 5 |
 | `exploration_browser.feature` | Exploration in a real browser: the `spoor explore` command drives the whole stack against a live site via a headless-Chromium driver, renders a wiki, and persists the graph for serving | §2e / §2f | `spoor/exploration`, `spoor/serving`, CLI | 5 |
 | `exploration_signals.feature` | Exploration per-transition signal capture: a free-signal bundle per state and a before/after diff (a11y, console, storage, network, screenshot) per transition | §2e | `spoor/exploration` | 5 |
-| `exploration_signals_live.feature` | Live per-transition signal capture: the real driver reads console, storage, network, a11y, and a screenshot hash from an actual Chromium page | §2e | `spoor/exploration` | 5 |
-| `exploration_wiki.feature` | Exploration wiki generation: render the state-action graph into a browsable static HTML site (index + Mermaid overview, one page per state/transition), with captured values redacted before rendering; state pages labelled by page title and repeated console/network lines collapsed with a count (6c) | §2e | `spoor/exploration` | 5 |
+| `exploration_signals_live.feature` | Live per-transition signal capture: the real driver reads console, storage, network, a11y, and a screenshot hash from an actual Chromium page; a reset scopes the console/network buffers to the current visit (6d) | §2e | `spoor/exploration` | 5 |
+| `exploration_wiki.feature` | Exploration wiki generation: render the state-action graph into a browsable static HTML site (index + Mermaid overview, one page per state/transition), with captured values redacted before rendering; state pages labelled by page title and repeated console/network lines collapsed with a count (6c), network requests grouped by kind (6d) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation.feature` | Robust actuation, pure verdict: classify a discovered element's click point as ACTUATE / COVERED / NOT LOCATED (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation_live.feature` | Robust actuation, live driver: relocate via the CDP tree and click by a verified coordinate; detect a covered element without mis-clicking (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_settling.feature` | State settling, pure quiescence policy: settle when DOM mutations go quiet for a window, report unsettled at a bounded timeout — under a fake clock (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
@@ -377,16 +377,29 @@ is what makes that reliability hold against a dynamic SPA.
 
 **Slice 6c** then sharpens the state pages, after a live PrestaShop run showed them
 barely readable: a state was labelled only by its opaque 64-char hash, and its console
-and network signals — whole-run running buffers — dumped the entire session's output on
-a state reached late (one real page carried 105 identical console lines and thousands
-of repeated request URLs). So a state now carries its captured **page title** as a
-human-readable label (on its own page, in the index lists, and in the Mermaid overview),
-falling back to the short id when the page has no title; and a state page **collapses
-repeated console/network lines** into one row with an "× count". Transition pages
-already show a first-seen-deduplicated diff, so they are unchanged. Embedding the
-screenshot image (rather than a hash) stays deferred: string redaction can't scrub a
-secret that is *visible on the page*, so pasting a screenshot into shared output would
-bypass the redaction every other signal goes through — that needs its own treatment.
+and network signals repeated the same line many times over (one real page carried 105
+identical console lines and thousands of repeated request URLs). So a state now carries
+its captured **page title** as a human-readable label (on its own page, in the index
+lists, and in the Mermaid overview), falling back to the short id when the page has no
+title; and a state page **collapses repeated console/network lines** into one row with
+an "× count". Transition pages already show a first-seen-deduplicated diff, so they are
+unchanged. Embedding the screenshot image (rather than a hash) stays deferred: string
+redaction can't scrub a secret that is *visible on the page*, so pasting a screenshot
+into shared output would bypass the redaction every other signal goes through — that
+needs its own treatment.
+
+**Slice 6d** carries the same thread two steps further. A state page now **groups its
+network requests by kind** — Documents, Scripts, Styles, Images, Fonts, Media, Data,
+Other — with a per-group count, instead of one flat list, so a reader sees what the
+page loaded at a glance. The kind is a URL-only heuristic (file extension, or an
+`/api/` path for data): Spoor captures request URLs, not response content-types, so
+it is best-effort but needs no new capture and stays generic across every target. And
+the console/network buffers are now **scoped per visit** — the driver clears them on
+each reset, so a state reflects only the walk that reached it, not the whole run's
+cumulative output (6c's collapse hid that duplication; 6d removes its source). This is
+safe for transition diffs, which straddle a single action with no reset between their
+two captures. (A request *timeline* was considered but not built: ordering needs
+per-request capture timestamps the bundle doesn't carry, so categorization shipped.)
 
 `exploration_actuation.feature` + `exploration_actuation_live.feature` (§2e) are
 **sub-slice 7a** — robust actuation. A live diagnostic showed the explorer's skips on

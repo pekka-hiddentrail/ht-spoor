@@ -63,6 +63,16 @@ def capture_click_capture(context: dict[str, Any], label: str) -> None:
     context["diff"] = diff_signals(before, after)
 
 
+@when(parsers.parse('I capture, click "{label}", then reset and capture'))
+def capture_click_reset_capture(context: dict[str, Any], label: str) -> None:
+    driver: PlaywrightDriver = context["driver"]
+    driver.capture_signals()
+    driver.perform(_find(driver, label))
+    driver.capture_signals()
+    driver.reset()
+    context["reset_bundle"] = driver.capture_signals()
+
+
 # --- bundle assertions ---------------------------------------------------
 
 
@@ -107,3 +117,22 @@ def diff_network(context: dict[str, Any]) -> None:
 @then("the diff marks the screenshot as changed")
 def diff_screenshot(context: dict[str, Any]) -> None:
     assert context["diff"].screenshot_changed is True
+
+
+# --- reset-scoped capture assertions -------------------------------------
+
+
+@then(parsers.parse('the reset capture omits the network request "{url}"'))
+def reset_omits_network(context: dict[str, Any], url: str) -> None:
+    requests = context["reset_bundle"].network_requests
+    assert not any(url in r for r in requests), f"{url!r} still present: {requests}"
+
+
+@then(parsers.parse('the reset capture omits the console message "{msg}"'))
+def reset_omits_console(context: dict[str, Any], msg: str) -> None:
+    assert msg not in context["reset_bundle"].console_messages
+
+
+@then(parsers.parse('the reset capture includes the console message "{msg}"'))
+def reset_includes_console(context: dict[str, Any], msg: str) -> None:
+    assert msg in context["reset_bundle"].console_messages

@@ -26,10 +26,22 @@ usable. Two generic fixes (§0): a state is labelled by its captured **page titl
 (`_state_label`) instead of only its opaque 64-char id — on its own page, in the index
 lists, and in the overview graph — falling back to the short id when the page has no
 title; and a state page **collapses repeated console/network lines** (`_tally`) into
-one row with an "× count", because those two signals are whole-run running buffers and
-a state reached late otherwise dumps the entire session's output. Transition pages
-already show a first-seen-deduplicated diff (`capture.diff_signals`), so they keep
+one row with an "× count", because a chatty library or a polled endpoint still repeats
+the same line many times within a single visit (across the visit's reloads). Transition
+pages already show a first-seen-deduplicated diff (`capture.diff_signals`), so they keep
 listing every distinct added line as before.
+
+Slice 6d groups a state's network requests by **kind** (`_categorize_network`) instead
+of showing one flat list: each request is bucketed by a URL-only heuristic
+(`_request_category`) into a small fixed taxonomy — Documents, Scripts, Styles, Images,
+Fonts, Media, Data, Other — so a reader sees at a glance what the page loaded, with a
+per-group count. The kind is derived from the URL alone (the driver captures request
+URLs, not response content-types), so it stays generic across every target (§0).
+
+(The console/network buffers are also now *scoped per visit*: the driver clears them on
+each reset, so a state reached late in the run reflects only the walk that reached it,
+not the whole session's cumulative output — see `driver.reset`. That is a capture-layer
+change; the renderer here simply renders whatever bundle a state carries.)
 
 The wiki is a **shared-output surface**, so §2h redaction is mandatory and applied two
 ways, defensively overlapping: every captured value rendered (console messages,
@@ -43,6 +55,7 @@ site-specific (§0): the same templates render every target's graph.
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from jinja2 import DictLoader, Environment, select_autoescape
 
@@ -55,6 +68,39 @@ from spoor.security.redaction import REDACTED, redact
 # 12-char prefix is enough to tell states apart in links and the overview diagram.
 _SHORT_ID = 12
 _UNNAMED = "(unnamed)"
+
+# Network-request categories (§2e slice 6d). A flat list of every request seen at a
+# state is noise, so the state page collates requests under this small fixed taxonomy,
+# derived from the URL alone — Spoor captures request URLs, not response content-types,
+# so the kind is a *heuristic* on the URL's file extension (and an "/api/" path for
+# data). It is deliberately conservative: an unrecognised extension falls to "Other" and
+# an extensionless URL reads as a document (a page navigation) unless its path names an
+# API. Generic to every target (§0): the same rule buckets every site's requests. The
+# order here is the display order; empty categories are omitted from a page.
+_DOCUMENTS, _SCRIPTS, _STYLES = "Documents", "Scripts", "Styles"
+_IMAGES, _FONTS, _MEDIA, _DATA, _OTHER = "Images", "Fonts", "Media", "Data", "Other"
+_CATEGORY_ORDER = [
+    _DOCUMENTS,
+    _SCRIPTS,
+    _STYLES,
+    _IMAGES,
+    _FONTS,
+    _MEDIA,
+    _DATA,
+    _OTHER,
+]
+_EXTENSION_CATEGORY = {
+    "js": _SCRIPTS, "mjs": _SCRIPTS, "cjs": _SCRIPTS,
+    "css": _STYLES,
+    "png": _IMAGES, "jpg": _IMAGES, "jpeg": _IMAGES, "gif": _IMAGES, "svg": _IMAGES,
+    "webp": _IMAGES, "ico": _IMAGES, "bmp": _IMAGES, "avif": _IMAGES, "apng": _IMAGES,
+    "woff": _FONTS, "woff2": _FONTS, "ttf": _FONTS, "otf": _FONTS, "eot": _FONTS,
+    "mp4": _MEDIA, "webm": _MEDIA, "ogg": _MEDIA, "mp3": _MEDIA, "wav": _MEDIA,
+    "mov": _MEDIA, "m4a": _MEDIA, "avi": _MEDIA,
+    "json": _DATA, "xml": _DATA,
+    "html": _DOCUMENTS, "htm": _DOCUMENTS, "xhtml": _DOCUMENTS,
+    "php": _DOCUMENTS, "asp": _DOCUMENTS, "aspx": _DOCUMENTS, "jsp": _DOCUMENTS,
+}
 
 
 def _redact_all(items: tuple[str, ...]) -> list[str]:
@@ -76,6 +122,47 @@ def _tally(items: tuple[str, ...]) -> list[dict[str, object]]:
         redacted = redact(item)
         counts[redacted] = counts.get(redacted, 0) + 1
     return [{"text": text, "count": count} for text, count in counts.items()]
+
+
+def _request_category(url: str) -> str:
+    """Bucket a request URL into one of `_CATEGORY_ORDER` by a URL-only heuristic (6d).
+
+    Reads the file extension of the URL's last path segment (query and fragment
+    ignored) and maps it through `_EXTENSION_CATEGORY`. An unrecognised extension is
+    "Other"; a segment with no extension is a "Document" (a page navigation) unless the
+    path names an API, which reads as "Data". No content-type is available — Spoor
+    captures URLs, not responses — so this is a best-effort label, not a guarantee.
+    """
+    path = urlsplit(url).path
+    segment = path.rsplit("/", 1)[-1]
+    if "." in segment:
+        ext = segment.rsplit(".", 1)[-1].lower()
+        return _EXTENSION_CATEGORY.get(ext, _OTHER)
+    if "/api/" in path.lower():
+        return _DATA
+    return _DOCUMENTS
+
+
+def _categorize_network(urls: tuple[str, ...]) -> list[dict[str, object]]:
+    """Group request URLs by kind, each group a tallied `{category, total, rows}` (6d).
+
+    Categorises each raw URL (so the extension is read before redaction), then tallies
+    within the group so repeats collapse to one redacted row with a count (`_tally`).
+    `total` is the group's request count including repeats. Categories are emitted in
+    `_CATEGORY_ORDER`; an empty category is omitted.
+    """
+    groups: dict[str, list[str]] = {}
+    for url in urls:
+        groups.setdefault(_request_category(url), []).append(url)
+    views: list[dict[str, object]] = []
+    for category in _CATEGORY_ORDER:
+        raw = groups.get(category)
+        if not raw:
+            continue
+        views.append(
+            {"category": category, "total": len(raw), "rows": _tally(tuple(raw))}
+        )
+    return views
 
 
 def _state_label(sid: str, signals: StateSignals | None) -> str:
@@ -150,7 +237,9 @@ def _state_view(
         "ax_node_count": None if signals is None else signals.ax_node_count,
         "console": [] if signals is None else _tally(signals.console_messages),
         "storage": [] if signals is None else _redact_all(signals.storage_keys),
-        "network": [] if signals is None else _tally(signals.network_requests),
+        "network": (
+            [] if signals is None else _categorize_network(signals.network_requests)
+        ),
         "screenshot_hash": (
             None
             if signals is None or signals.screenshot_hash is None
@@ -378,9 +467,12 @@ so this snapshot is best-effort and may be incomplete.</p>
 {% if state.storage %}<ul>{% for key in state.storage %}<li><code>{{ key }}</code></li>
 {% endfor %}</ul>{% else %}<p><em>none</em></p>{% endif %}
 <h2>Network requests</h2>
-{% if state.network %}<ul>{% for url in state.network %}<li><code>{{ url.text }}</code>
+{% if state.network %}{% for group in state.network %}
+<h3>{{ group.category }} <span class="count">({{ group.total }})</span></h3>
+<ul>{% for url in group.rows %}<li><code>{{ url.text }}</code>
 {% if url.count > 1 %} <span class="count">× {{ url.count }}</span>{% endif %}</li>
-{% endfor %}</ul>{% else %}<p><em>none</em></p>{% endif %}
+{% endfor %}</ul>
+{% endfor %}{% else %}<p><em>none</em></p>{% endif %}
 {% else %}
 <p><em>No signal bundle was captured for this state.</em></p>
 {% endif %}
