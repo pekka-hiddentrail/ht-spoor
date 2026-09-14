@@ -42,6 +42,7 @@ are authored when their phase begins, not up front.
 | `exploration_safety.feature` | Exploration safety gate: destructive actions are sandbox-only, non-configurable | §2e | `spoor/exploration`, `spoor/security` | 5 |
 | `exploration_state.feature` | Exploration state abstraction: normalize + hash the DOM so equivalent screens share one state id | §2e | `spoor/exploration` | 5 |
 | `exploration_discovery.feature` | Exploration element discovery: pull the interactive elements from the accessibility tree as candidate actions | §2e | `spoor/exploration` | 5 |
+| `exploration_control.feature` | Exploration run-level controls: hard budget (states/requests/wall-clock) + manual kill switch | §2e | `spoor/exploration` | 5 |
 | `exploration.feature` | Exploration mode: the state-graph explorer loop (later §2e slice) | §2e | `spoor/exploration` | 6 |
 | `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
 
@@ -235,7 +236,25 @@ deduplication and driving the actions are the explorer loop's job, not this slic
 An unnamed element (an icon-only button) is still a candidate, just with an empty
 label. The role set is the same for every target (§0).
 
-The state-graph explorer loop that drives the gate, the state function, and this
-discovery is a later §2e slice (`exploration.feature`). `testgen.feature` (§2g) is listed in the table
+`exploration_control.feature` (§2e) is the fourth slice — still pure logic —
+landing the **run-level controls** §2e treats as core safety, not optional
+hardening: a run that can't be bounded or stopped is itself a reliability gap.
+`spoor/exploration/control.py` holds a `RunBudget` (the user's hard bounds — max
+states, max requests, max wall-clock seconds; each optional, each set bound
+validated positive) and a `RunController` that tracks one run's consumption and
+holds a thread-safe manual **kill switch**. `check()` returns a `StopDecision`
+with a log-ready reason; the kill switch is checked before the budget, so a
+stop-on-command is always reported as such, and each set budget dimension stops
+the run the moment it's reached. Wall-clock time is read through an injectable
+clock, so the time bound is exercised deterministically. The scenarios pin each
+bound stopping the run at (and not before) its threshold, a within-bounds run
+continuing, and — pinning the §2e non-negotiable that a run is always stoppable —
+that the kill switch stops even an unbounded run and takes precedence over a
+reached budget bound. The explorer loop that records progress and honours these
+decisions is the next slice.
+
+The state-graph explorer loop that drives the gate, the state function, this
+discovery, and these run-level controls is a later §2e slice
+(`exploration.feature`). `testgen.feature` (§2g) is listed in the table
 above ahead of implementation; its feature file is authored when its phase begins
 (see the Phase column).
