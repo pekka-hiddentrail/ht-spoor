@@ -11,7 +11,11 @@ Generic infrastructure addresses (localhost, loopback, unspecified, private
 ranges) are allowed everywhere: they are not knowledge of a *target*, they are
 how the sandbox registry (§2e) recognises a local target generically. RFC 2606
 reserved example domains (`example.com`, `.test`, `.invalid`, `.localhost`) and
-RFC 5737 test-net IP ranges are allowed as documentation placeholders.
+RFC 5737 test-net IP ranges are allowed as documentation placeholders. A short,
+explicit allowlist of asset/CDN hosts (`ALLOWED_ASSET_HOSTS`) covers third-party
+static assets Spoor's *own* generated output loads (e.g. the Mermaid library the
+§2e wiki draws its graph overview with) — the same "generic infrastructure, not a
+target" category, never a target site.
 
 Detection works on string *constants* parsed from the AST (module/class/function
 docstrings excluded) — prose in comments or docstrings that merely mentions a
@@ -43,6 +47,16 @@ ALLOWED_HOSTS = {
     "0.0.0.0",  # noqa: S104 - unspecified address, not a bind directive here
     "::1",
     "::",
+}
+
+# Asset/CDN hosts Spoor's *own* generated output loads a third-party static asset
+# from — not knowledge of a *target* site, the same "generic infrastructure, not a
+# target" category as ALLOWED_HOSTS. Extend deliberately (via PR), one entry per real
+# asset dependency, never a broad wildcard. Recorded in the §2e slice-6a decision note.
+#   - cdn.jsdelivr.net: the Mermaid diagram library the §2e exploration wiki's graph
+#     overview loads to draw itself in a browser (spoor/exploration/wiki.py).
+ALLOWED_ASSET_HOSTS = {
+    "cdn.jsdelivr.net",
 }
 
 # Reserved second-level example domains (RFC 2606) allowed as placeholders.
@@ -108,6 +122,8 @@ def _check_string(value: str) -> list[tuple[str, str]]:
             continue  # dotted module path, config key, or filename — not a host
         if host.lower() in ALLOWED_HOSTS or host.lower() in ALLOWED_DOMAINS:
             continue
+        if host.lower() in ALLOWED_ASSET_HOSTS:
+            continue  # a third-party asset CDN Spoor's own output loads, not a target
         hits.append((host, "domain"))
     for m in _IPV4_RE.finditer(value):
         try:

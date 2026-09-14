@@ -72,6 +72,18 @@ def test_docstring_mention_is_not_flagged() -> None:
     assert _check(source) == []
 
 
+def test_allowlisted_asset_cdn_is_not_flagged() -> None:
+    # The §2e wiki loads Mermaid from an asset CDN — infrastructure, not a target.
+    source = 'SRC = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.mjs"\n'
+    assert _check(source) == []
+
+
+def test_non_allowlisted_cdn_is_still_flagged() -> None:
+    # The asset allowlist is exact, not a blanket "any CDN" pass.
+    violations = _check('SRC = "https://cdn.evil-tracker.net/x.js"\n')
+    assert [v.match for v in violations] == ["cdn.evil-tracker.net"]
+
+
 def test_repo_core_is_clean() -> None:
     # The shipped source must always pass its own check.
     assert checker.find_violations(REPO_ROOT) == []
