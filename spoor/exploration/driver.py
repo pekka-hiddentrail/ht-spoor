@@ -335,9 +335,10 @@ class PlaywrightDriver:
         Reads all five §2e free signals from the live page: the accessibility-node
         count, the console messages and network requests seen so far (running
         buffers), the current web-storage keys, and a perceptual hash of a
-        screenshot. Each signal is opportunistic — a signal that can't be read is
-        recorded empty rather than failing the exploration (§2c), the same stance
-        the tier-2 signal collectors take.
+        screenshot; plus the page title as a human-readable label for the wiki (6c).
+        Each signal is opportunistic — a signal that can't be read is recorded empty
+        rather than failing the exploration (§2c), the same stance the tier-2 signal
+        collectors take.
         """
         page = self._live_page
         return StateSignals(
@@ -346,6 +347,7 @@ class PlaywrightDriver:
             storage_keys=self._storage_keys(page),
             network_requests=tuple(self._network),
             screenshot_hash=self._screenshot_hash(page),
+            title=self._title(page),
             settled=self._last_settled,
         )
 
@@ -390,6 +392,19 @@ class PlaywrightDriver:
         if not isinstance(keys, list):
             return ()
         return tuple(str(key) for key in keys)
+
+    @staticmethod
+    def _title(page: Page) -> str:
+        """The page's document.title — the wiki's human-readable state label (6c).
+
+        Opportunistic like every other signal: a page that reports no title, or one
+        whose title can't be read (a torn-down context), yields `""`, and the wiki falls
+        back to the short state id rather than failing the run.
+        """
+        try:
+            return page.title()
+        except PlaywrightError:
+            return ""
 
     @staticmethod
     def _screenshot_hash(page: Page) -> str | None:

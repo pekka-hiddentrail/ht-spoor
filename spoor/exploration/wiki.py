@@ -16,14 +16,28 @@ Two scoping decisions (recorded in the §2e slice-6a decision note) shape it:
 - **Hash-only screenshots**: the captured screenshot signal is a perceptual hash
   (5c-ii), so a state page shows its hash and a transition page reports whether the
   screenshot *changed* — no image bytes are embedded yet (a deliberate follow-on).
+  Embedding the image is deferred beyond slice 6c for a §2h reason: string redaction
+  cannot scrub a secret that is *visible on the page* (a token shown in the DOM, PII),
+  so pasting a screenshot into shared output would bypass the redaction every other
+  signal goes through. Doing it safely needs its own treatment and is left for later.
+
+Slice 6c makes the state pages readable after a live PrestaShop run showed them barely
+usable. Two generic fixes (§0): a state is labelled by its captured **page title**
+(`_state_label`) instead of only its opaque 64-char id — on its own page, in the index
+lists, and in the overview graph — falling back to the short id when the page has no
+title; and a state page **collapses repeated console/network lines** (`_tally`) into
+one row with an "× count", because those two signals are whole-run running buffers and
+a state reached late otherwise dumps the entire session's output. Transition pages
+already show a first-seen-deduplicated diff (`capture.diff_signals`), so they keep
+listing every distinct added line as before.
 
 The wiki is a **shared-output surface**, so §2h redaction is mandatory and applied two
 ways, defensively overlapping: every captured value rendered (console messages,
-storage keys, network URLs, action labels, and the operator-supplied target URL) is
-passed through `spoor.security.redaction.redact` before rendering, and Jinja2
-autoescaping — on for every template — independently neutralizes any HTML/script a
-captured value might carry. Nothing here is site-specific (§0): the same templates
-render every target's graph.
+storage keys, network URLs, action labels, the page title used as a state label, and
+the operator-supplied target URL) is passed through `spoor.security.redaction.redact`
+before rendering, and Jinja2 autoescaping — on for every template — independently
+neutralizes any HTML/script a captured value might carry. Nothing here is
+site-specific (§0): the same templates render every target's graph.
 """
 
 from __future__ import annotations
@@ -32,6 +46,7 @@ from pathlib import Path
 
 from jinja2 import DictLoader, Environment, select_autoescape
 
+from spoor.exploration.capture import StateSignals
 from spoor.exploration.graph import ExplorationGraph, SkippedAction, Transition
 from spoor.security.redaction import REDACTED, redact
 
@@ -45,6 +60,34 @@ _UNNAMED = "(unnamed)"
 def _redact_all(items: tuple[str, ...]) -> list[str]:
     """Redact every captured string before it reaches the shared wiki (§2h)."""
     return [redact(item) for item in items]
+
+
+def _tally(items: tuple[str, ...]) -> list[dict[str, object]]:
+    """Redact and collapse repeats into `{text, count}` rows, first-seen order (6c).
+
+    A state's console and network signals are whole-run running buffers, so a chatty
+    library or a polled endpoint repeats the same line hundreds of times; showing every
+    copy made a state page unreadably large. Each item is redacted first (§2h) and then
+    counted, so two raw values that redact to the same placeholder collapse together —
+    the page shows each distinct line once with how many times it occurred.
+    """
+    counts: dict[str, int] = {}
+    for item in items:
+        redacted = redact(item)
+        counts[redacted] = counts.get(redacted, 0) + 1
+    return [{"text": text, "count": count} for text, count in counts.items()]
+
+
+def _state_label(sid: str, signals: StateSignals | None) -> str:
+    """A state's human-readable label: its redacted page title, else the short id (6c).
+
+    The abstract state id is a 64-char hash, so a map labelled only by it reads as
+    noise. The captured page title is a far better label; it is redacted like any other
+    shared value (§2h), and an empty title falls back to the short id so every state
+    stays identifiable.
+    """
+    title = signals.title if signals is not None else ""
+    return redact(title) if title else sid[:_SHORT_ID]
 
 
 def _label(name: str) -> str:
@@ -67,16 +110,19 @@ def _mermaid_safe(text: str) -> str:
     return text
 
 
-def _mermaid(graph: ExplorationGraph, state_index: dict[str, int]) -> str:
+def _mermaid(
+    graph: ExplorationGraph, state_index: dict[str, int], labels: dict[str, str]
+) -> str:
     """A Mermaid `graph LR` source for the whole state-action graph.
 
-    Nodes are the states (labelled by their short id); edges are the transitions
-    (labelled by the redacted action name). Endpoints not in the state index are
-    skipped defensively, though the explorer always records a transition's states.
+    Nodes are the states (labelled by their page title, or short id when untitled — 6c);
+    edges are the transitions (labelled by the redacted action name). Endpoints not in
+    the state index are skipped defensively, though the explorer always records a
+    transition's states.
     """
     lines = ["graph LR"]
     for sid, i in state_index.items():
-        lines.append(f'  S{i}["{_mermaid_safe(sid[:_SHORT_ID])}"]')
+        lines.append(f'  S{i}["{_mermaid_safe(labels[sid])}"]')
     for transition in graph.transitions:
         src = state_index.get(transition.from_state)
         dst = state_index.get(transition.to_state)
@@ -88,7 +134,7 @@ def _mermaid(graph: ExplorationGraph, state_index: dict[str, int]) -> str:
 
 
 def _state_view(
-    graph: ExplorationGraph, sid: str, index: int
+    graph: ExplorationGraph, sid: str, index: int, label: str
 ) -> dict[str, object]:
     """The redacted, template-ready view of one state node."""
     node = graph.node(sid)
@@ -97,13 +143,14 @@ def _state_view(
         "index": index,
         "id": sid,
         "short_id": sid[:_SHORT_ID],
+        "label": label,
         "filename": f"state-{index}.html",
         "has_signals": signals is not None,
         "settled": True if signals is None else signals.settled,
         "ax_node_count": None if signals is None else signals.ax_node_count,
-        "console": [] if signals is None else _redact_all(signals.console_messages),
+        "console": [] if signals is None else _tally(signals.console_messages),
         "storage": [] if signals is None else _redact_all(signals.storage_keys),
-        "network": [] if signals is None else _redact_all(signals.network_requests),
+        "network": [] if signals is None else _tally(signals.network_requests),
         "screenshot_hash": (
             None
             if signals is None or signals.screenshot_hash is None
@@ -117,7 +164,7 @@ def _state_view(
 
 
 def _transition_view(
-    transition: Transition, index: int, states: list[str]
+    transition: Transition, index: int, states: list[str], labels: dict[str, str]
 ) -> dict[str, object]:
     """The redacted, template-ready view of one transition edge."""
     signals = transition.signals
@@ -126,9 +173,11 @@ def _transition_view(
         "filename": f"transition-{index}.html",
         "from_id": transition.from_state,
         "from_short": transition.from_state[:_SHORT_ID],
+        "from_label": labels[transition.from_state],
         "from_index": states.index(transition.from_state),
         "to_id": transition.to_state,
         "to_short": transition.to_state[:_SHORT_ID],
+        "to_label": labels[transition.to_state],
         "to_index": states.index(transition.to_state),
         "action_name": _label(transition.action.name),
         "action_role": transition.action.role,
@@ -172,9 +221,13 @@ def build_pages(graph: ExplorationGraph, *, target: str) -> dict[str, str]:
     """
     states = graph.states
     state_index = {sid: i for i, sid in enumerate(states)}
-    state_views = [_state_view(graph, sid, i) for i, sid in enumerate(states)]
+    labels = {sid: _state_label(sid, graph.node(sid).signals) for sid in states}
+    state_views = [
+        _state_view(graph, sid, i, labels[sid]) for i, sid in enumerate(states)
+    ]
     transition_views = [
-        _transition_view(t, j, states) for j, t in enumerate(graph.transitions)
+        _transition_view(t, j, states, labels)
+        for j, t in enumerate(graph.transitions)
     ]
     skip_views = [_skip_view(s, states) for s in graph.skipped]
 
@@ -192,7 +245,7 @@ def build_pages(graph: ExplorationGraph, *, target: str) -> dict[str, str]:
             states=state_views,
             transitions=transition_views,
             skipped=skip_views,
-            mermaid=_mermaid(graph, state_index),
+            mermaid=_mermaid(graph, state_index, labels),
         )
     }
     for view in state_views:
@@ -242,6 +295,7 @@ _LAYOUT = """<!DOCTYPE html>
       th, td { border: 1px solid #ccc; padding: 0.3rem 0.6rem; text-align: left; }
       code { background: #f4f4f4; padding: 0 0.2rem; }
       nav { margin-bottom: 1rem; }
+      .count { color: #888; font-size: 0.85em; }
     </style>
   </head>
   <body>
@@ -275,15 +329,15 @@ _INDEX = """{% extends "layout.html" %}
 <h2>States</h2>
 <ul>
   {% for state in states %}
-  <li><a href="{{ state.filename }}">State {{ state.short_id }}</a></li>
+  <li><a href="{{ state.filename }}">{{ state.label }}</a></li>
   {% endfor %}
 </ul>
 
 <h2>Transitions</h2>
 <ul>
   {% for transition in transitions %}
-  <li><a href="{{ transition.filename }}">{{ transition.from_short }}
-    &mdash;{{ transition.action_name }}&rarr; {{ transition.to_short }}</a></li>
+  <li><a href="{{ transition.filename }}">{{ transition.from_label }}
+    &mdash;{{ transition.action_name }}&rarr; {{ transition.to_label }}</a></li>
   {% endfor %}
 </ul>
 
@@ -301,9 +355,9 @@ _INDEX = """{% extends "layout.html" %}
 """
 
 _STATE = """{% extends "layout.html" %}
-{% block title %}State {{ state.short_id }}{% endblock %}
+{% block title %}{{ state.label }}{% endblock %}
 {% block body %}
-<h1>State {{ state.short_id }}</h1>
+<h1>{{ state.label }}</h1>
 <p>State id: <code>{{ state.id }}</code></p>
 {% if not state.settled %}
 <p><strong>⚠ Did not settle:</strong> the page kept changing until the settle timeout,
@@ -317,13 +371,15 @@ so this snapshot is best-effort and may be incomplete.</p>
     {% else %}<em>not captured</em>{% endif %}</li>
 </ul>
 <h2>Console messages</h2>
-{% if state.console %}<ul>{% for msg in state.console %}<li><code>{{ msg }}</code></li>
+{% if state.console %}<ul>{% for msg in state.console %}<li><code>{{ msg.text }}</code>
+{% if msg.count > 1 %} <span class="count">× {{ msg.count }}</span>{% endif %}</li>
 {% endfor %}</ul>{% else %}<p><em>none</em></p>{% endif %}
 <h2>Storage keys</h2>
 {% if state.storage %}<ul>{% for key in state.storage %}<li><code>{{ key }}</code></li>
 {% endfor %}</ul>{% else %}<p><em>none</em></p>{% endif %}
 <h2>Network requests</h2>
-{% if state.network %}<ul>{% for url in state.network %}<li><code>{{ url }}</code></li>
+{% if state.network %}<ul>{% for url in state.network %}<li><code>{{ url.text }}</code>
+{% if url.count > 1 %} <span class="count">× {{ url.count }}</span>{% endif %}</li>
 {% endfor %}</ul>{% else %}<p><em>none</em></p>{% endif %}
 {% else %}
 <p><em>No signal bundle was captured for this state.</em></p>
@@ -346,14 +402,14 @@ so this snapshot is best-effort and may be incomplete.</p>
 """
 
 _TRANSITION = """{% extends "layout.html" %}
-{% block title %}Transition {{ transition.from_short }} &rarr; {{ transition.to_short }}
+{% block title %}Transition {{ transition.from_label }} &rarr; {{ transition.to_label }}
 {% endblock %}
 {% block body %}
 <h1>Transition</h1>
-<p><a href="state-{{ transition.from_index }}.html">State
-  {{ transition.from_short }}</a> &mdash;<strong>{{ transition.action_name }}</strong>
+<p><a href="state-{{ transition.from_index }}.html">{{ transition.from_label }}</a>
+  &mdash;<strong>{{ transition.action_name }}</strong>
   <em>({{ transition.action_role }})</em>&rarr;
-  <a href="state-{{ transition.to_index }}.html">State {{ transition.to_short }}</a></p>
+  <a href="state-{{ transition.to_index }}.html">{{ transition.to_label }}</a></p>
 {% if transition.recovered_via %}
 <p><strong>Reached from behind a blocker:</strong> a covering layer
   (<code>{{ transition.recovered_via }}</code>) was cleared before this action could be
