@@ -132,6 +132,11 @@ def _transition_view(
         "to_index": states.index(transition.to_state),
         "action_name": _label(transition.action.name),
         "action_role": transition.action.role,
+        "recovered_via": (
+            None
+            if transition.recovered_via is None
+            else redact(transition.recovered_via)
+        ),
         "has_signals": signals is not None,
         "ax_node_delta": None if signals is None else signals.ax_node_delta,
         "console_added": [] if signals is None else _redact_all(signals.console_added),
@@ -349,6 +354,11 @@ _TRANSITION = """{% extends "layout.html" %}
   {{ transition.from_short }}</a> &mdash;<strong>{{ transition.action_name }}</strong>
   <em>({{ transition.action_role }})</em>&rarr;
   <a href="state-{{ transition.to_index }}.html">State {{ transition.to_short }}</a></p>
+{% if transition.recovered_via %}
+<p><strong>Reached from behind a blocker:</strong> a covering layer
+  (<code>{{ transition.recovered_via }}</code>) was cleared before this action could be
+  fired.</p>
+{% endif %}
 {% if transition.has_signals %}
 <h2>What this action changed</h2>
 <ul>

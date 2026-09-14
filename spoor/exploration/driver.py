@@ -70,6 +70,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from spoor.core.visual import InvalidImageError, perceptual_hash
 from spoor.exploration.actuation import (
+    ActuationVerdict,
     CoveringElement,
     Verdict,
     classify,
@@ -379,6 +380,20 @@ class PlaywrightDriver:
         except (PlaywrightError, InvalidImageError):
             return None
 
+    def probe(self, action: ActionableElement) -> ActuationVerdict:
+        """The actuation verdict for `action` here, without clicking it (§2e, 7c).
+
+        Runs the same relocation and hit-test `perform` does, but stops at the verdict:
+        ACTUATE (a click would land on it), COVERED (a different element is on top,
+        carrying a best-effort description of it), or NOT_LOCATED (no matching node, or
+        one with no clickable point). Layer recovery uses it to decide whether the
+        target is reachable and to find the layer's own on-top actions, firing nothing
+        until it chooses to. A CDP hiccup still surfaces as `ActionError`, as in
+        `perform`.
+        """
+        verdict, _, _ = self._actuation(action)
+        return verdict
+
     def perform(self, action: ActionableElement) -> None:
         """Fire an action by re-locating its element and clicking a verified point.
 
@@ -393,40 +408,57 @@ class PlaywrightDriver:
         whole run failing on one element (§2e). After a click, waits for the page to
         settle so `state_html` reflects the resulting state.
         """
+        verdict, cx, cy = self._actuation(action)
+        if verdict.verdict is Verdict.NOT_LOCATED:
+            raise ElementNotLocated(action.role, action.name)
+        if verdict.verdict is Verdict.COVERED:
+            assert verdict.covering is not None  # COVERED always carries the layer
+            raise ElementCovered(verdict.covering.role, verdict.covering.text)
+        # ACTUATE: a real trusted mouse click at the verified centre.
+        assert cx is not None and cy is not None  # ACTUATE always has a point
+        self._live_page.mouse.click(float(cx), float(cy))
+        # Wait for the resulting render to go quiet before the explorer reads the new
+        # state, so discovery and the state id see the settled page (§2e, 7b). A click
+        # that only changes the page in place and one that navigates both resolve
+        # through DOM quiescence; a page that never settles is recorded, not fatal.
+        self._wait_for_settle()
+
+    def _actuation(
+        self, action: ActionableElement
+    ) -> tuple[ActuationVerdict, float | None, float | None]:
+        """The verdict-and-point computation shared by `probe` and `perform` (7a/7c).
+
+        Re-locates the element through `find_target` and hit-tests its click point over
+        CDP, returning the actuation verdict and the verified centre (the point
+        `perform` clicks; `None` when there is nothing to click). Sharing one
+        computation is why a `probe` can never disagree with the `perform` that follows
+        it. A CDP failure is wrapped as a plain `ActionError` by `_probe_click_point`.
+        """
         page = self._live_page
         target = find_target(self.ax_nodes(), action.role, action.name)
         if target is None or target.backend_node_id is None:
             # No matching node in the current page — or one without a resolvable DOM
             # id, so it cannot be actuated by coordinate. Either way it is gone.
-            raise ElementNotLocated(action.role, action.name)
+            return ActuationVerdict(Verdict.NOT_LOCATED), None, None
         probe = self._probe_click_point(page, target.backend_node_id)
         cx, cy = probe["cx"], probe["cy"]
+        if cx is None or cy is None:
+            # The element resolved but offers no clickable point (zero-size, or its
+            # centre falls outside the page even after scrolling) — not actuatable and
+            # nothing is on top of it, so it is effectively gone rather than covered.
+            return ActuationVerdict(Verdict.NOT_LOCATED), None, None
         covering = probe["covering"]
         cover = (
             CoveringElement(str(covering["role"]), str(covering["text"]))
             if isinstance(covering, Mapping)
             else None
         )
-        if cx is None or cy is None:
-            # The element resolved but offers no clickable point (zero-size, or its
-            # centre falls outside the page even after scrolling) — not actuatable and
-            # nothing is on top of it, so it is effectively gone rather than covered.
-            raise ElementNotLocated(action.role, action.name)
         verdict = classify(
             located=True,
             point_hits_target=bool(probe["hitsTarget"]),
             covering=cover,
         )
-        if verdict.verdict is Verdict.COVERED:
-            assert verdict.covering is not None  # COVERED always carries the layer
-            raise ElementCovered(verdict.covering.role, verdict.covering.text)
-        # ACTUATE: a real trusted mouse click at the verified centre.
-        page.mouse.click(float(cx), float(cy))
-        # Wait for the resulting render to go quiet before the explorer reads the new
-        # state, so discovery and the state id see the settled page (§2e, 7b). A click
-        # that only changes the page in place and one that navigates both resolve
-        # through DOM quiescence; a page that never settles is recorded, not fatal.
-        self._wait_for_settle()
+        return verdict, cx, cy
 
     def _probe_click_point(
         self, page: Page, backend_node_id: int

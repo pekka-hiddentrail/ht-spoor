@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from spoor.exploration.actuation import ActuationVerdict, Verdict
 from spoor.exploration.capture import StateSignals
 from spoor.exploration.control import RunBudget, RunController
 from spoor.exploration.discovery import ActionableElement
@@ -97,6 +98,10 @@ class _FakeDriver:
 
     def ax_nodes(self) -> Sequence[Mapping[str, object]]:
         return self._app.ax_nodes(self._current)
+
+    def probe(self, action: ActionableElement) -> ActuationVerdict:
+        # No layers here: every discovered action actuates directly.
+        return ActuationVerdict(Verdict.ACTUATE)
 
     def perform(self, action: ActionableElement) -> None:
         self._current = self._app.next_state(self._current, action)

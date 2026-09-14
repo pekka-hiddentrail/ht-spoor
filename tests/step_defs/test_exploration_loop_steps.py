@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from spoor.exploration.actuation import ActuationVerdict, Verdict
 from spoor.exploration.capture import StateSignals
 from spoor.exploration.control import RunBudget, RunController
 from spoor.exploration.discovery import ActionableElement
@@ -88,6 +89,12 @@ class _FakeDriver:
 
     def ax_nodes(self) -> Sequence[Mapping[str, object]]:
         return self._app.ax_nodes(self._current)
+
+    def probe(self, action: ActionableElement) -> ActuationVerdict:
+        # No layers in these scenarios: every discovered action is actuatable. A broken
+        # action still probes ACTUATE and fails at `perform` (a plain ActionError, not a
+        # covered/not-located verdict), exercising the graceful-degradation skip path.
+        return ActuationVerdict(Verdict.ACTUATE)
 
     def perform(self, action: ActionableElement) -> None:
         # A real driver raises when the element can't be actuated (gone, hidden,

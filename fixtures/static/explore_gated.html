@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<!--
+  Fixture for exploration_recovery.feature (ROADMAP.md §2e, 7c): an entry screen whose
+  content sits behind a consent overlay that intercepts every click. The overlay is a
+  full-viewport fixed layer (no aria-hidden on the background, exactly like the real
+  launch dialogs that motivated 7c), so the buttons behind it stay in the accessibility
+  tree — discovery finds them — but a coordinate click lands on the overlay, reporting
+  COVERED. Accepting the overlay removes it; only then does a click reach "Show details",
+  which reveals a section and so yields a further state. Nothing here is site-specific.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Gated entry screen</title>
+    <style>
+      #overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #overlay .panel {
+        background: #fff;
+        padding: 2rem;
+        border-radius: 0.5rem;
+      }
+      main {
+        padding: 2rem;
+        font-family: sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Product catalogue</h1>
+      <p>Welcome to the shop.</p>
+      <button type="button" id="details-btn" onclick="revealDetails()">
+        Show details
+      </button>
+      <section id="details" hidden>
+        <h2>Product details</h2>
+        <p>A long description that only appears once details are shown.</p>
+      </section>
+    </main>
+
+    <div id="overlay">
+      <div class="panel">
+        <p>This site uses cookies to keep you signed in.</p>
+        <button type="button" id="accept-btn" onclick="acceptConsent()">
+          Accept and continue
+        </button>
+      </div>
+    </div>
+
+    <script>
+      function acceptConsent() {
+        const overlay = document.getElementById("overlay");
+        if (overlay) overlay.remove();
+      }
+      function revealDetails() {
+        document.getElementById("details").hidden = false;
+      }
+    </script>
+  </body>
+</html>
