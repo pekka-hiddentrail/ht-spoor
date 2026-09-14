@@ -22,6 +22,8 @@ def map_view(entry: MapEntry) -> dict[str, object]:
 
     Records and the observed API surface pass through redaction here (§2h); the
     capture time is echoed and a non-negative `age_seconds` computed against now.
+    Deliberately omits `entry.config` — the stored extraction config is local-only
+    (kept solely to reproduce a forced recheck, §2f) and must never be served.
     """
     captured = datetime.fromisoformat(entry.captured_at)
     age_seconds = (datetime.now(UTC) - captured).total_seconds()

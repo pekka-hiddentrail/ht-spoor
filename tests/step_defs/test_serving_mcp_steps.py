@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -58,7 +58,31 @@ def mcp_server_over_map(context: dict[str, Any], datatable: list[list[str]]) -> 
             tier=1,
             captured_at=datetime.fromisoformat(fields["captured_at"]),
         )
+    context["store"] = store
     context["server"] = create_mcp_server(store)
+
+
+@given("the MCP server allows force-recheck")
+def mcp_allows_recheck(context: dict[str, Any]) -> None:
+    # Rebuild the server with a recheck seam. The fake stands in for a real
+    # read/observation run: re-record the URL (title marked "(rechecked)") with a
+    # fresh capture time, or return None for an unmapped URL — which recheck_map
+    # turns into a not-mapped error. No real target is touched.
+    store: MapStore = context["store"]
+
+    def fake_recheck(url: str) -> Any:
+        existing = store.get(url)
+        if existing is None:
+            return None
+        old_title = existing.records[0]["title"]
+        return store.record(
+            url,
+            [{"title": f"{old_title} (rechecked)"}],
+            tier=existing.tier,
+            captured_at=datetime.now(UTC),
+        )
+
+    context["server"] = create_mcp_server(store, recheck=fake_recheck)
 
 
 # --- When ----------------------------------------------------------------
@@ -85,6 +109,31 @@ def call_no_args(context: dict[str, Any], name: str) -> None:
 def tools_are_exactly(context: dict[str, Any], a: str, b: str) -> None:
     tools = asyncio.run(context["server"].list_tools())
     assert {t.name for t in tools} == {a, b}
+
+
+@then(parsers.parse('the MCP tools are exactly "{a}", "{b}" and "{c}"'))
+def tools_are_exactly_three(context: dict[str, Any], a: str, b: str, c: str) -> None:
+    tools = asyncio.run(context["server"].list_tools())
+    assert {t.name for t in tools} == {a, b, c}
+
+
+@then("every MCP tool is marked non-destructive")
+def tools_non_destructive(context: dict[str, Any]) -> None:
+    # The reframed §2f guarantee: even the recheck tool, which is honestly not
+    # read-only, never advertises a destructive effect on a target.
+    tools = asyncio.run(context["server"].list_tools())
+    assert tools, "expected the MCP server to expose tools"
+    for tool in tools:
+        ann = tool.annotations
+        assert ann is not None and ann.destructive_hint is False, tool.name
+
+
+@then(parsers.parse('the "{name}" tool is not marked read-only'))
+def tool_not_read_only(context: dict[str, Any], name: str) -> None:
+    tools = asyncio.run(context["server"].list_tools())
+    tool = next(t for t in tools if t.name == name)
+    ann = tool.annotations
+    assert ann is not None and ann.read_only_hint is False, name
 
 
 @then("every MCP tool is marked read-only and non-destructive")

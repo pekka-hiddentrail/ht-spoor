@@ -170,18 +170,24 @@ which domains are mapped, and a URL's records — plus the §2h-safe projection 
 the API surface the run observed (any published spec/GraphQL endpoint served
 whole; the synthesized spec and action correlation as counts only, so their
 templated paths never leave the machine) — with a freshness age, never a
-state-changing operation (the §2f read-only non-negotiable, proven structurally
-by a scenario asserting every route is GET-only). It serves the same records the
-output pipeline writes, never a raw local-only capture (§2h), and both records
-and surface pass through the redaction guard on the way out. `serving_mcp.feature`
-(§2f) is the second consumption mode: an MCP server (`spoor/serving/mcp_server.py`,
-run by `spoor serve-mcp`) exposing the same map to agents as read-only tools
-(`list_mapped_domains`, `get_map`). It shares the exact store and the single
-`views.map_view` answer-builder with the REST surface — so freshness and §2h
-redaction live in one place — and its read-only non-negotiable is pinned by a
-scenario asserting the exposed tool set is exactly that allowlist and every tool
-is marked read-only and non-destructive. A **force-recheck** endpoint sits over
-the same store and is deferred to a follow-on slice. `exploration.feature` (§2e) and `testgen.feature` (§2g),
+state-changing action on the target (the §2f read-only non-negotiable). It serves
+the same records the output pipeline writes, never a raw local-only capture (§2h),
+and both records and surface pass through the redaction guard on the way out.
+`serving_mcp.feature` (§2f) is the second consumption mode: an MCP server
+(`spoor/serving/mcp_server.py`, run by `spoor serve-mcp`) exposing the same map to
+agents (`list_mapped_domains`, `get_map`). It shares the exact store and the
+single `views.map_view` answer-builder with the REST surface — so freshness and
+§2h redaction live in one place. A **force-recheck** seam now ships on both
+surfaces, opt-in behind `--recheck` and **off by default**: a `POST /map/recheck`
+route (REST) and a `recheck_map` tool (MCP) re-run a mapped URL's extraction — a
+fresh read/observation of the target, never a change to it — and refresh the local
+map (`spoor/serving/recheck.py`). Because a recheck observes but never changes a
+target, the pinned guarantee is **"no route or tool changes a target"**, not "no
+non-GET route": both files pin that a plain server stays GET-only / read-tools-only,
+while a recheck-enabled server adds exactly the one seam — non-destructive, and (on
+MCP) honestly marked non-read-only since it fetches and rewrites the local map. The
+config needed to reproduce a run is persisted with each entry but stays local-only,
+never served. `exploration.feature` (§2e) and `testgen.feature` (§2g),
 along with the sandbox registry (§2e/§2h), are listed in the table above ahead of
 implementation; their feature files are authored when their phase begins (see the
 Phase column).

@@ -90,6 +90,10 @@ class MapEntry:
     # The §2h-shareable projection of the run's observed API surface (spec whole,
     # synthesized/correlation as counts only), or None if nothing was observed.
     api_surface: dict[str, object] | None = None
+    # The serialized ExtractionConfig this entry was produced from, kept so a
+    # caller-forced recheck can re-run the exact same extraction (§2f). LOCAL-ONLY:
+    # it is never projected into `map_view`, so it never reaches a served surface.
+    config: dict[str, object] | None = None
 
 
 def _domain_of(url: str) -> str:
@@ -130,6 +134,7 @@ class MapStore:
         tier: int | None = None,
         captured_at: datetime | None = None,
         api_surface: dict[str, object] | None = None,
+        config: dict[str, object] | None = None,
     ) -> MapEntry:
         """Remember a run's result for `url` so the API can serve it later.
 
@@ -137,6 +142,8 @@ class MapStore:
         known-good result, and its capture time is what freshness is measured
         against. Defaults the capture time to now (UTC). `api_surface` is the
         already-§2h-projected surface (see `shareable_api_surface`), or None.
+        `config` is the serialized ExtractionConfig the result came from, kept
+        local-only so a forced recheck can re-run the same extraction (§2f).
         """
         domain = _domain_of(url)
         stamp = (captured_at or datetime.now(UTC)).isoformat()
@@ -147,6 +154,7 @@ class MapStore:
             tier=tier,
             captured_at=stamp,
             api_surface=api_surface,
+            config=config,
         )
         by_url = self._load_domain(domain)
         by_url[url] = {
@@ -156,6 +164,7 @@ class MapStore:
             "tier": entry.tier,
             "captured_at": entry.captured_at,
             "api_surface": entry.api_surface,
+            "config": entry.config,
         }
         path = self._path_for_domain(domain)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,6 +184,7 @@ class MapStore:
         )
         tier_raw = raw.get("tier")
         surface_raw = raw.get("api_surface")
+        config_raw = raw.get("config")
         return MapEntry(
             url=str(raw["url"]),
             domain=str(raw["domain"]),
@@ -184,6 +194,11 @@ class MapStore:
             api_surface=(
                 cast("dict[str, object]", surface_raw)
                 if isinstance(surface_raw, dict)
+                else None
+            ),
+            config=(
+                cast("dict[str, object]", config_raw)
+                if isinstance(config_raw, dict)
                 else None
             ),
         )

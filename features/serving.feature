@@ -5,19 +5,22 @@
 # per-domain map that a run populates: which URLs have been mapped, and the
 # extracted records plus freshness for each.
 #
-# NON-NEGOTIABLE (§2f/§2h): the serving layer is READ-ONLY, always. It answers
-# questions about a captured map and exposes no state-changing action on a target.
-# Every answer carries the capture time and its age; v1 never auto-rechecks (the
-# freshness policy is backlogged, §9) — it always shows the age and waits to be
-# asked to re-verify. It serves the same extracted records the output pipeline
-# already writes, plus the §2h-safe projection of the observed API surface (any
-# published spec/GraphQL served whole; the synthesized spec and correlation as
-# counts only — their templated paths stay local-only), never a raw local-only
-# capture (HAR/storage state). Records and surface alike are redacted on the way
-# out, honoring §2h.
+# NON-NEGOTIABLE (§2f/§2h): the serving layer is READ-ONLY with respect to the
+# TARGET, always. It answers questions about a captured map and exposes no
+# state-changing action on a target. It serves the same extracted records the
+# output pipeline already writes, plus the §2h-safe projection of the observed API
+# surface (any published spec/GraphQL served whole; the synthesized spec and
+# correlation as counts only — their templated paths stay local-only), never a raw
+# local-only capture (HAR/storage state). Records and surface alike are redacted on
+# the way out, honoring §2h.
 #
-# The MCP server mode (§2f) and a force-recheck endpoint are deliberately deferred
-# to follow-on slices; both sit over this same store and service.
+# Every answer carries the capture time and its age. Spoor never *auto*-rechecks in
+# v1 (that policy is backlogged, §9) — it shows the age and waits to be asked. A
+# caller MAY force a re-check: the non-negotiable explicitly permits the serving
+# layer to trigger new read/observation runs, so an opt-in force-recheck re-runs a
+# mapped URL's extraction (a read of the target, never a change to it) and refreshes
+# the local map. A plain reader server is GET-only; enabling recheck adds exactly one
+# non-GET route (POST /map/recheck) whose only effect on the target is to observe it.
 
 Feature: A read-only API serves a captured map with freshness
   As an agent or script that wants to reuse what Spoor already mapped
@@ -67,8 +70,29 @@ Feature: A read-only API serves a captured map with freshness
     And the domains list contains "shop.example"
     And the domains list contains "other.example"
 
-  Scenario: The serving app is read-only — every route exposes only GET
+  Scenario: A plain reader server is read-only — every route exposes only GET
+    # With recheck not enabled, the server only reads the cache: no non-GET route.
     Then every serving route is read-only
+
+  Scenario: A force-recheck re-runs a mapped URL and returns the fresh result
+    # The non-negotiable permits triggering a new read/observation run; forcing a
+    # recheck re-extracts the target and refreshes the map, resetting the age.
+    Given the served map allows force-recheck
+    When I POST "/map/recheck?url=https://shop.example/p/1"
+    Then the response status is 200
+    And the first record's "title" equals "Widget (rechecked)"
+    And the response carries a capture time and a non-negative age
+
+  Scenario: A force-recheck of an unmapped URL is not found, never fabricated
+    Given the served map allows force-recheck
+    When I POST "/map/recheck?url=https://shop.example/p/999"
+    Then the response status is 404
+
+  Scenario: Enabling recheck adds only one non-GET route — and it changes no target
+    # The reframed read-only guarantee: the sole non-GET route is the force-recheck,
+    # whose effect on the target is to observe it, never to change it.
+    Given the served map allows force-recheck
+    Then the only non-GET serving route is the force-recheck route
 
   Scenario: A health check reports the server is up
     When I GET "/healthz"
