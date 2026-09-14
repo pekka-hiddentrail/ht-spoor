@@ -18,7 +18,12 @@ from spoor.core import extract
 from spoor.core.config import load_config
 from spoor.operational.observability import RunSummary
 from spoor.operational.output import resolve_format, write_records
-from spoor.serving.store import MapEntry, MapStore, shareable_api_surface
+from spoor.serving.store import (
+    MapEntry,
+    MapStore,
+    shareable_api_surface,
+    shareable_exploration_map,
+)
 
 app = typer.Typer(
     name="spoor",
@@ -128,7 +133,9 @@ def explore(
     skipped and never fired. An element that can't actually be clicked (gone, hidden,
     or covered by the time it's reached) is recorded as skipped and the run continues.
     Bound the run with the budget options, and press Ctrl-C to stop it early at any
-    time. Pass --wiki to also write a browsable wiki of the result.
+    time. Pass --wiki to also write a browsable wiki of the result. The mapped graph
+    is also saved to the local map, so `spoor serve`/`serve-mcp` can hand it back
+    later without re-exploring.
     """
     import signal
 
@@ -157,6 +164,16 @@ def explore(
             )
     finally:
         signal.signal(signal.SIGINT, previous_handler)
+
+    # Remember this exploration in the local map so the read-only serving layer
+    # (§2f) can answer "what happens when I click X" for this URL later without
+    # re-exploring — the §2h-safe projection of the state-action graph. No extracted
+    # records for an explore run, so records is empty and there is no tier.
+    MapStore().record(
+        url,
+        [],
+        exploration=shareable_exploration_map(graph),
+    )
 
     typer.echo(f"Explored {url}")
     typer.echo(f"  states discovered: {len(graph.states)}")

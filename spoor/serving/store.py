@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 from spoor.api_discovery.correlation import ActionCorrelation
@@ -28,6 +28,14 @@ from spoor.api_discovery.discovery import DiscoveredSpec
 from spoor.api_discovery.graphql import DiscoveredGraphQL
 from spoor.api_discovery.synthesis import SynthesizedSpec
 from spoor.security import storage
+
+if TYPE_CHECKING:
+    # Type-only: the projection reads the graph's attributes, so serving never
+    # imports the exploration package at runtime and stays light for the `serve`
+    # extra (the graph model is pure, but the type hints don't force the import).
+    from spoor.exploration.capture import StateSignals, TransitionSignals
+    from spoor.exploration.discovery import ActionableElement
+    from spoor.exploration.graph import ExplorationGraph
 
 # Subdirectory of the cache root holding one JSON file per mapped domain.
 MAPS_DIRNAME = "maps"
@@ -73,6 +81,95 @@ def shareable_api_surface(
         }
     return surface or None
 
+
+def _action_label(action: ActionableElement) -> dict[str, str]:
+    """A fired/discovered action as its accessibility role and name (both shared)."""
+    return {"role": action.role, "name": action.name}
+
+
+def _state_signal_counts(signals: StateSignals | None) -> dict[str, int] | None:
+    """A state's free-signal bundle reduced to counts (§2h counts-only, like the
+    synthesized API surface). The raw console/storage/network *values* captured at
+    a state stay in the local-only cache; only their sizes are shareable here."""
+    if signals is None:
+        return None
+    return {
+        "ax_node_count": signals.ax_node_count,
+        "console_count": len(signals.console_messages),
+        "storage_count": len(signals.storage_keys),
+        "network_count": len(signals.network_requests),
+    }
+
+
+def _transition_changes(signals: TransitionSignals | None) -> dict[str, object] | None:
+    """What one fired action changed — the before/after signal diff. Unlike the
+    per-state counts, this carries the actual *added* values (console lines, storage
+    keys, request URLs), because "what did clicking X change" is the answer §2f
+    exists to serve; each is a plain string that `map_view` redacts on the way out."""
+    if signals is None:
+        return None
+    return {
+        "ax_node_delta": signals.ax_node_delta,
+        "console_added": list(signals.console_added),
+        "storage_added": list(signals.storage_added),
+        "storage_removed": list(signals.storage_removed),
+        "network_added": list(signals.network_added),
+        "screenshot_changed": signals.screenshot_changed,
+    }
+
+
+def shareable_exploration_map(
+    graph: ExplorationGraph,
+) -> dict[str, object] | None:
+    """Project an exploration graph to the §2h-shareable facts for serving (§2f).
+
+    Mirrors `shareable_api_surface`: a structural projection to plain
+    strings/ints/bools/lists, so `map_view` can redact it wholesale on the way out
+    (§2h) and both serving surfaces answer with the same shape. Per state: the
+    abstract state id, its discovered action inventory (role + name), and its
+    free-signal bundle as **counts only** (raw signal values stay local-only). Per
+    transition: the from/to state ids, the action fired, and what it *changed* (the
+    before/after signal diff — the "what happens when I click X" payload §2f exists
+    to answer). Plus every action the safety gate skipped, with its reason, and the
+    three counts. Returns None for an empty graph (nothing explored yet), so an
+    unexplored URL stores nothing rather than an empty shell — the same "no shell"
+    stance `shareable_api_surface` takes.
+    """
+    state_ids = graph.states
+    if not state_ids:
+        return None
+    states = [
+        {
+            "id": node.state_id,
+            "actions": [_action_label(a) for a in node.actions],
+            "signals": _state_signal_counts(node.signals),
+        }
+        for node in (graph.node(sid) for sid in state_ids)
+    ]
+    transitions = [
+        {
+            "from": t.from_state,
+            "action": _action_label(t.action),
+            "to": t.to_state,
+            "changed": _transition_changes(t.signals),
+        }
+        for t in graph.transitions
+    ]
+    skipped = [
+        {"from": s.from_state, "action": _action_label(s.action), "reason": s.reason}
+        for s in graph.skipped
+    ]
+    return {
+        "states": states,
+        "transitions": transitions,
+        "skipped": skipped,
+        "counts": {
+            "states": len(states),
+            "transitions": len(transitions),
+            "skipped": len(skipped),
+        },
+    }
+
 # Characters not safe in a cross-platform filename (Windows forbids ':' etc.);
 # the real domain is preserved inside the file, so this is only for the path.
 _UNSAFE_IN_FILENAME = re.compile(r"[^A-Za-z0-9._-]")
@@ -94,6 +191,9 @@ class MapEntry:
     # caller-forced recheck can re-run the exact same extraction (§2f). LOCAL-ONLY:
     # it is never projected into `map_view`, so it never reaches a served surface.
     config: dict[str, object] | None = None
+    # The §2h-shareable projection of an exploration run's state-action graph (see
+    # `shareable_exploration_map`), or None if the URL was mapped by extraction only.
+    exploration: dict[str, object] | None = None
 
 
 def _domain_of(url: str) -> str:
@@ -135,6 +235,7 @@ class MapStore:
         captured_at: datetime | None = None,
         api_surface: dict[str, object] | None = None,
         config: dict[str, object] | None = None,
+        exploration: dict[str, object] | None = None,
     ) -> MapEntry:
         """Remember a run's result for `url` so the API can serve it later.
 
@@ -144,6 +245,8 @@ class MapStore:
         already-§2h-projected surface (see `shareable_api_surface`), or None.
         `config` is the serialized ExtractionConfig the result came from, kept
         local-only so a forced recheck can re-run the same extraction (§2f).
+        `exploration` is the already-§2h-projected exploration graph (see
+        `shareable_exploration_map`), or None for an extraction-only run.
         """
         domain = _domain_of(url)
         stamp = (captured_at or datetime.now(UTC)).isoformat()
@@ -155,6 +258,7 @@ class MapStore:
             captured_at=stamp,
             api_surface=api_surface,
             config=config,
+            exploration=exploration,
         )
         by_url = self._load_domain(domain)
         by_url[url] = {
@@ -165,6 +269,7 @@ class MapStore:
             "captured_at": entry.captured_at,
             "api_surface": entry.api_surface,
             "config": entry.config,
+            "exploration": entry.exploration,
         }
         path = self._path_for_domain(domain)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,6 +290,7 @@ class MapStore:
         tier_raw = raw.get("tier")
         surface_raw = raw.get("api_surface")
         config_raw = raw.get("config")
+        exploration_raw = raw.get("exploration")
         return MapEntry(
             url=str(raw["url"]),
             domain=str(raw["domain"]),
@@ -199,6 +305,11 @@ class MapStore:
             config=(
                 cast("dict[str, object]", config_raw)
                 if isinstance(config_raw, dict)
+                else None
+            ),
+            exploration=(
+                cast("dict[str, object]", exploration_raw)
+                if isinstance(exploration_raw, dict)
                 else None
             ),
         )

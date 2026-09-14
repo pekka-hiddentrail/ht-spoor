@@ -60,6 +60,26 @@ Feature: A read-only API serves a captured map with freshness
     And the API surface reports 3 synthesized endpoints
     And the served API surface exposes no templated endpoint path
 
+  Scenario: A mapped URL's exploration graph is served alongside its records
+    # Exploration mode maps "what happens when I click X" into a state-action graph;
+    # §2f serves that graph over the same read-only surface, projected to shareable
+    # facts — each state's action inventory and signal counts, and for each fired
+    # action what it changed — so an agent can consult it instead of re-exploring.
+    Given the map records an explored graph for "https://shop.example/app"
+    When I GET "/map?url=https://shop.example/app"
+    Then the response status is 200
+    And the exploration graph has 2 states, 1 transition and 1 skipped action
+    And the exploration graph has a transition whose action name is "Open menu"
+
+  Scenario: A secret captured during exploration is redacted before it leaves
+    # §2h names an API response a shared surface: a bearer token that appeared in a
+    # captured signal is redacted on the served exploration graph, exactly as in a
+    # record, even though the local store may hold it raw.
+    Given the map records an explored graph for "https://shop.example/app"
+    When I GET "/map?url=https://shop.example/app"
+    Then the response status is 200
+    And the served exploration graph exposes no raw secret
+
   Scenario: An unmapped URL is reported as not found, never fabricated
     When I GET "/map?url=https://shop.example/p/999"
     Then the response status is 404

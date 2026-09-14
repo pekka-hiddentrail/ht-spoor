@@ -17,6 +17,8 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from typer.testing import CliRunner
 
 from spoor.cli import app
+from spoor.security import storage
+from spoor.serving.store import MapStore
 
 scenarios("exploration_browser.feature")
 
@@ -24,6 +26,13 @@ scenarios("exploration_browser.feature")
 @pytest.fixture
 def context() -> dict[str, Any]:
     return {}
+
+
+@pytest.fixture(autouse=True)
+def temp_cache_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redirect the local cache root so `spoor explore`'s map persistence writes
+    under a temp dir, never the developer's real cache, for every scenario here."""
+    monkeypatch.setattr(storage, "CACHE_ROOT", tmp_path / ".spoor-cache")
 
 
 @given(parsers.parse('a live fixture site starting at "{page}"'))
@@ -107,6 +116,29 @@ def wiki_index_counts(context: dict[str, Any], states: int, transitions: int) ->
     index = (context["wiki_dir"] / "index.html").read_text(encoding="utf-8")
     assert f"<strong>{states}</strong> states discovered" in index
     assert f"<strong>{transitions}</strong> transitions" in index
+
+
+# --- §2f producer wiring: the run feeds the served map -------------------
+
+
+@then("the target's exploration graph is stored for serving")
+def graph_is_stored(context: dict[str, Any]) -> None:
+    entry = MapStore().get(context["url"])
+    assert entry is not None, "explore did not persist the target to the map"
+    assert entry.exploration is not None, "no exploration graph stored"
+    context["stored"] = entry.exploration
+
+
+@then(
+    parsers.parse(
+        "the stored exploration graph reports {states:d} states "
+        "and {transitions:d} transitions"
+    )
+)
+def stored_counts(context: dict[str, Any], states: int, transitions: int) -> None:
+    counts = context["stored"]["counts"]
+    assert counts["states"] == states
+    assert counts["transitions"] == transitions
 
 
 def _summary_count(context: dict[str, Any], label: str) -> int:

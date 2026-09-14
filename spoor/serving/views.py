@@ -20,10 +20,11 @@ from spoor.serving.store import MapEntry
 def map_view(entry: MapEntry) -> dict[str, object]:
     """The served answer for one mapped URL: redacted content plus freshness.
 
-    Records and the observed API surface pass through redaction here (§2h); the
-    capture time is echoed and a non-negative `age_seconds` computed against now.
-    Deliberately omits `entry.config` — the stored extraction config is local-only
-    (kept solely to reproduce a forced recheck, §2f) and must never be served.
+    Records, the observed API surface, and the exploration graph all pass through
+    redaction here (§2h); the capture time is echoed and a non-negative
+    `age_seconds` computed against now. Deliberately omits `entry.config` — the
+    stored extraction config is local-only (kept solely to reproduce a forced
+    recheck, §2f) and must never be served.
     """
     captured = datetime.fromisoformat(entry.captured_at)
     age_seconds = (datetime.now(UTC) - captured).total_seconds()
@@ -33,6 +34,7 @@ def map_view(entry: MapEntry) -> dict[str, object]:
         "tier": entry.tier,
         "records": redact_records(entry.records),
         "api_surface": redact_value(entry.api_surface),
+        "exploration": redact_value(entry.exploration),
         "captured_at": entry.captured_at,
         "age_seconds": age_seconds,
     }

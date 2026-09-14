@@ -58,6 +58,15 @@ Feature: A read-only MCP server answers from a captured map
     When I call the MCP tool "get_map" with url "https://shop.example/leak"
     Then the MCP result's first record "title" equals "Bearer [REDACTED]"
 
+  Scenario: An MCP client fetches a mapped URL's exploration graph, redacted
+    # The same state-action graph the REST surface serves, over the shared view —
+    # so an agent can ask "what happens when I click X" as a tool. A secret captured
+    # during exploration is redacted on the way out (§2h), like any served value.
+    Given an explored graph is mapped for "https://shop.example/app"
+    When I call the MCP tool "get_map" with url "https://shop.example/app"
+    Then the MCP result's exploration graph has 2 states and 1 transition
+    And the MCP result's exploration graph exposes no raw secret
+
   Scenario: An unmapped URL errors rather than being fabricated
     When I call the MCP tool "get_map" with url "https://shop.example/nope"
     Then the MCP call fails with a not-mapped error

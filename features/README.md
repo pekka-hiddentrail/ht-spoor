@@ -37,14 +37,14 @@ are authored when their phase begins, not up front.
 | `self_healing_reanchor.feature` | Tier-3 cross-run re-anchoring: a confident heal becomes the new anchor | §2 / §2d | `spoor/core` | 3 |
 | `self_healing_container.feature` | Tier-3 heals a broken row *container* (`item` selector), with a repeating-group gate + ambiguity refusal | §2 / §2d | `spoor/core` | 3 |
 | `self_healing_visual.feature` | Tier-3 perceptual-hash visual signal: a cropped-screenshot difference hash heals a low-text element whose markup churns | §2 / §2d | `spoor/core` | 3 |
-| `serving.feature` | Read-only serving of a captured map over a REST API (records + observed API surface, with freshness) | §2f | `spoor/serving` | 4 / 5 |
-| `serving_mcp.feature` | Read-only serving of the same map over an MCP server (agent-facing tools; exploration-graph serving later) | §2f | `spoor/serving` | 4 / 5 |
+| `serving.feature` | Read-only serving of a captured map over a REST API (records + observed API surface + exploration graph, with freshness) | §2f | `spoor/serving` | 4 / 5 |
+| `serving_mcp.feature` | Read-only serving of the same map over an MCP server (agent-facing tools; records, API surface, and exploration graph) | §2f | `spoor/serving` | 4 / 5 |
 | `exploration_safety.feature` | Exploration safety gate: destructive actions are sandbox-only, non-configurable | §2e | `spoor/exploration`, `spoor/security` | 5 |
 | `exploration_state.feature` | Exploration state abstraction: normalize + hash the DOM so equivalent screens share one state id | §2e | `spoor/exploration` | 5 |
 | `exploration_discovery.feature` | Exploration element discovery: pull the interactive elements from the accessibility tree as candidate actions | §2e | `spoor/exploration` | 5 |
 | `exploration_control.feature` | Exploration run-level controls: hard budget (states/requests/wall-clock) + manual kill switch | §2e | `spoor/exploration` | 5 |
 | `exploration_loop.feature` | Exploration explorer loop: the state-action graph orchestrator tying together discovery, safety, state abstraction, and run controls | §2e | `spoor/exploration` | 5 |
-| `exploration_browser.feature` | Exploration in a real browser: the `spoor explore` command drives the whole stack against a live site via a headless-Chromium driver | §2e | `spoor/exploration`, CLI | 5 |
+| `exploration_browser.feature` | Exploration in a real browser: the `spoor explore` command drives the whole stack against a live site via a headless-Chromium driver, renders a wiki, and persists the graph for serving | §2e / §2f | `spoor/exploration`, `spoor/serving`, CLI | 5 |
 | `exploration_signals.feature` | Exploration per-transition signal capture: a free-signal bundle per state and a before/after diff (a11y, console, storage, network, screenshot) per transition | §2e | `spoor/exploration` | 5 |
 | `exploration_signals_live.feature` | Live per-transition signal capture: the real driver reads console, storage, network, a11y, and a screenshot hash from an actual Chromium page | §2e | `spoor/exploration` | 5 |
 | `exploration_wiki.feature` | Exploration wiki generation: render the state-action graph into a browsable static HTML site (index + Mermaid overview, one page per state/transition), with captured values redacted before rendering | §2e | `spoor/exploration` | 5 |
@@ -195,7 +195,12 @@ non-GET route": both files pin that a plain server stays GET-only / read-tools-o
 while a recheck-enabled server adds exactly the one seam — non-destructive, and (on
 MCP) honestly marked non-read-only since it fetches and rewrites the local map. The
 config needed to reproduce a run is persisted with each entry but stays local-only,
-never served.
+never served. Both surfaces now also serve the **exploration graph**: `spoor explore`
+records its state-action graph into the same map (`shareable_exploration_map` projects
+it to §2h-shareable facts — per-state action inventory and signal *counts*, per-transition
+what the action *changed*), a new `MapEntry.exploration` field carries it, and the one
+`views.map_view` line that redacts it surfaces it on both `/map` and `get_map` — so an
+agent can consult "what happens when I click X" as data, not just read the static wiki.
 
 `exploration_safety.feature` (§2e) opens exploration mode with its **safety
 foundation**, built before anything that can fire an action exists. Two pure-logic
