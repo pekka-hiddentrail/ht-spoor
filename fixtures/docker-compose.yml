@@ -9,9 +9,19 @@
 # Sauce Demo is the second archetype and the first login-gated one; it joined once
 # bring-your-own-session (§2h) shipped the capability that can actually exercise it,
 # giving the bench a structurally different SPA and an end-to-end auth proof (see the
-# sauce-demo service below). A self-hosted ERPNext/Odoo and a Netflix-clone still
-# wait for their phases (API discovery §2b/§2.5, exploration mode §2e/Phase 6) —
-# standing them up now would be scaffolding for capabilities that do not yet exist.
+# sauce-demo service below).
+#
+# PrestaShop is the third archetype and the first server-rendered, deeply linked
+# storefront: a real PHP/MySQL e-commerce app whose catalog, categories, cart, and
+# checkout are ordinary server-rendered pages with genuine URLs and forms — the
+# structural opposite of the two SPAs above. It joins for exploration mode (§2e):
+# a large, richly-interlinked, stateful site is exactly what stresses reset-and-replay,
+# state abstraction, and the mapping-coverage work the 7-series has been hardening,
+# where an SPA whose whole app lives at one URL does not. Unlike the distroless SPAs
+# it needs a database, so it ships as two services (prestashop + prestashop-db) and
+# auto-installs on first boot. A self-hosted ERPNext/Odoo and a Netflix-clone still
+# wait for their phases (API discovery §2b/§2.5, richer exploration) — standing them
+# up now would be scaffolding for capabilities that do not yet exist.
 
 services:
   juice-shop:
@@ -49,3 +59,68 @@ services:
     # §2e exploration mode may exercise freely.
     labels:
       spoor.sandbox: "true"
+
+  prestashop:
+    # PrestaShop, the third live archetype: a server-rendered PHP/MySQL storefront.
+    # The official image bundles Apache+PHP and auto-installs the shop against the
+    # database service below on first boot (PS_INSTALL_AUTO=1); first boot takes a
+    # few minutes while it builds the schema and demo catalog, fast on later boots
+    # (the installed state persists in the ps-data volume). Version is pinned to a
+    # tag, matching the bench's pinning discipline (Juice Shop's tag, Sauce Demo's
+    # source commit).
+    image: prestashop/prestashop:8.1
+    depends_on:
+      prestashop-db:
+        condition: service_healthy
+    ports:
+      # Host port defaults to 8080 (PrestaShop's conventional dev port; the 300x
+      # range is taken by the two SPAs) and is overridable so a machine already
+      # using 8080 can still run the bench:
+      # `PRESTASHOP_PORT=8090 docker compose ... up -d`. The container serves on 80.
+      - "${PRESTASHOP_PORT:-8080}:80"
+    environment:
+      # The public host:port the shop generates links against. It must match the
+      # host port above or PrestaShop redirects to a bare domain that isn't served.
+      PS_DOMAIN: "127.0.0.1:${PRESTASHOP_PORT:-8080}"
+      PS_INSTALL_AUTO: "1"
+      # Keep the installed shop across restarts; only wipe on the very first install.
+      PS_ERASE_DB: "0"
+      PS_DEV_MODE: "0"
+      DB_SERVER: prestashop-db
+      DB_NAME: prestashop
+      DB_USER: prestashop
+      DB_PASSWD: prestashop
+      # Non-default folder names are the PrestaShop convention for a dev/test box.
+      PS_FOLDER_ADMIN: admin-dev
+      PS_FOLDER_INSTALL: install-dev
+      ADMIN_MAIL: admin@spoor.test
+      ADMIN_PASSWD: spoor-admin-pw
+    volumes:
+      - ps-data:/var/www/html
+    # Same §5.1 sandbox label as the others: a dedicated test target §2e exploration
+    # mode may exercise freely.
+    labels:
+      spoor.sandbox: "true"
+
+  prestashop-db:
+    # PrestaShop's datastore. Not itself a scrape target (no sandbox label) — it is
+    # infrastructure for the prestashop service and is not exposed on a host port.
+    image: mariadb:11
+    environment:
+      MARIADB_DATABASE: prestashop
+      MARIADB_USER: prestashop
+      MARIADB_PASSWORD: prestashop
+      MARIADB_ROOT_PASSWORD: prestashop-root
+    volumes:
+      - ps-db-data:/var/lib/mysql
+    healthcheck:
+      # PrestaShop must wait for the DB to actually accept connections, not merely
+      # for the container to start, or the auto-install races and fails.
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  ps-data:
+  ps-db-data:
