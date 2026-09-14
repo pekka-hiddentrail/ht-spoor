@@ -44,6 +44,7 @@ def graph_states(context: dict[str, Any], datatable: list[list[str]]) -> None:
     for row in rows:
         f = dict(zip(header, row, strict=True))
         signals = StateSignals(
+            title=f.get("title", ""),
             ax_node_count=int(f["ax_nodes"]),
             console_messages=_semis(f["console"]),
             storage_keys=_semis(f["storage"]),
@@ -72,6 +73,36 @@ def a_transition(context: dict[str, Any], label: str, frm: str, to: str) -> None
 def a_state_with_console(context: dict[str, Any], name: str, message: str) -> None:
     graph: ExplorationGraph = context["graph"]
     signals = StateSignals(ax_node_count=1, console_messages=(message,))
+    context["signals"][name] = signals
+    graph.add_state(name, [], signals)
+
+
+@given(parsers.parse('a state "{name}" whose console logged "{message}" {n:d} times'))
+def a_state_with_repeated_console(
+    context: dict[str, Any], name: str, message: str, n: int
+) -> None:
+    graph: ExplorationGraph = context["graph"]
+    signals = StateSignals(ax_node_count=1, console_messages=(message,) * n)
+    context["signals"][name] = signals
+    context["repeat_message"] = message
+    graph.add_state(name, [], signals)
+
+
+@given(parsers.parse('a state "{name}" that requested "{url}" {n:d} times'))
+def a_state_with_repeated_network(
+    context: dict[str, Any], name: str, url: str, n: int
+) -> None:
+    graph: ExplorationGraph = context["graph"]
+    signals = StateSignals(ax_node_count=1, network_requests=(url,) * n)
+    context["signals"][name] = signals
+    context["repeat_url"] = url
+    graph.add_state(name, [], signals)
+
+
+@given(parsers.parse('a state "{name}" with no page title'))
+def a_state_without_title(context: dict[str, Any], name: str) -> None:
+    graph: ExplorationGraph = context["graph"]
+    signals = StateSignals(ax_node_count=1, title="")
     context["signals"][name] = signals
     graph.add_state(name, [], signals)
 
@@ -168,6 +199,69 @@ def state_console(context: dict[str, Any], name: str, msg: str) -> None:
 @then(parsers.parse('the state page for "{name}" shows the storage key "{key}"'))
 def state_storage(context: dict[str, Any], name: str, key: str) -> None:
     assert key in _state_page(context, name)
+
+
+@then(parsers.parse('the state page for "{name}" shows the network request "{url}"'))
+def state_network(context: dict[str, Any], name: str, url: str) -> None:
+    assert url in _state_page(context, name)
+
+
+# --- Then: human-readable label (slice 6c) -------------------------------
+
+
+def _mermaid_source(context: dict[str, Any]) -> str:
+    """The Mermaid graph source out of the index page's <pre> block."""
+    index = _pages(context)["index.html"]
+    start = index.index("graph LR")
+    return index[start : index.index("</pre>", start)]
+
+
+@then(parsers.parse('the state page for "{name}" is titled "{title}"'))
+def state_titled(context: dict[str, Any], name: str, title: str) -> None:
+    assert f"<h1>{title}</h1>" in _state_page(context, name)
+
+
+@then(parsers.parse('the index lists the state labelled "{label}"'))
+def index_labelled(context: dict[str, Any], label: str) -> None:
+    assert f">{label}</a>" in _pages(context)["index.html"]
+
+
+@then(parsers.parse('the overview graph labels a state "{label}"'))
+def graph_labelled(context: dict[str, Any], label: str) -> None:
+    assert label in _mermaid_source(context)
+
+
+@then(parsers.parse('the state page for "{name}" is labelled by its short id'))
+def state_labelled_by_id(context: dict[str, Any], name: str) -> None:
+    short_id = name[:12]
+    assert f"<h1>{short_id}</h1>" in _state_page(context, name)
+
+
+# --- Then: collapsed repeats (slice 6c) ----------------------------------
+
+
+@then(parsers.parse('the state page for "{name}" shows that console message only once'))
+def console_only_once(context: dict[str, Any], name: str) -> None:
+    page = _state_page(context, name)
+    assert page.count(context["repeat_message"]) == 1, page.count(
+        context["repeat_message"]
+    )
+
+
+@then(parsers.parse('the state page for "{name}" marks that console message "{mark}"'))
+def console_marked(context: dict[str, Any], name: str, mark: str) -> None:
+    assert mark in _state_page(context, name)
+
+
+@then(parsers.parse('the state page for "{name}" shows that network request only once'))
+def network_only_once(context: dict[str, Any], name: str) -> None:
+    page = _state_page(context, name)
+    assert page.count(context["repeat_url"]) == 1, page.count(context["repeat_url"])
+
+
+@then(parsers.parse('the state page for "{name}" marks that network request "{mark}"'))
+def network_marked(context: dict[str, Any], name: str, mark: str) -> None:
+    assert mark in _state_page(context, name)
 
 
 # --- Then: transition page -----------------------------------------------

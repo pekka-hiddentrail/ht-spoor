@@ -28,6 +28,11 @@ class StateSignals:
     of the screenshot (`None` when no screenshot was captured). Tuples, not lists,
     so the bundle is hashable and safe to share between a node and its diffs.
 
+    `title` is the page's `document.title` at capture, a human-readable label for the
+    state in the wiki (§2e slice 6c) — the abstract `state_id` is an opaque hash, so a
+    map keyed only by it reads as noise. It defaults to `""` (the wiki falls back to the
+    short id then), so a driver or fake app that does not report a title is unaffected.
+
     `settled` records whether the page went quiet before this bundle was read (§2e,
     7b): `True` when DOM mutations stopped within the settle timeout, `False` when the
     page never quiesced and the snapshot is best-effort. It defaults to `True` so a
@@ -41,6 +46,7 @@ class StateSignals:
     storage_keys: tuple[str, ...] = ()
     network_requests: tuple[str, ...] = ()
     screenshot_hash: str | None = None
+    title: str = ""
     settled: bool = True
 
 

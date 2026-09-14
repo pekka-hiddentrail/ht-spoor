@@ -143,8 +143,10 @@ the run keeps going — a single dead button never aborts the map.
 
 Add `--wiki <dir>` to also write a **browsable wiki** of the map to that directory —
 one HTML page per state and per transition, plus an overview page with a diagram of
-the whole graph. Open its `index.html` in a browser to read what Spoor found. Any
-secrets captured along the way (tokens, session cookies) are redacted before they
+the whole graph. States are labelled by their page title so the map reads at a glance,
+and a page's console and network output is collapsed to one row per line with a count
+rather than repeating it. Open its `index.html` in a browser to read what Spoor found.
+Any secrets captured along the way (tokens, session cookies) are redacted before they
 reach the wiki.
 
 ```bash
