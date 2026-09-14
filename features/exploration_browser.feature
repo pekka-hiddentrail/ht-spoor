@@ -8,6 +8,10 @@
 # a state-action graph. Because a browser can't use the in-process fixture transport,
 # the scenario serves a small static site over a real loopback socket (as the tier-2
 # and self-healing-visual browser scenarios do) and asserts on the run summary.
+#
+# Sub-slice 6b then rides on the same live run to prove the `--wiki` flag: the mapped
+# graph is rendered to a browsable wiki on disk (the slice-6a renderer), and the
+# scenario asserts the wiki is complete and its overview counts match the run.
 
 Feature: Exploring a live site with the spoor explore command
   As an operator pointing Spoor at a target with no config
@@ -23,3 +27,12 @@ Feature: Exploring a live site with the spoor explore command
     Then it reports 2 states discovered
     And it reports 2 transitions
     And it reports 0 actions skipped
+
+  Scenario: Writing a browsable wiki of the mapped site (slice 6b)
+    # The same live run, now asked to also render the map as a wiki: a page per
+    # state and per transition plus an index, written to disk and ready to open.
+    Given a live fixture site starting at "explore_home.html"
+    When I run spoor explore against it writing a wiki
+    Then it reports where the wiki was written
+    And the wiki has an index page and a page for each state and transition
+    And the wiki index reports 2 states and 2 transitions

@@ -29,6 +29,18 @@ from spoor.exploration.safety import evaluate_action
 from spoor.exploration.state import state_id
 
 
+class ActionError(Exception):
+    """A discovered action could not be actuated in the current page (§2e).
+
+    On a live, dynamic target an element found during discovery can be gone, hidden,
+    detached, or covered by the time reset-and-replay returns to it, so the click can
+    never land. A driver raises this from `perform` to say "this action can't be
+    fired here" without aborting the run; the explorer records it as a skip and keeps
+    mapping the rest of the site. It is *not* for programming errors or a broken
+    driver — those should still propagate.
+    """
+
+
 class BrowserDriver(Protocol):
     """What the explorer needs from a browser, so the loop stays browser-free (§2e).
 
@@ -49,7 +61,12 @@ class BrowserDriver(Protocol):
         ...
 
     def perform(self, action: ActionableElement) -> None:
-        """Fire an action (e.g. click the element it names)."""
+        """Fire an action (e.g. click the element it names).
+
+        Raises `ActionError` if the element can't be actuated in the current page
+        (gone, hidden, covered); the explorer treats that as a recorded skip rather
+        than a failed run.
+        """
         ...
 
     def capture_signals(self) -> StateSignals:
@@ -109,12 +126,21 @@ def explore(
             if not decision.allowed:
                 graph.record_skip(state, action, decision.reason)
                 continue
-            navigate(path)
             # Capture the free signals either side of the action so the transition
             # records what it changed (§2e sub-slice 5c). `before` is the from-state
             # as replayed here; `after` doubles as the to-state's node bundle.
-            before = driver.capture_signals()
-            driver.perform(action)
+            try:
+                navigate(path)
+                before = driver.capture_signals()
+                driver.perform(action)
+            except ActionError as exc:
+                # The element couldn't be actuated on a live, dynamic page (or a
+                # replay step along the way couldn't). Record it honestly and carry
+                # on: the next iteration resets and replays afresh, so one dead
+                # element never aborts the whole map. This is what keeps a wiki
+                # reliably produced against a real target.
+                graph.record_skip(state, action, f"could not be performed: {exc}")
+                continue
             controller.record_request()
             after = driver.capture_signals()
             to_state, first_seen = capture(after)

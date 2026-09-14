@@ -45,6 +45,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from spoor.core.visual import InvalidImageError, perceptual_hash
 from spoor.exploration.capture import StateSignals
 from spoor.exploration.discovery import ActionableElement
+from spoor.exploration.explorer import ActionError
 
 # JS that lists both web-storage areas' keys — the "storage-state diff" §2e signal.
 _STORAGE_KEYS_JS = (
@@ -192,7 +193,10 @@ class PlaywrightDriver:
 
         Locates by accessibility role and name (not the captured backend id, which
         does not survive a reload), clicks the first match, then waits for the page
-        to settle so `state_html` reflects the resulting state.
+        to settle so `state_html` reflects the resulting state. Raises `ActionError`
+        if the element can't be actuated (gone, hidden, covered, or no longer
+        matching after a re-render) so the explorer can record a skip and carry on
+        rather than the whole run failing on one dead element (§2e).
         """
         page = self._live_page
         # Playwright types the role as a Literal of ARIA roles; discovery only ever
@@ -202,7 +206,16 @@ class PlaywrightDriver:
             locator = page.get_by_role(role, name=action.name, exact=True)
         else:
             locator = page.get_by_role(role)
-        locator.first.click(timeout=_CLICK_TIMEOUT_MS)
+        try:
+            locator.first.click(timeout=_CLICK_TIMEOUT_MS)
+        except PlaywrightError as exc:
+            # Covers the click timeout (PlaywrightTimeoutError is a PlaywrightError)
+            # and the "element is not attached / not visible" family. The reason is
+            # kept terse and free of the run-varying timeout value so it's stable; the
+            # chained cause keeps the full Playwright detail for local debugging.
+            raise ActionError(
+                f"{action.role} {action.name!r} could not be clicked"
+            ) from exc
         try:
             page.wait_for_load_state("networkidle", timeout=_NAV_TIMEOUT_MS)
         except PlaywrightTimeoutError:
