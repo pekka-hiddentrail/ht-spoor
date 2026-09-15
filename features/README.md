@@ -48,6 +48,7 @@ are authored when their phase begins, not up front.
 | `exploration_signals.feature` | Exploration per-transition signal capture: a free-signal bundle per state and a before/after diff (a11y, console, storage, network, screenshot) per transition | §2e | `spoor/exploration` | 5 |
 | `exploration_signals_live.feature` | Live per-transition signal capture: the real driver reads console, storage, network, a11y, and a screenshot hash from an actual Chromium page; a reset scopes the console/network buffers to the current visit (6d) | §2e | `spoor/exploration` | 5 |
 | `exploration_wiki.feature` | Exploration wiki generation: render the state-action graph into a browsable static HTML site (index + Mermaid overview, one page per state/transition), with captured values redacted before rendering; state pages labelled by page title and repeated console/network lines collapsed with a count (6c), network requests grouped by kind (6d), and each state page leading with an Actions table of its elements (Label / Type / Screen capture / Destination) before the signals (6e), plus a help/glossary page linked from every page defining the terms used (6f), and a per-state full-page screenshot embedded as an image when opted in — pixel-free by default (8a) | §2e | `spoor/exploration` | 5 |
+| `exploration_screenshots.feature` | Opt-in full-page screenshot capture and writing: the explorer stores a full-page image per discovered state into a caller-provided sink, and the wiki writer places each `state-{index}.png` beside the pages and embeds it; a default run captures no pixels and the wiki stays pixel-free, because pixels cannot be secret-redacted the way text is (§2h) — capture and embedding turn on only via the `spoor explore --screenshots` flag, which requires `--wiki` (8b) | §2e | `spoor/exploration`, CLI | 5 |
 | `exploration_actuation.feature` | Robust actuation, pure verdict: classify a discovered element's click point as ACTUATE / COVERED / NOT LOCATED (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation_live.feature` | Robust actuation, live driver: relocate via the CDP tree and click by a verified coordinate; detect a covered element without mis-clicking (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_settling.feature` | State settling, pure quiescence policy: settle when DOM mutations go quiet for a window, report unsettled at a bounded timeout — under a fake clock (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
@@ -432,9 +433,24 @@ leading the state page as its visual identity ahead of the Actions table, when
 `screenshots` defaults to none, so a default wiki stays **pixel-free** — because a
 screenshot is pixels, not text, it cannot be secret-redacted the way every other signal
 is (§2h), so pixels are embedded only behind an explicit opt-in. Capturing the image
-bytes and the CLI opt-in flag are a later slice; the scenarios here pin that a marked
+bytes and the CLI opt-in flag are slice 8b; the scenarios here pin that a marked
 state embeds its image before the Actions table, an unmarked state embeds none, and a
 default wiki embeds no screenshots at all.
+
+`exploration_screenshots.feature` (§2e) is **slice 8b** — the capture-and-write half.
+`PlaywrightDriver.screenshot()` returns a full-page PNG (`page.screenshot(full_page=True)`,
+or `None` if it can't be captured); `explore(..., screenshots=<sink>)` stores one image
+per discovered state into a caller-provided mapping, and `render_wiki(..., screenshots=
+<state-id→bytes>)` writes each `state-{index}.png` beside the pages and hands the captured
+ids to `build_pages` to embed them. Capture is opt-in by the *presence* of the sink,
+gated behind a separate `@runtime_checkable` `_ScreenshotCapable` protocol so the core
+`BrowserDriver` contract and every existing fake driver stay untouched; a default run
+passes no sink and captures nothing. The `spoor explore --screenshots` flag turns both
+capture and embedding on (off by default) and is rejected without `--wiki`, since there
+is nowhere to put the images. The in-process scenarios pin capture-on/off and
+write-and-embed/pixel-free with a fake app and fake PNG bytes; a live integration test
+(`tests/test_integration_wiki.py`) proves real full-page PNG bytes and end-to-end
+embedding against the bench, and that a default crawl leaves the wiki pixel-free.
 
 `exploration_actuation.feature` + `exploration_actuation_live.feature` (§2e) are
 **sub-slice 7a** — robust actuation. A live diagnostic showed the explorer's skips on
