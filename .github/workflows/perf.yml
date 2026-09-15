@@ -20,6 +20,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      update_baseline:
+        description: "Seed/refresh the committed baseline instead of checking it"
+        type: boolean
+        default: false
 
 permissions:
   # github-action-benchmark commits the timing history to the gh-pages branch.
@@ -66,21 +71,39 @@ jobs:
         # the deterministic counters — do not depend on runner speed. Fails the job
         # on deterministic drift; the timing JSON is written for the dashboard step.
         # The baseline is committed under scripts/perf_baselines/ once seeded via a
-        # workflow_dispatch --update-baseline run (until then this step is advisory).
+        # workflow_dispatch run with update_baseline=true (until then this step is
+        # advisory). On a seeding run --update-baseline writes the baseline (which the
+        # next step uploads for inspection) instead of checking it.
         run: |
+          extra=""
+          if [ "${{ inputs.update_baseline }}" = "true" ]; then
+            extra="--update-baseline"
+          fi
           python scripts/perfbench.py \
             --target http://127.0.0.1:3000 --label juice-shop-small \
             --max-states 6 --max-depth 2 --screenshots \
             --baseline scripts/perf_baselines/juice-shop-small.json \
-            --bench-out perf-out/juice-shop-small.json
+            --bench-out perf-out/juice-shop-small.json \
+            $extra
+      - name: Upload seeded baseline for inspection
+        # Only on a seeding run: the baseline is a deterministic artefact to review
+        # and commit by hand (§5.5), never auto-committed to main by the workflow.
+        if: ${{ inputs.update_baseline }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: juice-shop-small-baseline
+          path: scripts/perf_baselines/juice-shop-small.json
+          if-no-files-found: error
       - name: Stop Juice Shop
         if: always()
         run: docker compose -f fixtures/docker-compose.yml down
       - name: Publish timing trend (advisory)
         # Only on main: the action commits history to gh-pages, which a PR fork
         # cannot (and should not) push. On PRs the drift gate above still runs; the
-        # timing chart just isn't updated. Alert-only — never fails the build.
-        if: github.ref == 'refs/heads/main'
+        # timing chart just isn't updated. Alert-only — never fails the build. A
+        # seeding run (update_baseline) is skipped here — it is a one-off, not a
+        # data point for the trend.
+        if: github.ref == 'refs/heads/main' && inputs.update_baseline != true
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: Spoor exploration perf (small)
