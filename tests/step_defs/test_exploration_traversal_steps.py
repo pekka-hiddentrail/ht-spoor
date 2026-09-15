@@ -74,6 +74,11 @@ class _FakeSite:
                 "name": {"value": action.name},
                 "ignored": False,
                 "backendDOMNodeId": action.backend_node_id,
+                # The destination hint (§2e slice 9b): the URL of the page this action
+                # leads to, the same value the live driver reads from a link's href.
+                "destination": self._url.get(
+                    self._transitions[(name, action.role, action.name)]
+                ),
             }
             for action in self._actions.get(name, [])
         ]

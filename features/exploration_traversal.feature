@@ -32,6 +32,20 @@ Feature: The explorer walks breadth-first, depth-bounded, and forks on URL path
     Then the graph has pages: home, catA, catB
     And the graph does not have page "prod"
 
+  Scenario: A shallow-destination link is tried before a deep one under a budget
+    # Both links are on home; discovery lists the deep one first. Ordering the walk by
+    # the links' destination depth (§2e slice 9b) fires the shallow, top-level link
+    # first, so a 2-state budget maps it and not the deep one — peeling the onion in
+    # priority order, not discovery order.
+    Given a sandbox target with a budget of max_states 2
+    And a site whose pages are:
+      | from | label   | role | to      | url    |
+      | home | Deep    | link | deep    | /x/y/z |
+      | home | Shallow | link | shallow | /a     |
+    When I explore the site from "home"
+    Then the graph has pages: home, shallow
+    And the graph does not have page "deep"
+
   Scenario: A depth bound maps a layer but does not descend past it
     Given a sandbox target with a budget of max_depth 1
     And a site whose pages are:

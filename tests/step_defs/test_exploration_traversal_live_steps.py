@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from spoor.exploration.discovery import ActionableElement
+from spoor.exploration.discovery import ActionableElement, discover_actions
 from spoor.exploration.driver import PlaywrightDriver
 
 scenarios("exploration_traversal_live.feature")
@@ -51,3 +51,18 @@ def actuate(context: dict[str, Any], role: str, name: str) -> None:
 def current_url_ends_with(context: dict[str, Any], suffix: str) -> None:
     url = context["driver"].current_url()
     assert url.endswith(suffix), f"{url!r} does not end with {suffix!r}"
+
+
+@then(
+    parsers.parse(
+        'the discovered "{role}" named "{name}" has destination "{destination}"'
+    )
+)
+def discovered_has_destination(
+    context: dict[str, Any], role: str, name: str, destination: str
+) -> None:
+    driver: PlaywrightDriver = context["driver"]
+    actions = discover_actions(driver.ax_nodes())
+    match = [a for a in actions if a.role == role and a.name == name]
+    assert match, f"no discovered {role} named {name!r}"
+    assert match[0].destination == destination

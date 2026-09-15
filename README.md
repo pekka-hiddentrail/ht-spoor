@@ -139,7 +139,10 @@ stop early; it finishes the current step cleanly rather than aborting mid-click.
 Spoor works outward layer by layer — it maps the start page, then everything one
 click away, then the next layer, and so on — so a run that stops early still covers
 the shallow, high-value pages (a shop's top categories, its cart) before descending
-into deep product or variant pages. Use `--max-states`, `--max-requests`, and
+into deep product or variant pages. Within each layer it tries links that point to
+top-level pages before ones that point deep into the site, so the highest-value
+pages come first even when the run is capped tightly. Use `--max-states`,
+`--max-requests`, and
 `--max-seconds` to cap the run, and `--max-depth` to map only the first few layers
 (`--max-depth 1` maps the start page and everything one click from it). If an
 element it found can't actually be clicked (it disappeared, is hidden, or is

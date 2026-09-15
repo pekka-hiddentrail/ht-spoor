@@ -65,6 +65,7 @@ import binascii
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 from playwright.sync_api import (
     Browser,
@@ -102,6 +103,14 @@ _STORAGE_KEYS_JS = (
 # The CDP command that returns the page's full accessibility node list — the same
 # call the §2c accessibility signal uses, in the shape `discover_actions` expects.
 _AX_TREE_COMMAND = "Accessibility.getFullAXTree"
+# The full DOM tree, pierced through iframes/shadow roots, addressed by the same
+# backend node ids the accessibility tree uses — the bridge that lets a link's
+# accessibility node be enriched with its `href` destination hint (§2e slice 9b).
+_DOM_DOCUMENT_COMMAND = "DOM.getDocument"
+# href schemes that don't navigate to another page of the site (in-page fragments are
+# handled separately): a link carrying one gets no destination hint and is walked like
+# any un-prioritised control (§2e slice 9b).
+_NON_NAVIGATIONAL_SCHEMES = ("javascript:", "mailto:", "tel:")
 _NAV_TIMEOUT_MS = 15_000
 
 # Settling policy (§2e, 7b), in seconds to match `time.monotonic`. After a reset or a
@@ -202,6 +211,83 @@ def _border_box_clip(model: object) -> dict[str, float] | None:
     if width <= 0 or height <= 0:
         return None
     return {"x": x, "y": y, "width": width, "height": height, "scale": 1}
+
+
+def _href_attr(attributes: object) -> str | None:
+    """Read the `href` value from a CDP flat attribute list (`[name, value, …]`)."""
+    if not isinstance(attributes, list):
+        return None
+    for i in range(0, len(attributes) - 1, 2):
+        if attributes[i] == "href":
+            value = attributes[i + 1]
+            return value if isinstance(value, str) else None
+    return None
+
+
+def _href_by_backend_id(root: object) -> dict[int, str]:
+    """Map each element's backend node id to its `href`, walking the pierced DOM once.
+
+    The accessibility tree addresses nodes by `backendDOMNodeId`; the DOM tree from
+    `DOM.getDocument` carries the `href` attribute. Walking the (iframe/shadow-pierced)
+    DOM once bridges the two, so a link's accessibility node can be given its
+    destination hint (§2e slice 9b) without a per-element round trip. Nodes without an
+    href contribute nothing, so buttons and non-anchor elements simply stay absent.
+    """
+    hrefs: dict[int, str] = {}
+    if not isinstance(root, Mapping):
+        return hrefs
+    stack: list[Mapping[str, object]] = [root]
+    while stack:
+        node = stack.pop()
+        backend = node.get("backendNodeId")
+        href = _href_attr(node.get("attributes"))
+        if isinstance(backend, int) and href is not None:
+            hrefs[backend] = href
+        for key in ("children", "shadowRoots", "pseudoElements"):
+            children = node.get(key)
+            if isinstance(children, list):
+                stack.extend(c for c in children if isinstance(c, Mapping))
+        content = node.get("contentDocument")
+        if isinstance(content, Mapping):
+            stack.append(content)
+    return hrefs
+
+
+def _destination_of(href: str, base_url: str) -> str | None:
+    """The URL path a link points to, or None if it doesn't navigate the site.
+
+    Resolves a relative href against the live page URL and keeps the path only, so the
+    explorer can order the walk by destination depth (§2e slice 9b). An empty href, an
+    in-page fragment, or a non-navigational scheme (javascript:/mailto:/tel:) carries no
+    destination — it is a hint, and its absence just leaves the element un-prioritised.
+    """
+    stripped = href.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    if stripped.lower().startswith(_NON_NAVIGATIONAL_SCHEMES):
+        return None
+    return urlparse(urljoin(base_url, stripped)).path or "/"
+
+
+def _with_destination(
+    node: Mapping[str, object], hrefs: Mapping[int, str], base_url: str
+) -> Mapping[str, object]:
+    """A copy of `node` carrying its link destination hint, if it has a navigable one.
+
+    Looks the node's backend id up in the href map and resolves it to a URL path; a
+    node with no href, or a non-navigational one, is returned unchanged so discovery
+    reads no destination for it (§2e slice 9b). The original node is never mutated.
+    """
+    backend = node.get("backendDOMNodeId")
+    if not isinstance(backend, int):
+        return node
+    href = hrefs.get(backend)
+    if href is None:
+        return node
+    destination = _destination_of(href, base_url)
+    if destination is None:
+        return node
+    return {**node, "destination": destination}
 
 
 class PlaywrightDriver:
@@ -369,15 +455,29 @@ class PlaywrightDriver:
         return self._live_page.url
 
     def ax_nodes(self) -> Sequence[Mapping[str, object]]:
-        """The current accessibility-tree nodes, read over CDP (for discovery)."""
+        """The current accessibility-tree nodes, read over CDP (for discovery).
+
+        Each node is enriched with a `destination` hint (§2e slice 9b) when its backing
+        DOM element is a link with a navigable href: the href resolved against the live
+        page URL and reduced to its path — the same shape the explorer orders the walk
+        by, so shallow, structural links are tried before deep ones. The href map is
+        built from one extra `DOM.getDocument` on the same CDP session; a node with no
+        such href is returned as read, so buttons and JS controls carry no destination.
+        """
         page = self._live_page
         session = page.context.new_cdp_session(page)
         try:
             result = session.send(_AX_TREE_COMMAND)
+            document = session.send(
+                _DOM_DOCUMENT_COMMAND, {"depth": -1, "pierce": True}
+            )
         finally:
             session.detach()
         nodes = result.get("nodes", [])
-        return nodes if isinstance(nodes, list) else []
+        if not isinstance(nodes, list):
+            return []
+        hrefs = _href_by_backend_id(document.get("root"))
+        return [_with_destination(node, hrefs, page.url) for node in nodes]
 
     def capture_signals(self) -> StateSignals:
         """The free-signal bundle for the current page (§2e sub-slice 5c).

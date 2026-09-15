@@ -273,6 +273,38 @@ def _url_path(url: str) -> str:
     return urlparse(url).path or "/"
 
 
+# The depth a destination-less element sorts to: after every element whose link
+# destination is known, so the walk fires structural links first and leaves buttons /
+# JS controls / unknown targets for later (§2e slice 9b).
+_NO_DESTINATION_DEPTH = 1 << 30
+
+
+def _destination_depth(destination: str | None) -> int:
+    """How deep a link's destination sits, for shallowest-first ordering (9b).
+
+    The number of non-empty path segments in the destination URL path: `/` is depth 0,
+    `/9-art` is depth 1, `/brand/2-graphic-corner` is depth 2, so a run peels the
+    structural, top-level pages before the deep tendrils. A `None` destination (a
+    button, a JS control, a non-navigational href) sorts last. Generic (§0): it counts
+    path segments, never matching a particular site.
+    """
+    if destination is None:
+        return _NO_DESTINATION_DEPTH
+    return len([segment for segment in _url_path(destination).split("/") if segment])
+
+
+def _prioritized(actions: Sequence[ActionableElement]) -> list[ActionableElement]:
+    """Order a state's actions shallowest-destination-first, stably (§2e slice 9b).
+
+    A *stable* sort by destination depth: elements keep their discovery order within
+    the same depth, and destination-less elements keep theirs at the end. Reorders only
+    what the walk *tries first* under a budget — the graph's stored action order (and so
+    the 8d/8e per-element screenshot alignment) is untouched, and an unbounded run maps
+    the same set either way.
+    """
+    return sorted(actions, key=lambda action: _destination_depth(action.destination))
+
+
 class _Reach(Enum):
     """Whether an action can be actuated now, or why not (§2e, 7c)."""
 
@@ -592,9 +624,12 @@ def explore(
         `(state, url_path)` from being walked twice. Popping a state expands it —
         firing each gate-permitted action via reset-and-replay (7c/7d) and recording
         where it led — then enqueues each landing whose `(state, url_path)` is new, so
-        the graph fills layer by layer. `max_depth`, when set, stops a state from being
-        expanded once its depth (its path length) reaches the bound: the state is still
-        reached and recorded, the walk simply does not descend past it.
+        the graph fills layer by layer. Within a state, actions are fired
+        shallowest-destination-first (§2e slice 9b) so a budget-limited run reaches the
+        structural, top-level links before the deep ones. `max_depth`, when set, stops a
+        state from being expanded once its depth (its path length) reaches the bound:
+        the state is still reached and recorded, the walk simply does not descend past
+        it.
         """
         max_depth = controller.max_depth
         frontier: deque[tuple[str, list[_PathStep]]] = deque()
@@ -608,9 +643,10 @@ def explore(
             # so states up to `max_depth` are mapped but the walk descends no further.
             if max_depth is not None and len(path) >= max_depth:
                 continue
-            # Snapshot the action list: expanding a later state may add states, and we
-            # iterate the actions discovered for this state when it was first seen.
-            for action in list(graph.node(state).actions):
+            # Snapshot the action list, ordered shallowest-destination-first (9b) so a
+            # budget-limited run fires the structural, top-level links before the deep
+            # ones. Ordering only; the graph's stored order (8d/8e alignment) is intact.
+            for action in _prioritized(graph.node(state).actions):
                 if controller.check().should_stop:
                     return
                 decision = evaluate_action(

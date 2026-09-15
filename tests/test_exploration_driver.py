@@ -12,7 +12,8 @@ quiescence; and `reset` clears cookies and web storage before navigating so repl
 true first visit.
 
 A hand-rolled fake page stands in for the Playwright `Page`, injected onto the driver
-directly. `perform` touches `ax_nodes()` (a CDP accessibility-tree read), a second CDP
+directly. `perform` touches `ax_nodes()` (a CDP accessibility-tree read plus a
+`DOM.getDocument` href map for destination hints), a second CDP
 session for `DOM.resolveNode` + `Runtime.callFunctionOn`, `page.mouse.click(...)`, and
 `page.evaluate(...)` (the mutation-count read the settle wait polls); `reset` touches
 `context.clear_cookies()`, `page.evaluate(...)` (the storage clear), and `page.goto`.
@@ -76,6 +77,11 @@ class _FakeCDPSession:
     def send(self, method: str, params: dict[str, Any] | None = None) -> Any:
         if method == "Accessibility.getFullAXTree":
             return {"nodes": self._nodes}
+        if method == "DOM.getDocument":
+            # The href-map read `ax_nodes` adds for destination hints (§2e slice 9b):
+            # an empty document leaves every node without a destination, which these
+            # actuation tests don't exercise (they match by role + name, not depth).
+            return {"root": {}}
         if method == "DOM.resolveNode":
             return {"object": {"objectId": "obj-1"}}
         if method == "Runtime.callFunctionOn":
@@ -123,6 +129,8 @@ class _FakePage:
         self.mouse = _FakeMouse()
         self.goto_urls: list[str] = []
         self.evaluated: list[str] = []
+        # The base URL `ax_nodes` resolves link hrefs against for destination hints.
+        self.url = "http://127.0.0.1:0/"
 
     def evaluate(self, expression: str) -> Any:
         # The settle wait polls the mutation counter (always 0 here — quiet); the reset
