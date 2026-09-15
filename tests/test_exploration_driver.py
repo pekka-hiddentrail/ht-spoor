@@ -180,6 +180,20 @@ def test_reset_clears_cookies_and_storage_then_navigates() -> None:
     assert page.goto_urls == ["http://127.0.0.1:0/"]
 
 
+def test_reset_scopes_console_and_network_buffers() -> None:
+    # Reset begins a fresh visit, so the running console/network buffers are cleared:
+    # a state reached after a reset must reflect only this visit, not the cumulative
+    # output of every earlier walk. The click's before/after diff is unaffected because
+    # its two captures straddle a single action with no reset between them.
+    page = _FakePage(probe_value=_HITS_TARGET)
+    driver = _driver_with_page(page)
+    driver._console.extend(["home ready", "going next"])
+    driver._network.extend(["http://x/home.js", "http://x/ping.txt"])
+    driver.reset()
+    assert driver._console == []
+    assert driver._network == []
+
+
 def test_perform_covered_raises_element_covered() -> None:
     # The point resolves to a different element: covered, not clicked. The layer's role
     # and text are carried for recovery (7c) and the user-facing flag.

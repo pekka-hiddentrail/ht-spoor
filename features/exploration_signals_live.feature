@@ -31,3 +31,17 @@ Feature: The live browser driver captures real page signals
     And the diff added the storage key "opened"
     And the diff recorded at least one network request
     And the diff marks the screenshot as changed
+
+  Scenario: A reset scopes captured signals to the current visit
+    # The console and network buffers accumulate across reloads within a visit, so
+    # without scoping a state reached late in the run would show the whole session's
+    # cumulative output. Reset-and-replay revisits a state as a fresh first visit, so a
+    # reset clears the buffers: signals captured after it reflect only this visit, not
+    # an earlier walk's fetch to "/ping.txt" or its "going next" console line. The
+    # click's own before/after diff is unaffected — its two captures straddle a single
+    # action with no reset between them (the scenario above still holds).
+    Given a live browser on the signals fixture "explore_signals_home.html"
+    When I capture, click "Go next", then reset and capture
+    Then the reset capture omits the network request "/ping.txt"
+    And the reset capture omits the console message "going next"
+    And the reset capture includes the console message "home ready"

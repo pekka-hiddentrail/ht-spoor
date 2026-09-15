@@ -145,7 +145,10 @@ Add `--wiki <dir>` to also write a **browsable wiki** of the map to that directo
 one HTML page per state and per transition, plus an overview page with a diagram of
 the whole graph. States are labelled by their page title so the map reads at a glance,
 and a page's console and network output is collapsed to one row per line with a count
-rather than repeating it. Open its `index.html` in a browser to read what Spoor found.
+rather than repeating it. Network requests are grouped by kind — scripts, styles,
+images, fonts, media, data, and documents — so you can see what a page loaded at a
+glance, and each state shows only the requests and console output from the path that
+reached it. Open its `index.html` in a browser to read what Spoor found.
 Any secrets captured along the way (tokens, session cookies) are redacted before they
 reach the wiki.
 

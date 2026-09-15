@@ -99,6 +99,17 @@ def a_state_with_repeated_network(
     graph.add_state(name, [], signals)
 
 
+@given(parsers.parse('a state "{name}" requested a mix of resources:'))
+def a_state_with_network_mix(
+    context: dict[str, Any], name: str, datatable: list[list[str]]
+) -> None:
+    _, *rows = datatable  # a single "url" column; the header row is discarded
+    graph: ExplorationGraph = context["graph"]
+    signals = StateSignals(ax_node_count=1, network_requests=tuple(r[0] for r in rows))
+    context["signals"][name] = signals
+    graph.add_state(name, [], signals)
+
+
 @given(parsers.parse('a state "{name}" with no page title'))
 def a_state_without_title(context: dict[str, Any], name: str) -> None:
     graph: ExplorationGraph = context["graph"]
@@ -262,6 +273,47 @@ def network_only_once(context: dict[str, Any], name: str) -> None:
 @then(parsers.parse('the state page for "{name}" marks that network request "{mark}"'))
 def network_marked(context: dict[str, Any], name: str, mark: str) -> None:
     assert mark in _state_page(context, name)
+
+
+# --- Then: network categories (slice 6d) ---------------------------------
+
+
+def _network_section(page: str) -> str:
+    """The state page's Network-requests block, up to the next section heading."""
+    start = page.index("<h2>Network requests</h2>")
+    return page[start : page.index("<h2", start + 1)]
+
+
+@then(
+    parsers.parse(
+        'the state page for "{name}" groups the network request "{url}" under '
+        '"{category}"'
+    )
+)
+def network_grouped(
+    context: dict[str, Any], name: str, url: str, category: str
+) -> None:
+    section = _network_section(_state_page(context, name))
+    head = f"<h3>{category} "
+    assert head in section, f"no {category!r} group in network section"
+    chunk = section[section.index(head) :]
+    nxt = chunk.find("<h3>", len(head))
+    if nxt != -1:
+        chunk = chunk[:nxt]
+    assert url in chunk, f"{url!r} not under {category!r}; group was: {chunk!r}"
+
+
+@then(
+    parsers.parse(
+        'the state page for "{name}" shows the network category "{category}" with '
+        "{n:d} requests"
+    )
+)
+def network_category_count(
+    context: dict[str, Any], name: str, category: str, n: int
+) -> None:
+    section = _network_section(_state_page(context, name))
+    assert f"<h3>{category} <span class=\"count\">({n})</span></h3>" in section, section
 
 
 # --- Then: transition page -----------------------------------------------

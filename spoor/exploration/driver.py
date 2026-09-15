@@ -203,9 +203,12 @@ class PlaywrightDriver:
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._page: Page | None = None
-        # Console messages and network request URLs accumulate for the page's whole
-        # life (across reloads); a transition's diff is the slice between its
-        # before- and after-snapshots, so the running buffers are exactly right.
+        # Console messages and network request URLs accumulate across reloads within a
+        # single visit, but reset() clears them so each visit starts empty. A
+        # transition's diff is the slice between its before- and after-snapshots (a
+        # single click, no reset between), so the diff is unaffected; what the clear
+        # fixes is the state bundle, which otherwise showed the whole run's cumulative
+        # output — a state reached late dumped every earlier walk's console and network.
         self._console: list[str] = []
         self._network: list[str] = []
         # Settling seams (§2e, 7b), mirroring the RunController clock seam so the wait
@@ -300,6 +303,11 @@ class PlaywrightDriver:
         wait waits for real DOM quiescence — so a page that never reaches "network idle"
         (which used to raise straight through and abort the run) is now a recorded
         unsettled fact, not a crash.
+
+        The console and network buffers are cleared here too: a reset begins a fresh
+        visit, so signals captured after it must reflect only this visit, not the
+        cumulative output of every earlier walk. This is what scopes each state's
+        recorded console/network to how the run actually reached it.
         """
         page = self._live_page
         self._live_context.clear_cookies()
@@ -308,6 +316,10 @@ class PlaywrightDriver:
         except PlaywrightError:
             # No same-origin document to clear yet (first reset, or a blank page).
             pass
+        # Scope the running buffers to this visit: without clearing, a state reached
+        # after many resets would carry every prior walk's console lines and requests.
+        self._console.clear()
+        self._network.clear()
         # Zero the in-flight count before navigating so any leaked request from the
         # previous page can't hold the fresh load "busy" forever (§2e, 7e).
         self._inflight = 0
