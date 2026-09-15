@@ -119,6 +119,13 @@ def a_discovered_element(context: dict[str, Any], label: str, name: str) -> None
     )
 
 
+@given(parsers.parse('a captured screenshot for state "{name}"'))
+def a_captured_screenshot(context: dict[str, Any], name: str) -> None:
+    # Mark the state (by id) as having a captured full-page screenshot, as the writer
+    # will once slice 8b persists the bytes; here it only tells the renderer to embed.
+    context.setdefault("screenshots", set()).add(name)
+
+
 @given(parsers.parse('a state "{name}" with no page title'))
 def a_state_without_title(context: dict[str, Any], name: str) -> None:
     graph: ExplorationGraph = context["graph"]
@@ -132,7 +139,9 @@ def a_state_without_title(context: dict[str, Any], name: str) -> None:
 
 @when(parsers.parse('I render the wiki for "{target}"'))
 def render(context: dict[str, Any], target: str) -> None:
-    context["pages"] = build_pages(context["graph"], target=target)
+    context["pages"] = build_pages(
+        context["graph"], target=target, screenshots=context.get("screenshots")
+    )
 
 
 # --- helpers -------------------------------------------------------------
@@ -373,6 +382,42 @@ def element_destination(
 def element_no_destination(context: dict[str, Any], label: str, name: str) -> None:
     row = _element_row(_state_page(context, name), label)
     assert "href=" not in row, f"expected no destination link, got: {row!r}"
+
+
+# --- Then: embedded screenshots (slice 8a) -------------------------------
+
+
+def _screenshot_src(context: dict[str, Any], name: str) -> str:
+    index = context["graph"].states.index(name)
+    return f'src="state-{index}.png"'
+
+
+@then(parsers.parse('the state page for "{name}" embeds its screenshot image'))
+def embeds_screenshot(context: dict[str, Any], name: str) -> None:
+    page = _state_page(context, name)
+    assert _screenshot_src(context, name) in page, page
+
+
+@then(parsers.parse('the state page for "{name}" embeds no screenshot image'))
+def embeds_no_screenshot(context: dict[str, Any], name: str) -> None:
+    page = _state_page(context, name)
+    assert "<img" not in page, f"unexpected image on {name} page"
+
+
+@then(
+    parsers.parse(
+        'the screenshot on the "{name}" state page comes before the Actions table'
+    )
+)
+def screenshot_before_actions(context: dict[str, Any], name: str) -> None:
+    page = _state_page(context, name)
+    assert page.index("<h2>Screenshot</h2>") < page.index("<h2>Actions</h2>")
+
+
+@then("no wiki page embeds a screenshot image")
+def no_page_embeds_screenshot(context: dict[str, Any]) -> None:
+    for filename, html in _pages(context).items():
+        assert "<img" not in html, f"unexpected image on {filename}"
 
 
 # --- Then: network categories (slice 6d) ---------------------------------

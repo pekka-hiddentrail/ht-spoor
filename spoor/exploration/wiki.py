@@ -13,13 +13,19 @@ Two scoping decisions (recorded in the §2e slice-6a decision note) shape it:
   a fixed, small page set rendered straight from templates, no build step. The graph
   overview is drawn by Mermaid, loaded from a CDN by the index — the pages themselves
   are static and readable offline; only the overview *diagram* needs the network.
-- **Hash-only screenshots**: the captured screenshot signal is a perceptual hash
-  (5c-ii), so a state page shows its hash and a transition page reports whether the
-  screenshot *changed* — no image bytes are embedded yet (a deliberate follow-on).
-  Embedding the image is deferred beyond slice 6c for a §2h reason: string redaction
-  cannot scrub a secret that is *visible on the page* (a token shown in the DOM, PII),
-  so pasting a screenshot into shared output would bypass the redaction every other
-  signal goes through. Doing it safely needs its own treatment and is left for later.
+- **Hash-plus-opt-in screenshots**: the captured screenshot signal is a perceptual hash
+  (5c-ii), so a state page always shows its hash and a transition page reports whether
+  the screenshot *changed* — a hash is a 64-bit int, safe to share unconditionally.
+  Embedding the *image* is the deferred visual-capture work (§9), begun in slice 8a:
+  `build_pages` accepts a `screenshots` set of state ids, and a state so marked embeds
+  its full-page screenshot as an `<img>` referenced by the relative filename
+  `_screenshot_filename(index)`, leading the page as the screen's visual identity. It is
+  gated for a §2h reason: string redaction cannot scrub a secret that is *visible on the
+  page* (a token shown in the DOM, PII), so a screenshot bypasses the redaction every
+  other signal goes through. So pixels reach the shared wiki only behind an explicit
+  opt-in — the default is an empty set, and a default run stays pixel-free. Persisting
+  the image bytes and threading that opt-in through the CLI is a following slice; here
+  the renderer only knows *which* states have an image and *where* it will sit.
 
 Slice 6c makes the state pages readable after a live PrestaShop run showed them barely
 usable. Two generic fixes (§0): a state is labelled by its captured **page title**
@@ -75,6 +81,7 @@ site-specific (§0): the same templates render every target's graph.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -89,6 +96,16 @@ from spoor.security.redaction import REDACTED, redact
 # 12-char prefix is enough to tell states apart in links and the overview diagram.
 _SHORT_ID = 12
 _UNNAMED = "(unnamed)"
+
+
+def _screenshot_filename(index: int) -> str:
+    """The relative filename a state's full-page screenshot is embedded under (8a).
+
+    Parallels the `state-{index}.html` page filename so the writer that persists the
+    image bytes (a later slice) and the renderer that references them agree on one name.
+    """
+    return f"state-{index}.png"
+
 
 # Network-request categories (§2e slice 6d). A flat list of every request seen at a
 # state is noise, so the state page collates requests under this small fixed taxonomy,
@@ -365,15 +382,28 @@ def _skip_view(skip: SkippedAction, states: list[str]) -> dict[str, object]:
     }
 
 
-def build_pages(graph: ExplorationGraph, *, target: str) -> dict[str, str]:
+def build_pages(
+    graph: ExplorationGraph,
+    *,
+    target: str,
+    screenshots: Collection[str] | None = None,
+) -> dict[str, str]:
     """Render `graph` into a map of wiki filename → HTML (§2e slice 6a).
 
     Pure: builds the whole static site in memory, touching no disk and no browser, so
     it is fully unit/BDD testable. Every captured value is redacted (§2h) and every
     template autoescapes, so nothing raw or executable reaches a page. `render_wiki`
     is the thin writer around it.
+
+    `screenshots` is the set of state ids whose full-page screenshot should be embedded
+    as an `<img>` (slice 8a). It defaults to none, so a default wiki is pixel-free;
+    pixels reach this shared surface only behind an explicit opt-in, because a
+    screenshot cannot be secret-redacted the way every text signal is (§2h). The image
+    bytes themselves are placed next to the pages by the caller; here a marked state's
+    view just carries the relative filename to reference.
     """
     states = graph.states
+    shot_ids = set(screenshots or ())
     state_index = {sid: i for i, sid in enumerate(states)}
     labels = {sid: _state_label(sid, graph.node(sid).signals) for sid in states}
     state_views = [
@@ -394,6 +424,13 @@ def build_pages(graph: ExplorationGraph, *, target: str) -> dict[str, str]:
         view["elements"] = _elements(
             view["actions"],  # type: ignore[arg-type]
             outgoing,
+        )
+        # A full-page screenshot is embedded only for states the caller opted in (8a);
+        # the marked state carries the relative filename its image is written under.
+        view["screenshot_image"] = (
+            _screenshot_filename(view["index"])  # type: ignore[arg-type]
+            if view["id"] in shot_ids
+            else None
         )
 
     env = _environment()
@@ -457,6 +494,7 @@ _LAYOUT = """<!DOCTYPE html>
       code { background: #f4f4f4; padding: 0 0.2rem; }
       nav { margin-bottom: 1rem; }
       .count { color: #888; font-size: 0.85em; }
+      .screenshot { max-width: 100%; height: auto; border: 1px solid #ccc; }
     </style>
   </head>
   <body>
@@ -524,6 +562,11 @@ _STATE = """{% extends "layout.html" %}
 {% if not state.settled %}
 <p><strong>⚠ Did not settle:</strong> the page kept changing until the settle timeout,
 so this snapshot is best-effort and may be incomplete.</p>
+{% endif %}
+{% if state.screenshot_image %}
+<h2>Screenshot</h2>
+<img class="screenshot" src="{{ state.screenshot_image }}"
+  alt="Full-page screenshot of {{ state.label }}" />
 {% endif %}
 
 <h2>Actions</h2>
@@ -666,6 +709,11 @@ _HELP = """{% extends "layout.html" %}
   <dd>How many entries the screen exposes in the browser's accessibility tree — the
     structured description assistive technology reads. It is a rough measure of how much
     labelled, interactive content the screen has.</dd>
+  <dt>Screenshot</dt>
+  <dd>A full-page picture of the screen, shown only when screenshots were turned on for
+    the run. Unlike every text value on these pages, a picture cannot have secrets
+    automatically blanked out, so it is included only when someone deliberately opts
+    in.</dd>
   <dt>Screenshot hash</dt>
   <dd>A short fingerprint of how the screen looks, used to tell visually different
     screens apart without storing the picture itself.</dd>
