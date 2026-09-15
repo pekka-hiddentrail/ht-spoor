@@ -1,0 +1,95 @@
+name: Performance bench
+
+# Deterministic exploration performance bench (ROADMAP.md §5.5).
+#
+# The *small* set: a tight, count-bounded Juice Shop crawl that runs in parallel
+# with the CI gate (its own job, its own container, so a slow or noisy perf run
+# never holds up — or is held up by — the gate). It does two things:
+#
+#   - gates on DETERMINISTIC drift: for the pinned archetype and a count-based
+#     budget the crawl shape (states/transitions/skips, dedup file counts) must
+#     reproduce a committed baseline exactly; any change fails the run.
+#   - trends WALL-CLOCK timing on a dashboard (github-action-benchmark on the
+#     gh-pages branch), which is advisory only — runner noise never fails a build.
+#
+# The mid (Juice Shop, larger budget) and large (PrestaShop) sets land next and
+# run on a nightly schedule; this file starts with the small set (§5.5 decision).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  # github-action-benchmark commits the timing history to the gh-pages branch.
+  contents: write
+
+jobs:
+  small:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Cache Playwright browser (tier 2)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+      - name: Install browser (tier 2)
+        run: python -m playwright install --with-deps chromium
+      - name: Cache Juice Shop image (§5.1)
+        uses: actions/cache@v4
+        with:
+          path: /tmp/juice-shop-image.tar
+          key: juice-shop-image-v17.1.1
+      - name: Load or pull Juice Shop image
+        run: |
+          if [ -f /tmp/juice-shop-image.tar ]; then
+            docker load -i /tmp/juice-shop-image.tar
+          else
+            docker compose -f fixtures/docker-compose.yml pull juice-shop
+            docker save bkimminich/juice-shop:v17.1.1 -o /tmp/juice-shop-image.tar
+          fi
+      - name: Start Juice Shop (§5.1)
+        run: docker compose -f fixtures/docker-compose.yml up -d juice-shop
+      - name: Wait for Juice Shop to be ready
+        run: timeout 180 bash -c 'until curl -sf http://127.0.0.1:3000/ >/dev/null; do sleep 3; done'
+      - name: Run small perf set (drift gate + timing capture)
+        # Count-based budget only (no --max-seconds), so the stop point — and thus
+        # the deterministic counters — do not depend on runner speed. Fails the job
+        # on deterministic drift; the timing JSON is written for the dashboard step.
+        # The baseline is committed under scripts/perf_baselines/ once seeded via a
+        # workflow_dispatch --update-baseline run (until then this step is advisory).
+        run: |
+          python scripts/perfbench.py \
+            --target http://127.0.0.1:3000 --label juice-shop-small \
+            --max-states 6 --max-depth 2 --screenshots \
+            --baseline scripts/perf_baselines/juice-shop-small.json \
+            --bench-out perf-out/juice-shop-small.json
+      - name: Stop Juice Shop
+        if: always()
+        run: docker compose -f fixtures/docker-compose.yml down
+      - name: Publish timing trend (advisory)
+        # Only on main: the action commits history to gh-pages, which a PR fork
+        # cannot (and should not) push. On PRs the drift gate above still runs; the
+        # timing chart just isn't updated. Alert-only — never fails the build.
+        if: github.ref == 'refs/heads/main'
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Spoor exploration perf (small)
+          tool: customSmallerIsBetter
+          output-file-path: perf-out/juice-shop-small.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench
+          alert-threshold: "150%"
+          comment-on-alert: true
+          fail-on-alert: false
