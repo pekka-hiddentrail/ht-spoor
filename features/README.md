@@ -48,7 +48,10 @@ are authored when their phase begins, not up front.
 | `exploration_signals.feature` | Exploration per-transition signal capture: a free-signal bundle per state and a before/after diff (a11y, console, storage, network, screenshot) per transition | §2e | `spoor/exploration` | 5 |
 | `exploration_signals_live.feature` | Live per-transition signal capture: the real driver reads console, storage, network, a11y, and a screenshot hash from an actual Chromium page; a reset scopes the console/network buffers to the current visit (6d) | §2e | `spoor/exploration` | 5 |
 | `exploration_wiki.feature` | Exploration wiki generation: render the state-action graph into a browsable static HTML site (index + Mermaid overview, one page per state/transition), with captured values redacted before rendering; state pages labelled by page title and repeated console/network lines collapsed with a count (6c), network requests grouped by kind (6d), and each state page leading with an Actions table of its elements (Label / Type / Screen capture / Destination) before the signals (6e), plus a help/glossary page linked from every page defining the terms used (6f), and a per-state full-page screenshot embedded as an image when opted in — pixel-free by default (8a) | §2e | `spoor/exploration` | 5 |
-| `exploration_screenshots.feature` | Opt-in full-page screenshot capture and writing: the explorer stores a full-page image per discovered state into a caller-provided sink, and the wiki writer places each `state-{index}.png` beside the pages and embeds it; a default run captures no pixels and the wiki stays pixel-free, because pixels cannot be secret-redacted the way text is (§2h) — capture and embedding turn on only via the `spoor explore --screenshots` flag, which requires `--wiki` (8b) | §2e | `spoor/exploration`, CLI | 5 |
+| `exploration_screenshots.feature` | Opt-in full-page screenshot capture and writing: the explorer stores a full-page image per discovered state into a caller-provided sink, and the wiki writer places each image under a `screenshots/` subfolder and embeds it; a default run captures no pixels and the wiki stays pixel-free, because pixels cannot be secret-redacted the way text is (§2h) — capture and embedding turn on only via the `spoor explore --screenshots` flag, which requires `--wiki` (8b) | §2e | `spoor/exploration`, CLI | 5 |
+| `exploration_element_screenshots.feature` | Opt-in per-element screenshot capture and writing: the explorer clips one image per discovered actionable element (the "Next" button, the "Currency" dropdown) into a caller-provided sink, aligned by discovery position, and the wiki writer places each clip under the `screenshots/` subfolder and embeds it in that element's Actions-table row; a default run clips nothing and the wiki stays pixel-free, for the same §2h reason (pixels cannot be secret-redacted) (8d) | §2e | `spoor/exploration` | 5 |
+| `exploration_opened_screenshots.feature` | Opt-in opened-contents screenshot capture: for a gate-permitted disclosure element (a dropdown/list — combobox/listbox), the explorer opens it, screenshots what it reveals, and restores, storing it as the `ElementShot`'s `opened` image; the wiki writer embeds it in a new "Opened contents" Actions-table column beside the closed clip. Opening runs only after the clean-page state/signals/clips are recorded and only for a role the safety gate permits, so it never corrupts the graph or fires a destructive action outside a sandbox; a default run and a clip-only driver produce none (8e) | §2e | `spoor/exploration` | 5 |
+| `exploration_opened_screenshots_live.feature` | Live opened-contents capture: the real PlaywrightDriver opens an ARIA "Currency" combobox on a loopback fixture in a headless Chromium, captures the revealed in-DOM option list, and Escape-restores; the capture is a real PNG that differs from the closed page and the page is left closed — proving the live half of slice 8e the in-process scenarios can't (8e) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation.feature` | Robust actuation, pure verdict: classify a discovered element's click point as ACTUATE / COVERED / NOT LOCATED (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation_live.feature` | Robust actuation, live driver: relocate via the CDP tree and click by a verified coordinate; detect a covered element without mis-clicking (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_settling.feature` | State settling, pure quiescence policy: settle when DOM mutations go quiet for a window, report unsettled at a bounded timeout — under a fake clock (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
@@ -410,11 +413,11 @@ immediately after the state-identity block (label, id, settle) and ahead of the
 captured-signal sections, so the thing a reader acts on comes first. The destination
 cell folds in what the outgoing list carried: when an element was fired and produced a
 transition it links to that transition page, labelled by the target state; otherwise it
-reads "none". The screen-capture column reads "none" for every element for now — Spoor
-captures no per-element screenshot yet (the deferred visual-capture work), so the column
-is honest about there being nothing to show rather than implying one exists. Purely a
-presentation change; the graph and its §2h redaction are untouched, and it stays generic
-across every target (§0).
+reads "none". The screen-capture column reserved here reads "none" until slice 8d, which
+fills it with a per-element clip when element screenshots are opted in (otherwise it
+stays "none", honest about there being nothing to show). Purely a presentation change;
+the graph and its §2h redaction are untouched, and it stays generic across every
+target (§0).
 
 **Slice 6f** adds a **help/glossary page** linked from every page's nav. It is a fixed,
 target-independent glossary written in plain language for a reader who did not build
@@ -427,7 +430,7 @@ defines its terms as glossary entries, and is reachable from every page.
 
 **Slice 8a** begins embedding **screenshots** in the wiki (the "Visual capture" backlog
 item), staged and opt-in. The pure renderer learns to embed a per-state **full-page
-screenshot** as an `<img>` referenced by the relative filename `state-{index}.png`,
+screenshot** as an `<img>` referenced by the relative path `screenshots/state-{index}.png`,
 leading the state page as its visual identity ahead of the Actions table, when
 `build_pages` is told (via a `screenshots` set of state ids) that a state has one.
 `screenshots` defaults to none, so a default wiki stays **pixel-free** — because a
@@ -441,8 +444,9 @@ default wiki embeds no screenshots at all.
 `PlaywrightDriver.screenshot()` returns a full-page PNG (`page.screenshot(full_page=True)`,
 or `None` if it can't be captured); `explore(..., screenshots=<sink>)` stores one image
 per discovered state into a caller-provided mapping, and `render_wiki(..., screenshots=
-<state-id→bytes>)` writes each `state-{index}.png` beside the pages and hands the captured
-ids to `build_pages` to embed them. Capture is opt-in by the *presence* of the sink,
+<state-id→bytes>)` writes each `screenshots/state-{index}.png` (grouped in its own
+subfolder, not flat beside the pages — slice 8c) and hands the captured ids to
+`build_pages` to embed them. Capture is opt-in by the *presence* of the sink,
 gated behind a separate `@runtime_checkable` `_ScreenshotCapable` protocol so the core
 `BrowserDriver` contract and every existing fake driver stay untouched; a default run
 passes no sink and captures nothing. The `spoor explore --screenshots` flag turns both
@@ -451,6 +455,56 @@ is nowhere to put the images. The in-process scenarios pin capture-on/off and
 write-and-embed/pixel-free with a fake app and fake PNG bytes; a live integration test
 (`tests/test_integration_wiki.py`) proves real full-page PNG bytes and end-to-end
 embedding against the bench, and that a default crawl leaves the wiki pixel-free.
+
+**Slice 8c** groups the screenshot images into their own `screenshots/` subfolder
+(`_screenshot_filename` → `screenshots/state-{index}.png`) instead of writing them flat
+beside the HTML pages, so the wiki directory stays readable as the page set grows — the
+first step of stage 4 of the slice-8 plan ("place all captures into the wiki in an
+understandable layout"). The pages embed each image by that subfolder-relative path;
+`exploration_screenshots.feature` gained a scenario pinning that the image lands under
+`screenshots/` and that nothing sits flat in the root. A presentation-only change: the
+opt-in, the redaction posture, and the capture path are untouched, and it stays generic
+across every target (§0).
+
+`exploration_element_screenshots.feature` (§2e) is **slice 8d** — per-element capture,
+which finally fills the Actions table's long-reserved Screen-capture column (6e).
+`explore(..., element_screenshots=<sink>)` clips one image per discovered element into a
+caller-provided mapping (keyed by state id, one `ElementShot` per element in discovery
+order), gated behind a new `_ElementScreenshotCapable` protocol exactly like 8b's
+full-page sink, so a default run and every fake stay untouched.
+`PlaywrightDriver.element_screenshot` re-locates the element through the same
+`find_target` path actuation uses, reads its box over CDP, and crops it;
+`render_wiki(..., element_screenshots=…)` writes each clip to
+`screenshots/state-{i}-el-{e}.png` and embeds it in that element's row (or leaves
+"none"). Pixel-free by default and opt-in for the same §2h reason as every screenshot.
+The in-process scenarios pin capture on/off, per-row embedding, the subfolder, and
+pixel-free-by-default; unit tests pin position-alignment with a `None` clip mid-list; a
+live integration test clips real element PNGs against the bench.
+
+`exploration_opened_screenshots.feature` (§2e) is **slice 8e** — the opened-contents
+capture the 8d follow-up promised, which finishes the maintainer's "the dropdown *and
+its contents* in a separate column" request. Where 8d clips an element closed, 8e
+captures what a **disclosure** element (a dropdown/list — combobox/listbox) reveals when
+opened, in a new **Opened contents** Actions-table column beside the closed clip.
+`ElementShot` gained an `opened` field; a separate `_OpenedScreenshotCapable` protocol
+(a clip-only driver still matches 8d's protocol and simply produces no opened image)
+exposes `PlaywrightDriver.opened_screenshot`, which clicks the element through the same
+actuation path, full-page-screenshots the revealed overlay, then Escape-restores
+(best-effort, `None` on any failure). Two fences keep it sound: the explorer opens only a
+role in `_DISCLOSURE_ROLES` that the **safety gate also permits** (so it never fires a
+destructive action outside a sandbox), and only **after** the clean-page state id,
+signals, and closed clips are recorded (so the mutation never corrupts the graph — the
+next driver call is always a reset). `render_wiki` writes each opened image to
+`screenshots/state-{i}-el-{e}-opened.png` and embeds it in the new column. The scenarios
+pin an opened capture for a disclosure element, none for a button, none for a destructive
+dropdown outside a sandbox, none when off, and none from a clip-only driver; a unit test
+pins clip and opened images tracked independently. The live half is proven two ways: a
+`@browser` scenario (`exploration_opened_screenshots_live.feature`) drives the real
+driver against a loopback combobox fixture — opening it, capturing the revealed list,
+and Escape-restoring, asserting the capture is a real PNG that differs from the closed
+page — and an integration test opens a real disclosure element against the bench when one
+is reached (skipping honestly if the small budget reaches none). Pixel-free by default
+behind the same `--screenshots` opt-in, for the same §2h reason.
 
 `exploration_actuation.feature` + `exploration_actuation_live.feature` (§2e) are
 **sub-slice 7a** — robust actuation. A live diagnostic showed the explorer's skips on

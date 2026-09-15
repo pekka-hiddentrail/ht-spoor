@@ -128,12 +128,13 @@ def explore(
         typer.Option(
             "--screenshots",
             help=(
-                "Include a full-page screenshot of each screen in the wiki (requires "
-                "--wiki). Off by default: screenshots are not captured unless you ask "
-                "for them, because a picture can show secrets (a token or personal "
-                "data on the page) that cannot be automatically blanked out the way "
-                "text can. Only turn this on when you are comfortable sharing the "
-                "images."
+                "Include screenshots in the wiki (requires --wiki): a full-page "
+                "picture of each screen, a clip of each interactive element, and a "
+                "picture of what a dropdown or list reveals when opened. Off by "
+                "default: screenshots are not captured unless you ask for them, "
+                "because a picture can show secrets (a token or personal data on the "
+                "page) that cannot be automatically blanked out the way text can. Only "
+                "turn this on when you are comfortable sharing the images."
             ),
         ),
     ] = False,
@@ -148,8 +149,10 @@ def explore(
     or covered by the time it's reached) is recorded as skipped and the run continues.
     Bound the run with the budget options, and press Ctrl-C to stop it early at any
     time. Pass --wiki to also write a browsable wiki of the result, and --screenshots
-    to include a full-page picture of each screen in that wiki (off by default,
-    because a picture can't have secrets blanked out the way captured text can). The
+    to include pictures in that wiki — a full-page shot of each screen, a clip of
+    each interactive element, and a shot of what a dropdown or list reveals when opened
+    (off by default, because a picture can't have secrets
+    blanked out the way captured text can). The
     mapped graph is also saved to the local map, so `spoor serve`/`serve-mcp` can hand
     it back later without re-exploring.
     """
@@ -157,6 +160,7 @@ def explore(
 
     from spoor.exploration.control import RunBudget, RunController
     from spoor.exploration.driver import PlaywrightDriver
+    from spoor.exploration.explorer import ElementShot
     from spoor.exploration.explorer import explore as explore_target
 
     if screenshots and wiki is None:
@@ -171,10 +175,12 @@ def explore(
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     controller = RunController(budget)
-    # The opt-in screenshot sink: a dict only when asked for, so a default run captures
-    # no pixels at all (§2e slice 8). It is filled per state during exploration and then
-    # handed to the wiki writer, which places the images and embeds them.
+    # The opt-in screenshot sinks: dicts only when asked for, so a default run captures
+    # no pixels at all (§2e slice 8). Filled during exploration and handed to the wiki
+    # writer, which places the images and embeds them — one full-page shot per screen
+    # (8b) and one clip per actionable element (8d), both behind this single opt-in.
     shots: dict[str, bytes] | None = {} if screenshots else None
+    element_shots: dict[str, list[ElementShot]] | None = {} if screenshots else None
     # Ctrl-C throws the kill switch, so the run stops gracefully at the next action
     # rather than aborting mid-click. Restore the previous handler afterwards so the
     # run doesn't leave a global side effect behind.
@@ -188,6 +194,7 @@ def explore(
                 controller=controller,
                 declared_sandbox=sandbox,
                 screenshots=shots,
+                element_screenshots=element_shots,
             )
     finally:
         signal.signal(signal.SIGINT, previous_handler)
@@ -215,10 +222,21 @@ def explore(
     if wiki is not None:
         from spoor.exploration.wiki import render_wiki
 
-        render_wiki(graph, wiki, target=url, screenshots=shots)
+        render_wiki(
+            graph,
+            wiki,
+            target=url,
+            screenshots=shots,
+            element_screenshots=element_shots,
+        )
         typer.echo(f"  wiki written to:   {wiki / 'index.html'}")
         if screenshots:
-            typer.echo(f"  screenshots:       {len(shots or {})} embedded")
+            all_shots = [s for shots_ in (element_shots or {}).values() for s in shots_]
+            element_count = sum(1 for s in all_shots if s.clip)
+            opened_count = sum(1 for s in all_shots if s.opened)
+            typer.echo(f"  screenshots:       {len(shots or {})} screens embedded")
+            typer.echo(f"  element clips:     {element_count} embedded")
+            typer.echo(f"  opened contents:   {opened_count} embedded")
 
 
 @app.command()

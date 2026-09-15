@@ -2,7 +2,7 @@ Feature: Opt-in full-page screenshots in the wiki (ROADMAP.md §2e, slice 8b)
   Slice 8a taught the wiki renderer to embed a per-state screenshot when told a state
   has one. Slice 8b is the capture-and-write half: the explorer, when handed a
   screenshot sink, stores a full-page image of each screen it discovers, and the wiki
-  writer places those images beside the pages and embeds them.
+  writer places those images under a "screenshots/" subfolder and embeds them.
 
   The whole feature is opt-in and off by default, for one §2h reason: a screenshot is
   pixels, and text redaction cannot scrub a secret that is *visible on the page* — a
@@ -37,3 +37,12 @@ Feature: Opt-in full-page screenshots in the wiki (ROADMAP.md §2e, slice 8b)
     When I render the wiki to disk
     Then the wiki directory contains no screenshot images
     And no wiki page embeds a screenshot image
+
+  Scenario: Screenshot images are grouped in their own subfolder, not flat beside the pages
+    # The images live under a "screenshots/" subfolder rather than sitting flat next to
+    # the HTML pages, so the wiki directory stays readable; pages embed them by that
+    # relative path.
+    Given I explored it with screenshot capture on
+    When I render the wiki to disk
+    Then the screenshot image for "home" is under the "screenshots" subfolder
+    And no screenshot image sits flat in the wiki root

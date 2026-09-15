@@ -197,24 +197,45 @@ def none_captured(context: dict[str, Any]) -> None:
 
 @then(parsers.parse('the wiki directory contains a screenshot image for "{name}"'))
 def dir_has_image(context: dict[str, Any], name: str) -> None:
-    path = context["out_dir"] / f"state-{_state_index(context, name)}.png"
+    path = _image_path(context, name)
     assert path.is_file(), f"no image file for {name}"
     assert path.read_bytes() == context["app"].screenshot_of(name)
 
 
 @then("the wiki directory contains no screenshot images")
 def dir_has_no_images(context: dict[str, Any]) -> None:
-    pngs = list(context["out_dir"].glob("*.png"))
+    pngs = list(context["out_dir"].rglob("*.png"))
     assert pngs == [], f"unexpected image files: {pngs}"
 
 
 @then(parsers.parse('the state page for "{name}" embeds its screenshot image'))
 def page_embeds(context: dict[str, Any], name: str) -> None:
     index = _state_index(context, name)
-    assert f'src="state-{index}.png"' in _state_page(context, name)
+    assert f'src="screenshots/state-{index}.png"' in _state_page(context, name)
 
 
 @then("no wiki page embeds a screenshot image")
 def no_page_embeds(context: dict[str, Any]) -> None:
     for path in context["out_dir"].glob("*.html"):
         assert "<img" not in path.read_text(encoding="utf-8"), f"image in {path.name}"
+
+
+# --- Then: images grouped in their own subfolder -------------------------
+
+
+def _image_path(context: dict[str, Any], name: str) -> Path:
+    index = _state_index(context, name)
+    return context["out_dir"] / "screenshots" / f"state-{index}.png"
+
+
+@then(parsers.parse('the screenshot image for "{name}" is under the "{sub}" subfolder'))
+def image_in_subfolder(context: dict[str, Any], name: str, sub: str) -> None:
+    path = _image_path(context, name)
+    assert path.parent.name == sub, f"expected image under {sub}/, got {path.parent}"
+    assert path.is_file(), f"no image under {sub}/ for {name}"
+
+
+@then("no screenshot image sits flat in the wiki root")
+def no_flat_image(context: dict[str, Any]) -> None:
+    flat = list(context["out_dir"].glob("*.png"))
+    assert flat == [], f"images should live in the subfolder, found flat: {flat}"

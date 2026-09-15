@@ -13,6 +13,7 @@ from pathlib import Path
 
 from spoor.exploration.capture import StateSignals, diff_signals
 from spoor.exploration.discovery import ActionableElement
+from spoor.exploration.explorer import ElementShot
 from spoor.exploration.graph import ExplorationGraph
 from spoor.exploration.wiki import build_pages, render_wiki
 
@@ -111,19 +112,22 @@ def test_render_wiki_writes_every_page(tmp_path: Path) -> None:
 def test_render_wiki_writes_and_embeds_only_captured_screenshots(
     tmp_path: Path,
 ) -> None:
-    # The writer places a state-N.png only for a state it has bytes for, embeds exactly
-    # those, and leaves an uncaptured state (and every other page) pixel-free (8b).
+    # The writer places a screenshots/state-N.png only for a state it has bytes for,
+    # embeds exactly those by that subfolder-relative path, and leaves an uncaptured
+    # state (and every other page) pixel-free (8b). Images live in their own subfolder,
+    # not flat beside the pages.
     graph = _two_state_graph()  # _ID_A is index 0, _ID_B is index 1
     written = render_wiki(
         graph, tmp_path, target="https://example.test", screenshots={_ID_A: b"\x89PNGa"}
     )
-    names = {p.name for p in written}
-    assert "state-0.png" in names
-    assert "state-1.png" not in names
-    assert (tmp_path / "state-0.png").read_bytes() == b"\x89PNGa"
+    shots_dir = tmp_path / "screenshots"
+    assert (shots_dir / "state-0.png") in set(written)
+    assert (shots_dir / "state-1.png") not in set(written)
+    assert not list(tmp_path.glob("*.png"))  # nothing flat in the root
+    assert (shots_dir / "state-0.png").read_bytes() == b"\x89PNGa"
     page_a = (tmp_path / "state-0.html").read_text(encoding="utf-8")
     page_b = (tmp_path / "state-1.html").read_text(encoding="utf-8")
-    assert 'src="state-0.png"' in page_a
+    assert 'src="screenshots/state-0.png"' in page_a
     assert "<img" not in page_b
 
 
@@ -132,3 +136,76 @@ def test_render_wiki_default_is_pixel_free(tmp_path: Path) -> None:
     assert not [p for p in written if p.suffix == ".png"]
     for path in written:
         assert "<img" not in path.read_text(encoding="utf-8")
+
+
+def _two_element_graph() -> ExplorationGraph:
+    """One state exposing two actionable elements in a known discovery order."""
+    graph = ExplorationGraph()
+    next_button = ActionableElement(role="button", name="Next", backend_node_id=1)
+    currency = ActionableElement(role="combobox", name="Currency", backend_node_id=2)
+    graph.add_state(_ID_A, [next_button, currency], StateSignals(ax_node_count=2))
+    return graph
+
+
+def test_render_wiki_writes_and_embeds_element_clips_by_position(
+    tmp_path: Path,
+) -> None:
+    # A clip per element is written under screenshots/state-{i}-el-{e}.png, aligned by
+    # discovery position, and embedded in that element's Actions row (8d). A None clip
+    # in the list (element 1 here) writes nothing and its row stays pixel-free — proving
+    # the list stays aligned even when a middle element could not be captured. Images
+    # live in their own subfolder, never flat in the wiki root.
+    graph = _two_element_graph()
+    written = render_wiki(
+        graph,
+        tmp_path,
+        target="https://example.test",
+        element_screenshots={_ID_A: [ElementShot(b"\x89PNG-next"), ElementShot(None)]},
+    )
+    shots_dir = tmp_path / "screenshots"
+    assert (shots_dir / "state-0-el-0.png") in set(written)
+    assert (shots_dir / "state-0-el-1.png") not in set(written)  # None clip
+    assert not list(tmp_path.glob("*.png"))  # nothing flat in the root
+    assert (shots_dir / "state-0-el-0.png").read_bytes() == b"\x89PNG-next"
+    page = (tmp_path / "state-0.html").read_text(encoding="utf-8")
+    assert 'src="screenshots/state-0-el-0.png"' in page  # the "Next" row
+    assert "state-0-el-1.png" not in page  # the uncaptured "Currency" row
+
+
+def test_render_wiki_writes_and_embeds_opened_captures_independently(
+    tmp_path: Path,
+) -> None:
+    # The opened capture (8e) is written under state-{i}-el-{e}-opened.png and embedded
+    # in the element's row, tracked independently of the closed clip: here "Currency"
+    # (element 1) has both a clip and an opened image, while "Next" (element 0) has only
+    # a clip and no opened image — proving one element can have both and another
+    # neither, with the opened files kept separate from the closed clips.
+    graph = _two_element_graph()
+    written = render_wiki(
+        graph,
+        tmp_path,
+        target="https://example.test",
+        element_screenshots={
+            _ID_A: [
+                ElementShot(clip=b"\x89PNG-next"),
+                ElementShot(clip=b"\x89PNG-cur", opened=b"\x89PNG-cur-open"),
+            ]
+        },
+    )
+    shots_dir = tmp_path / "screenshots"
+    assert (shots_dir / "state-0-el-1-opened.png") in set(written)
+    assert (shots_dir / "state-0-el-0-opened.png") not in set(written)  # no opened
+    assert (shots_dir / "state-0-el-1-opened.png").read_bytes() == b"\x89PNG-cur-open"
+    assert not list(tmp_path.glob("*.png"))  # nothing flat in the root
+    page = (tmp_path / "state-0.html").read_text(encoding="utf-8")
+    assert 'src="screenshots/state-0-el-1.png"' in page  # Currency closed clip
+    assert 'src="screenshots/state-0-el-1-opened.png"' in page  # Currency opened
+    assert "state-0-el-0-opened.png" not in page  # Next has no opened image
+
+
+def test_render_wiki_default_leaves_element_cells_pixel_free(tmp_path: Path) -> None:
+    written = render_wiki(
+        _two_element_graph(), tmp_path, target="https://example.test"
+    )
+    assert not [p for p in written if p.suffix == ".png"]
+    assert "<img" not in (tmp_path / "state-0.html").read_text(encoding="utf-8")

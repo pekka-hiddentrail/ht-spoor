@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Opened-contents fixture</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    #cb {
+      border: 1px solid #333; padding: 8px; width: 200px; cursor: pointer;
+      user-select: none;
+    }
+    #opts { display: none; border: 1px solid #333; width: 200px; margin: 0; padding: 0; }
+    #opts li { list-style: none; padding: 8px; border-top: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <h1>Opened-contents fixture</h1>
+  <!-- An ARIA combobox whose revealed options live in the DOM (not a native <select>,
+       whose OS-drawn popup a page screenshot cannot capture), so opening it changes the
+       rendered page and proves opened_screenshot captured the disclosure (§2e, 8e). -->
+  <div id="cb" role="combobox" aria-label="Currency" aria-expanded="false" tabindex="0">
+    Currency &#9662;
+  </div>
+  <ul id="opts" role="listbox" aria-label="Currency options">
+    <li role="option">USD &mdash; US Dollar</li>
+    <li role="option">EUR &mdash; Euro</li>
+    <li role="option">GBP &mdash; British Pound</li>
+  </ul>
+  <script>
+    var cb = document.getElementById('cb');
+    var opts = document.getElementById('opts');
+    cb.addEventListener('click', function () {
+      var open = opts.style.display === 'block';
+      opts.style.display = open ? 'none' : 'block';
+      cb.setAttribute('aria-expanded', String(!open));
+    });
+    // Escape restores the closed state — the best-effort restore opened_screenshot does.
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        opts.style.display = 'none';
+        cb.setAttribute('aria-expanded', 'false');
+      }
+    });
+  </script>
+</body>
+</html>

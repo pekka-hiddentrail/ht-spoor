@@ -389,7 +389,7 @@ def element_no_destination(context: dict[str, Any], label: str, name: str) -> No
 
 def _screenshot_src(context: dict[str, Any], name: str) -> str:
     index = context["graph"].states.index(name)
-    return f'src="state-{index}.png"'
+    return f'src="screenshots/state-{index}.png"'
 
 
 @then(parsers.parse('the state page for "{name}" embeds its screenshot image'))
