@@ -50,6 +50,8 @@ are authored when their phase begins, not up front.
 | `exploration_wiki.feature` | Exploration wiki generation: render the state-action graph into a browsable static HTML site (index + Mermaid overview, one page per state/transition), with captured values redacted before rendering; state pages labelled by page title and repeated console/network lines collapsed with a count (6c), network requests grouped by kind (6d), and each state page leading with an Actions table of its elements (Label / Type / Screen capture / Destination) before the signals (6e), plus a help/glossary page linked from every page defining the terms used (6f), and a per-state full-page screenshot embedded as an image when opted in — pixel-free by default (8a) | §2e | `spoor/exploration` | 5 |
 | `exploration_screenshots.feature` | Opt-in full-page screenshot capture and writing: the explorer stores a full-page image per discovered state into a caller-provided sink, and the wiki writer places each image under a `screenshots/` subfolder and embeds it; a default run captures no pixels and the wiki stays pixel-free, because pixels cannot be secret-redacted the way text is (§2h) — capture and embedding turn on only via the `spoor explore --screenshots` flag, which requires `--wiki` (8b) | §2e | `spoor/exploration`, CLI | 5 |
 | `exploration_element_screenshots.feature` | Opt-in per-element screenshot capture and writing: the explorer clips one image per discovered actionable element (the "Next" button, the "Currency" dropdown) into a caller-provided sink, aligned by discovery position, and the wiki writer places each clip under the `screenshots/` subfolder and embeds it in that element's Actions-table row; a default run clips nothing and the wiki stays pixel-free, for the same §2h reason (pixels cannot be secret-redacted) (8d) | §2e | `spoor/exploration` | 5 |
+| `exploration_opened_screenshots.feature` | Opt-in opened-contents screenshot capture: for a gate-permitted disclosure element (a dropdown/list — combobox/listbox), the explorer opens it, screenshots what it reveals, and restores, storing it as the `ElementShot`'s `opened` image; the wiki writer embeds it in a new "Opened contents" Actions-table column beside the closed clip. Opening runs only after the clean-page state/signals/clips are recorded and only for a role the safety gate permits, so it never corrupts the graph or fires a destructive action outside a sandbox; a default run and a clip-only driver produce none (8e) | §2e | `spoor/exploration` | 5 |
+| `exploration_opened_screenshots_live.feature` | Live opened-contents capture: the real PlaywrightDriver opens an ARIA "Currency" combobox on a loopback fixture in a headless Chromium, captures the revealed in-DOM option list, and Escape-restores; the capture is a real PNG that differs from the closed page and the page is left closed — proving the live half of slice 8e the in-process scenarios can't (8e) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation.feature` | Robust actuation, pure verdict: classify a discovered element's click point as ACTUATE / COVERED / NOT LOCATED (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation_live.feature` | Robust actuation, live driver: relocate via the CDP tree and click by a verified coordinate; detect a covered element without mis-clicking (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_settling.feature` | State settling, pure quiescence policy: settle when DOM mutations go quiet for a window, report unsettled at a bounded timeout — under a fake clock (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
@@ -477,8 +479,32 @@ full-page sink, so a default run and every fake stay untouched.
 "none"). Pixel-free by default and opt-in for the same §2h reason as every screenshot.
 The in-process scenarios pin capture on/off, per-row embedding, the subfolder, and
 pixel-free-by-default; unit tests pin position-alignment with a `None` clip mid-list; a
-live integration test clips real element PNGs against the bench. Capturing an element's
-*opened contents* (open a dropdown, screenshot the overlay) is the follow-up, slice 8e.
+live integration test clips real element PNGs against the bench.
+
+`exploration_opened_screenshots.feature` (§2e) is **slice 8e** — the opened-contents
+capture the 8d follow-up promised, which finishes the maintainer's "the dropdown *and
+its contents* in a separate column" request. Where 8d clips an element closed, 8e
+captures what a **disclosure** element (a dropdown/list — combobox/listbox) reveals when
+opened, in a new **Opened contents** Actions-table column beside the closed clip.
+`ElementShot` gained an `opened` field; a separate `_OpenedScreenshotCapable` protocol
+(a clip-only driver still matches 8d's protocol and simply produces no opened image)
+exposes `PlaywrightDriver.opened_screenshot`, which clicks the element through the same
+actuation path, full-page-screenshots the revealed overlay, then Escape-restores
+(best-effort, `None` on any failure). Two fences keep it sound: the explorer opens only a
+role in `_DISCLOSURE_ROLES` that the **safety gate also permits** (so it never fires a
+destructive action outside a sandbox), and only **after** the clean-page state id,
+signals, and closed clips are recorded (so the mutation never corrupts the graph — the
+next driver call is always a reset). `render_wiki` writes each opened image to
+`screenshots/state-{i}-el-{e}-opened.png` and embeds it in the new column. The scenarios
+pin an opened capture for a disclosure element, none for a button, none for a destructive
+dropdown outside a sandbox, none when off, and none from a clip-only driver; a unit test
+pins clip and opened images tracked independently. The live half is proven two ways: a
+`@browser` scenario (`exploration_opened_screenshots_live.feature`) drives the real
+driver against a loopback combobox fixture — opening it, capturing the revealed list,
+and Escape-restoring, asserting the capture is a real PNG that differs from the closed
+page — and an integration test opens a real disclosure element against the bench when one
+is reached (skipping honestly if the small budget reaches none). Pixel-free by default
+behind the same `--screenshots` opt-in, for the same §2h reason.
 
 `exploration_actuation.feature` + `exploration_actuation_live.feature` (§2e) are
 **sub-slice 7a** — robust actuation. A live diagnostic showed the explorer's skips on

@@ -191,6 +191,55 @@ def test_element_screenshots_are_clipped_and_embedded_when_opted_in() -> None:
         ), f"{img.name} is not embedded on any state page"
 
 
+def test_opened_contents_are_captured_and_embedded_when_opted_in() -> None:
+    """The live driver opens a disclosure element; the wiki embeds what it reveals (8e).
+
+    Proves the opt-in opened-contents path end to end against a real browser: for a
+    gate-permitted disclosure element (a combobox/listbox), `PlaywrightDriver.opened_
+    screenshot()` clicks it, captures the revealed overlay, and Escape-restores; the
+    explorer fills the per-element sink's `opened` field; and `render_wiki` writes
+    `screenshots/state-{i}-el-{e}-opened.png` and embeds it in that element's row.
+    Structural, not a golden count: whether a real page exposes an openable disclosure
+    element within a small budget isn't a contract, so if none was captured the test
+    skips rather than asserting a shape the site doesn't owe us. Every opened image that
+    *was* captured must be a real PNG and must be embedded. Generic mechanism (§0).
+    """
+    _require_reachable(_JUICE_SHOP_BASE)
+    budget = RunBudget(max_states=4, max_requests=10, max_seconds=180)
+    element_shots: dict[str, list[ElementShot]] = {}
+    with PlaywrightDriver(_JUICE_SHOP_BASE) as driver:
+        graph = explore(
+            driver,
+            target=_JUICE_SHOP_BASE,
+            controller=RunController(budget),
+            element_screenshots=element_shots,
+        )
+
+    opened = [s.opened for shots in element_shots.values() for s in shots if s.opened]
+    if not opened:
+        pytest.skip("no openable disclosure element reached within the budget")
+    for png in opened:
+        assert png[:8] == b"\x89PNG\r\n\x1a\n", "opened capture is not a PNG"
+
+    out_dir = _OUTPUT_ROOT / "wiki-juice-shop-opened"
+    written = render_wiki(
+        graph, out_dir, target=_JUICE_SHOP_BASE, element_screenshots=element_shots
+    )
+    opened_images = [p for p in written if p.name.endswith("-opened.png")]
+    assert opened_images, "opened captures should be written to disk"
+    assert all(
+        p.parent.name == "screenshots" for p in opened_images
+    ), "not in subfolder"
+    pages = {
+        i: (out_dir / f"state-{i}.html").read_text(encoding="utf-8")
+        for i in range(len(graph.states))
+    }
+    for img in opened_images:
+        assert any(
+            f'src="screenshots/{img.name}"' in page for page in pages.values()
+        ), f"{img.name} is not embedded on any state page"
+
+
 def test_default_run_leaves_the_wiki_pixel_free(tmp_path: Path) -> None:
     """A default run (no opt-in) captures no pixels and embeds none: the §2h posture."""
     _require_reachable(_JUICE_SHOP_BASE)

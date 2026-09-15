@@ -181,17 +181,32 @@ class _ScreenshotCapable(Protocol):
 
 @dataclass(frozen=True)
 class ElementShot:
-    """The captured screenshot(s) of one actionable element (§2e slice 8d).
+    """The captured screenshot(s) of one actionable element (§2e slices 8d/8e).
 
     `clip` is a PNG cropped to the element as it sits on the screen — the "Next"
     button, the closed "Currency" dropdown — or None when the driver could not clip it
-    (a zero-size or off-page element). One `ElementShot` is stored per discovered
-    element, in the same order the state's actions are discovered, so the wiki can line
-    each up with its Actions-table row. Like every screenshot it exists only behind the
-    opt-in element sink; a default run produces none (§2h).
+    (a zero-size or off-page element). `opened` is a PNG of the content the element
+    *reveals* when activated — the option list an opened dropdown shows (§2e slice 8e) —
+    or None when the element reveals nothing, the driver can't capture it, or opening it
+    was not attempted (a non-disclosure role, or an action the safety gate refuses).
+    One `ElementShot` is stored per discovered element, in the same order the state's
+    actions are discovered, so the wiki can line each up with its Actions-table row.
+    Like every screenshot both exist only behind the opt-in element sink; a default run
+    produces none (§2h).
     """
 
     clip: bytes | None = None
+    opened: bytes | None = None
+
+
+# Roles whose element reveals further content when activated — a dropdown's option
+# list — so its *opened* state is worth a screenshot (§2e slice 8e). A maintainable,
+# PR-extendable set (§0), never site-specific, and a subset of discovery's
+# ACTIONABLE_ROLES (a role never discovered could never be opened). Deliberately
+# conservative: a plain button/link is excluded because activating it usually navigates
+# rather than revealing an in-place overlay, and we only ever open an element the safety
+# gate also permits, so opening never fires a destructive action outside a sandbox.
+_DISCLOSURE_ROLES = frozenset({"combobox", "listbox"})
 
 
 @runtime_checkable
@@ -206,6 +221,21 @@ class _ElementScreenshotCapable(Protocol):
 
     def element_screenshot(self, action: ActionableElement) -> bytes | None:
         """A PNG clipped to `action`'s element, or None if it can't be captured."""
+        ...
+
+
+@runtime_checkable
+class _OpenedScreenshotCapable(Protocol):
+    """A driver that can open a disclosure element and capture what it reveals (8e).
+
+    Separate from `_ElementScreenshotCapable` on purpose: a driver may clip elements
+    without being able to open them (and every 8d fake is exactly that), so the explorer
+    checks for this capability independently and simply leaves `opened` None when the
+    driver lacks it.
+    """
+
+    def opened_screenshot(self, action: ActionableElement) -> bytes | None:
+        """A PNG of what `action` reveals when opened, restoring after; or None."""
         ...
 
 
@@ -293,11 +323,17 @@ def explore(
     a default run captures no pixels — embedding them anywhere shared is always an
     explicit opt-in, because a picture cannot be secret-redacted the way text is (§2h).
 
-    `element_screenshots` is the per-element counterpart (§2e slice 8d): when a mapping
-    is passed and the driver can clip an element, each newly discovered state stores an
-    `ElementShot` per actionable element, in discovery order, so the wiki's Actions
-    table can show each control. It carries the same opt-in, off-by-default posture and
-    the same §2h reason as the full-page sink.
+    `element_screenshots` is the per-element counterpart (§2e slices 8d/8e): when a
+    mapping is passed and the driver can clip an element, each newly discovered state
+    stores an `ElementShot` per actionable element, in discovery order, so the wiki's
+    Actions table can show each control. When the driver can also *open* a disclosure
+    element (a dropdown or list) and the safety gate permits firing it, the
+    shot's `opened` image captures what that element reveals — but only after every
+    non-mutating clip for the state is taken, and only for gate-permitted disclosure
+    roles, so opening never fires a destructive action on a non-sandbox target (§2e) and
+    never contaminates the clean-page state id and signals, which are captured first. It
+    carries the same opt-in, off-by-default posture and the same §2h reason as the
+    full-page sink.
     """
     graph = ExplorationGraph()
 
@@ -324,16 +360,39 @@ def explore(
             png = driver.screenshot()
             if png is not None:
                 screenshots[sid] = png
-        # The per-element counterpart (§2e slice 8d): a clip of each discovered element,
-        # in discovery order so the wiki can line each up with its Actions-table row.
+        # The per-element counterpart (§2e slices 8d/8e): a clip of each discovered
+        # element, in discovery order so the wiki can line each up with its Actions row.
         # A clip that can't be taken is stored as None rather than dropped, so the list
         # stays aligned with the actions. Same opt-in gate as the full-page sink.
         if element_screenshots is not None and isinstance(
             driver, _ElementScreenshotCapable
         ):
+            # Every clip first: element_screenshot is non-mutating, so the page is still
+            # the clean state captured above while these are taken.
+            clips = [driver.element_screenshot(action) for action in actions]
+            # Then, and only then, the opened captures (§2e slice 8e). Opening clicks
+            # the element, which mutates the page — safe here because it runs *after*
+            # the state id, signals and every clip are recorded, and the next driver
+            # call is always a reset-and-replay. It fires only for a disclosure role the
+            # gate also permits, so opening never actuates a destructive element on a
+            # non-sandbox target (§2e non-negotiable); every other element keeps
+            # opened=None. Restore is the driver's job and best-effort.
+            opener = driver if isinstance(driver, _OpenedScreenshotCapable) else None
+            opened: list[bytes | None] = []
+            for action in actions:
+                if (
+                    opener is not None
+                    and action.role in _DISCLOSURE_ROLES
+                    and evaluate_action(
+                        target, action.name, action.role, declared_sandbox
+                    ).allowed
+                ):
+                    opened.append(opener.opened_screenshot(action))
+                else:
+                    opened.append(None)
             element_screenshots[sid] = [
-                ElementShot(clip=driver.element_screenshot(action))
-                for action in actions
+                ElementShot(clip=clip, opened=shot)
+                for clip, shot in zip(clips, opened, strict=True)
             ]
         controller.record_state()
         return sid, True

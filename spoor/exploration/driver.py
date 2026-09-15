@@ -522,6 +522,47 @@ class PlaywrightDriver:
         except (ValueError, binascii.Error):
             return None
 
+    def opened_screenshot(self, action: ActionableElement) -> bytes | None:
+        """A full-page PNG of what `action` reveals when opened, then restore; or None.
+
+        The §2e slice 8e capture: click `action` to open it (a dropdown or list's
+        options), let the render settle, and take a full-page shot of the revealed
+        content, so the wiki can show not just the closed control but what it exposes.
+        Only clicks on an ACTUATE verdict — the same relocate-and-hit-test `perform`
+        uses — so a covered or vanished element opens nothing and yields None. The
+        explorer only calls this for a disclosure role the safety gate permits, so the
+        click never actuates a destructive element on a non-sandbox target (§2e).
+
+        Restore is best-effort: after capturing, Escape is pressed to dismiss the
+        overlay so a later capture for the same state starts clean. This is a mutating
+        capture — it clicks the live page — and is safe only because the explorer runs
+        it after the state id, signals and every element clip are already recorded and
+        always resets before the next actuation. A click that navigates instead of
+        opening an in-place overlay can't be undone by Escape; that only degrades this
+        opt-in image, never the graph. Opportunistic like every capture: any failure
+        yields None, not a run failure.
+        """
+        verdict, cx, cy = self._actuation(action)
+        if verdict.verdict is not Verdict.ACTUATE or cx is None or cy is None:
+            return None
+        try:
+            # Zero in-flight so the settle wait measures this click's traffic (§2e, 7e).
+            self._inflight = 0
+            self._live_page.mouse.click(float(cx), float(cy))
+            self._wait_for_settle()
+            return self._live_page.screenshot(full_page=True)
+        except PlaywrightError:
+            return None
+        finally:
+            # Best-effort restore so the next same-state capture starts from the closed
+            # control; a failure here is swallowed — the explorer resets before its next
+            # actuation regardless, so a lingering overlay never corrupts the walk.
+            try:
+                self._live_page.keyboard.press("Escape")
+                self._wait_for_settle()
+            except PlaywrightError:
+                pass
+
     def probe(self, action: ActionableElement) -> ActuationVerdict:
         """The actuation verdict for `action` here, without clicking it (§2e, 7c).
 

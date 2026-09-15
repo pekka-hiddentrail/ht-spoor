@@ -129,8 +129,9 @@ def explore(
             "--screenshots",
             help=(
                 "Include screenshots in the wiki (requires --wiki): a full-page "
-                "picture of each screen and a clip of each interactive element. Off "
-                "by default: screenshots are not captured unless you ask for them, "
+                "picture of each screen, a clip of each interactive element, and a "
+                "picture of what a dropdown or list reveals when opened. Off by "
+                "default: screenshots are not captured unless you ask for them, "
                 "because a picture can show secrets (a token or personal data on the "
                 "page) that cannot be automatically blanked out the way text can. Only "
                 "turn this on when you are comfortable sharing the images."
@@ -148,8 +149,9 @@ def explore(
     or covered by the time it's reached) is recorded as skipped and the run continues.
     Bound the run with the budget options, and press Ctrl-C to stop it early at any
     time. Pass --wiki to also write a browsable wiki of the result, and --screenshots
-    to include pictures in that wiki — a full-page shot of each screen and a clip of
-    each interactive element (off by default, because a picture can't have secrets
+    to include pictures in that wiki — a full-page shot of each screen, a clip of
+    each interactive element, and a shot of what a dropdown or list reveals when opened
+    (off by default, because a picture can't have secrets
     blanked out the way captured text can). The
     mapped graph is also saved to the local map, so `spoor serve`/`serve-mcp` can hand
     it back later without re-exploring.
@@ -229,11 +231,12 @@ def explore(
         )
         typer.echo(f"  wiki written to:   {wiki / 'index.html'}")
         if screenshots:
-            element_count = sum(
-                1 for shots_ in (element_shots or {}).values() for s in shots_ if s.clip
-            )
+            all_shots = [s for shots_ in (element_shots or {}).values() for s in shots_]
+            element_count = sum(1 for s in all_shots if s.clip)
+            opened_count = sum(1 for s in all_shots if s.opened)
             typer.echo(f"  screenshots:       {len(shots or {})} screens embedded")
             typer.echo(f"  element clips:     {element_count} embedded")
+            typer.echo(f"  opened contents:   {opened_count} embedded")
 
 
 @app.command()

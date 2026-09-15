@@ -172,6 +172,37 @@ def test_render_wiki_writes_and_embeds_element_clips_by_position(
     assert "state-0-el-1.png" not in page  # the uncaptured "Currency" row
 
 
+def test_render_wiki_writes_and_embeds_opened_captures_independently(
+    tmp_path: Path,
+) -> None:
+    # The opened capture (8e) is written under state-{i}-el-{e}-opened.png and embedded
+    # in the element's row, tracked independently of the closed clip: here "Currency"
+    # (element 1) has both a clip and an opened image, while "Next" (element 0) has only
+    # a clip and no opened image — proving one element can have both and another
+    # neither, with the opened files kept separate from the closed clips.
+    graph = _two_element_graph()
+    written = render_wiki(
+        graph,
+        tmp_path,
+        target="https://example.test",
+        element_screenshots={
+            _ID_A: [
+                ElementShot(clip=b"\x89PNG-next"),
+                ElementShot(clip=b"\x89PNG-cur", opened=b"\x89PNG-cur-open"),
+            ]
+        },
+    )
+    shots_dir = tmp_path / "screenshots"
+    assert (shots_dir / "state-0-el-1-opened.png") in set(written)
+    assert (shots_dir / "state-0-el-0-opened.png") not in set(written)  # no opened
+    assert (shots_dir / "state-0-el-1-opened.png").read_bytes() == b"\x89PNG-cur-open"
+    assert not list(tmp_path.glob("*.png"))  # nothing flat in the root
+    page = (tmp_path / "state-0.html").read_text(encoding="utf-8")
+    assert 'src="screenshots/state-0-el-1.png"' in page  # Currency closed clip
+    assert 'src="screenshots/state-0-el-1-opened.png"' in page  # Currency opened
+    assert "state-0-el-0-opened.png" not in page  # Next has no opened image
+
+
 def test_render_wiki_default_leaves_element_cells_pixel_free(tmp_path: Path) -> None:
     written = render_wiki(
         _two_element_graph(), tmp_path, target="https://example.test"
