@@ -38,6 +38,27 @@ Fonts, Media, Data, Other — so a reader sees at a glance what the page loaded,
 per-group count. The kind is derived from the URL alone (the driver captures request
 URLs, not response content-types), so it stays generic across every target (§0).
 
+Slice 6e rearranges the state page to lead with its **actionable elements**. The old
+"Actions here" bullet list (and the separate "Outgoing transitions" list) are replaced
+by a single "Actions" *table* (`_elements`) — one row per discovered element, columns
+Label, Type, Screen capture, and Destination / target state — placed immediately after
+the state-identity block (label, id, settle), ahead of the captured-signal sections, so
+the thing a reader acts on comes first. The destination cell folds in what the removed
+outgoing-transitions list carried: when an element was fired and produced a transition,
+it links to that transition page labelled by the target state; otherwise it reads
+"none". The screen-capture column is a placeholder that reads "none" for every element
+today — Spoor captures no per-element screenshot yet (the deferred visual-capture work
+noted in §9), so the column is honest about there being nothing to show rather than
+implying one exists. Purely a presentation change; the graph and its redaction are
+untouched, and it stays generic across every target (§0).
+
+Slice 6f adds a **help/glossary page** (`_HELP`, `help.html`) linked from every page's
+nav. It is a fixed, target-independent glossary written in plain language for a reader
+who did not build Spoor — defining every term the other pages use (state, transition,
+accessibility nodes, storage keys added, network requests, screenshot hash, the
+redaction placeholder, and so on). It carries no captured values, so nothing on it needs
+redaction, and being identical for every target it holds nothing site-specific (§0).
+
 (The console/network buffers are also now *scoped per visit*: the driver clears them on
 each reset, so a state reached late in the run reflects only the walk that reached it,
 not the whole session's cumulative output — see `driver.reset`. That is a capture-layer
@@ -252,6 +273,50 @@ def _state_view(
     }
 
 
+def _elements(
+    actions: list[dict[str, object]], outgoing: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    """The state's actionable elements as table rows, each with its destination (6e).
+
+    One row per discovered element (`node.actions`), joined to the transition it fired
+    (matched by redacted label + role) so the row can link to that transition page,
+    labelled by the target state. An element that was never fired has no destination.
+    The screen-capture cell is always None for now — no per-element screenshot is
+    captured yet (the deferred visual-capture work) — so the column reads "none"
+    honestly rather than implying an image exists. Defensively, a fired transition whose
+    element is somehow absent from the discovered list still gets a row, so no edge the
+    graph recorded is dropped from the page.
+    """
+    destination: dict[tuple[object, object], dict[str, object]] = {}
+    for tv in outgoing:
+        destination.setdefault((tv["action_name"], tv["action_role"]), tv)
+    rows: list[dict[str, object]] = []
+    seen: set[tuple[object, object]] = set()
+    for action in actions:
+        key = (action["name"], action["role"])
+        seen.add(key)
+        rows.append(_element_row(action["name"], action["role"], destination.get(key)))
+    for tv in outgoing:
+        key = (tv["action_name"], tv["action_role"])
+        if key not in seen:
+            seen.add(key)
+            rows.append(_element_row(tv["action_name"], tv["action_role"], tv))
+    return rows
+
+
+def _element_row(
+    label: object, role: object, transition: dict[str, object] | None
+) -> dict[str, object]:
+    """One Actions-table row: label, type, (no) screen capture, and destination (6e)."""
+    return {
+        "label": label,
+        "type": role,
+        "screenshot": None,  # per-element screen capture is not captured yet (deferred)
+        "dest_label": None if transition is None else transition["to_label"],
+        "dest_filename": None if transition is None else transition["filename"],
+    }
+
+
 def _transition_view(
     transition: Transition, index: int, states: list[str], labels: dict[str, str]
 ) -> dict[str, object]:
@@ -320,11 +385,16 @@ def build_pages(graph: ExplorationGraph, *, target: str) -> dict[str, str]:
     ]
     skip_views = [_skip_view(s, states) for s in graph.skipped]
 
-    # A state's outgoing transitions, so each state page links onward through its edges.
+    # A state's actionable elements (6e), each joined to the transition it fired so the
+    # Actions table links onward through the state's edges via its Destination column.
     for view in state_views:
-        view["outgoing"] = [
+        outgoing = [
             tv for tv in transition_views if tv["from_index"] == view["index"]
         ]
+        view["elements"] = _elements(
+            view["actions"],  # type: ignore[arg-type]
+            outgoing,
+        )
 
     env = _environment()
     safe_target = redact(target)
@@ -335,7 +405,9 @@ def build_pages(graph: ExplorationGraph, *, target: str) -> dict[str, str]:
             transitions=transition_views,
             skipped=skip_views,
             mermaid=_mermaid(graph, state_index, labels),
-        )
+        ),
+        # A fixed, target-independent glossary of every term the pages use (6f).
+        "help.html": env.get_template("help.html").render(target=safe_target),
     }
     for view in state_views:
         pages[str(view["filename"])] = env.get_template("state.html").render(
@@ -389,6 +461,7 @@ _LAYOUT = """<!DOCTYPE html>
   </head>
   <body>
     <nav><a href="index.html">&larr; Overview</a> &middot;
+      <a href="help.html">Help / glossary</a> &middot;
       <span>Explored target: <code>{{ target }}</code></span></nav>
     {% block body %}{% endblock %}
   </body>
@@ -452,6 +525,26 @@ _STATE = """{% extends "layout.html" %}
 <p><strong>⚠ Did not settle:</strong> the page kept changing until the settle timeout,
 so this snapshot is best-effort and may be incomplete.</p>
 {% endif %}
+
+<h2>Actions</h2>
+{% if state.elements %}
+<table>
+  <tr><th>Label</th><th>Type</th><th>Screen capture</th>
+    <th>Destination / target state</th></tr>
+  {% for el in state.elements %}
+  <tr>
+    <td>{{ el.label }}</td>
+    <td><em>{{ el.type }}</em></td>
+    <td>{% if el.screenshot %}<code>{{ el.screenshot }}</code>
+      {% else %}<em>none</em>{% endif %}</td>
+    <td>
+      {% if el.dest_filename %}<a href="{{ el.dest_filename }}">{{ el.dest_label }}</a>
+      {% else %}<em>none</em>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p><em>none</em></p>{% endif %}
+
 {% if state.has_signals %}
 <ul>
   <li>Accessibility nodes: <strong>{{ state.ax_node_count }}</strong></li>
@@ -476,20 +569,6 @@ so this snapshot is best-effort and may be incomplete.</p>
 {% else %}
 <p><em>No signal bundle was captured for this state.</em></p>
 {% endif %}
-
-<h2>Actions here</h2>
-{% if state.actions %}
-<ul>{% for action in state.actions %}<li>{{ action.name }}
-  <em>({{ action.role }})</em></li>{% endfor %}</ul>
-{% else %}<p><em>none</em></p>{% endif %}
-
-<h2>Outgoing transitions</h2>
-{% if state.outgoing %}
-<ul>{% for transition in state.outgoing %}
-  <li><a href="{{ transition.filename }}">{{ transition.action_name }}
-    &rarr; State {{ transition.to_short }}</a></li>
-{% endfor %}</ul>
-{% else %}<p><em>none</em></p>{% endif %}
 {% endblock %}
 """
 
@@ -535,11 +614,106 @@ _TRANSITION = """{% extends "layout.html" %}
 {% endblock %}
 """
 
+# The help page (slice 6f) is a fixed, target-independent glossary of every term the
+# other pages use, written in plain language for a reader who did not build Spoor (so no
+# internal section references in the wording). It carries no captured values, so nothing
+# on it needs redaction; it is linked from every page's nav via the shared layout.
+_HELP = """{% extends "layout.html" %}
+{% block title %}Help &amp; glossary — exploration wiki{% endblock %}
+{% block body %}
+<h1>Help &amp; glossary</h1>
+<p>This wiki is a map of a site that Spoor explored automatically. It has an
+  <a href="index.html">overview</a> with a diagram of the whole map, one page per
+  <strong>state</strong> (a distinct screen), and one page per
+  <strong>transition</strong> (what happened when Spoor activated one element on a
+  screen). The terms each page uses are defined below.</p>
+
+<h2>The map</h2>
+<dl>
+  <dt>State</dt>
+  <dd>A distinct screen of the site. Spoor treats two screens as the same state when
+    their structure is equivalent, so a state stands for a <em>kind</em> of screen, not
+    one single visit to it.</dd>
+  <dt>State id</dt>
+  <dd>The fingerprint Spoor computes for a state from its structure. Two screens with
+    the same id are considered the same state.</dd>
+  <dt>Transition</dt>
+  <dd>What happened when Spoor activated one element on a state: which action was taken
+    and which screen it led to.</dd>
+  <dt>Overview</dt>
+  <dd>A diagram of the whole map — each box is a state, each arrow is an action leading
+    from one state to another.</dd>
+  <dt>Skipped actions</dt>
+  <dd>Elements Spoor found but chose not to activate (for example, something that looked
+    destructive on a site that is not a safe sandbox), listed with the reason.</dd>
+  <dt>[REDACTED]</dt>
+  <dd>Wherever a captured value looked like a secret — an authentication token, an API
+    key, a session cookie — Spoor replaced it with this placeholder before writing the
+    page, so no secret is shared.</dd>
+</dl>
+
+<h2>On a state page</h2>
+<dl>
+  <dt>Actions</dt>
+  <dd>The interactive elements (buttons, links, form controls) Spoor found on the
+    screen and could act on. Each row lists the element's <strong>Label</strong> (its
+    visible or accessible name), its <strong>Type</strong> (the kind of control —
+    button, link, and so on), a <strong>Screen capture</strong> of the element when one
+    is available, and the <strong>Destination / target state</strong> — the screen
+    reached after activating it, linking to what changed, or "none" if Spoor did not
+    follow it.</dd>
+  <dt>Accessibility nodes</dt>
+  <dd>How many entries the screen exposes in the browser's accessibility tree — the
+    structured description assistive technology reads. It is a rough measure of how much
+    labelled, interactive content the screen has.</dd>
+  <dt>Screenshot hash</dt>
+  <dd>A short fingerprint of how the screen looks, used to tell visually different
+    screens apart without storing the picture itself.</dd>
+  <dt>Console messages</dt>
+  <dd>Messages the page logged to the browser's developer console during the visit —
+    errors, warnings, and debug output. Identical repeated lines are collapsed into one
+    row with an "× count".</dd>
+  <dt>Storage keys</dt>
+  <dd>The names of the values the page kept in the browser's local and session storage
+    (the values themselves are not shown).</dd>
+  <dt>Network requests</dt>
+  <dd>The addresses the page requested during the visit, grouped by kind — Documents,
+    Scripts, Styles, Images, Fonts, Media, Data, Other — each with a count. Identical
+    repeated requests are collapsed into one row with a count.</dd>
+  <dt>Did not settle</dt>
+  <dd>A warning that the page kept changing until Spoor's wait timed out, so the
+    snapshot of this screen may be incomplete.</dd>
+</dl>
+
+<h2>On a transition page</h2>
+<dl>
+  <dt>Accessibility node delta</dt>
+  <dd>How much the accessibility-node count changed because of the action — a positive
+    number means the screen's structure grew, a negative one means it shrank.</dd>
+  <dt>Screenshot changed</dt>
+  <dd>Whether the screen's appearance fingerprint changed after the action.</dd>
+  <dt>Console messages added</dt>
+  <dd>Console lines that appeared as a result of the action.</dd>
+  <dt>Storage keys added</dt>
+  <dd>Names the action created in the browser's local or session storage.</dd>
+  <dt>Storage keys removed</dt>
+  <dd>Names the action deleted from the browser's local or session storage.</dd>
+  <dt>Network requests added</dt>
+  <dd>New addresses the page requested as a result of the action.</dd>
+  <dt>Reached from behind a blocker</dt>
+  <dd>The action was only reachable after Spoor cleared a covering layer — a cookie
+    banner or dialog, for example — dismissing it the way a visitor would; the page
+    names what was cleared.</dd>
+</dl>
+{% endblock %}
+"""
+
 _TEMPLATES = {
     "layout.html": _LAYOUT,
     "index.html": _INDEX,
     "state.html": _STATE,
     "transition.html": _TRANSITION,
+    "help.html": _HELP,
 }
 
 # The placeholder secrets are replaced with, re-exported so callers/tests can assert
