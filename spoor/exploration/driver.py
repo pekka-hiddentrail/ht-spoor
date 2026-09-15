@@ -60,6 +60,8 @@ every target.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
@@ -174,6 +176,32 @@ function() {
   return {hitsTarget, covering, cx, cy};
 }
 """
+
+
+def _border_box_clip(model: object) -> dict[str, float] | None:
+    """A `Page.captureScreenshot` clip rect from a `DOM.getBoxModel` border quad (8d).
+
+    The border quad is eight CSS-pixel coordinates (four corners) relative to the
+    document; the clip is the axis-aligned box that bounds them. Returns None for a
+    missing/malformed model or a zero-area box (an element with no rendered box), so
+    `element_screenshot` records no clip rather than requesting an empty screenshot.
+    `scale` is pinned to 1 to match the device-scale-1 viewport.
+    """
+    if not isinstance(model, Mapping):
+        return None
+    border = model.get("border")
+    if not isinstance(border, list) or len(border) < 8:
+        return None
+    try:
+        xs = [float(border[i]) for i in range(0, 8, 2)]
+        ys = [float(border[i]) for i in range(1, 8, 2)]
+    except (TypeError, ValueError):
+        return None
+    x, y = min(xs), min(ys)
+    width, height = max(xs) - x, max(ys) - y
+    if width <= 0 or height <= 0:
+        return None
+    return {"x": x, "y": y, "width": width, "height": height, "scale": 1}
 
 
 class PlaywrightDriver:
@@ -448,6 +476,50 @@ class PlaywrightDriver:
         try:
             return self._live_page.screenshot(full_page=True)
         except PlaywrightError:
+            return None
+
+    def element_screenshot(self, action: ActionableElement) -> bytes | None:
+        """A PNG clipped to `action`'s element on the current page, or None (8d).
+
+        Re-locates the element through the *same* `find_target` path discovery and
+        actuation use (so the clip is of the element we discovered, not a look-alike),
+        reads its border box over CDP (`DOM.getBoxModel`, backend-node addressed like
+        actuation), and captures just that rectangle with `Page.captureScreenshot`.
+        `captureBeyondViewport` lets a box below the fold be clipped without scrolling;
+        the fixed viewport at device-scale 1 means CSS pixels equal the clip's pixels,
+        so the crop is reproducible run to run. Opportunistic like every capture: an
+        element that can't be located, carries no backend id, or has no rendered box
+        (display:none, zero-size) yields None rather than failing the run. Called only
+        when the explorer was given an element sink, so a default run clips nothing —
+        element pixels reach the shared wiki only behind an explicit opt-in, since a
+        picture cannot be secret-redacted the way text is (§2h).
+        """
+        page = self._live_page
+        target = find_target(self.ax_nodes(), action.role, action.name)
+        if target is None or target.backend_node_id is None:
+            return None
+        session = page.context.new_cdp_session(page)
+        try:
+            box = session.send(
+                "DOM.getBoxModel", {"backendNodeId": target.backend_node_id}
+            )
+            clip = _border_box_clip(box.get("model"))
+            if clip is None:
+                return None
+            shot = session.send(
+                "Page.captureScreenshot",
+                {"format": "png", "clip": clip, "captureBeyondViewport": True},
+            )
+        except PlaywrightError:
+            return None
+        finally:
+            session.detach()
+        data = shot.get("data")
+        if not isinstance(data, str):
+            return None
+        try:
+            return base64.b64decode(data)
+        except (ValueError, binascii.Error):
             return None
 
     def probe(self, action: ActionableElement) -> ActuationVerdict:

@@ -81,13 +81,14 @@ site-specific (§0): the same templates render every target's graph.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from jinja2 import DictLoader, Environment, select_autoescape
 
 from spoor.exploration.capture import StateSignals
+from spoor.exploration.explorer import ElementShot
 from spoor.exploration.graph import ExplorationGraph, SkippedAction, Transition
 from spoor.security.redaction import REDACTED, redact
 
@@ -113,6 +114,16 @@ def _screenshot_filename(index: int) -> str:
     the renderer that references them agree on one path.
     """
     return f"{_SCREENSHOT_DIR}/state-{index}.png"
+
+
+def _element_screenshot_filename(state_index: int, element_index: int) -> str:
+    """The relative path one element's clip is embedded under (§2e slice 8d).
+
+    Lives in the same `screenshots/` subfolder as the full-page shots and is keyed by
+    both the state and the element's discovery position, so every clip on a state has a
+    distinct, stable name the writer and the renderer agree on.
+    """
+    return f"{_SCREENSHOT_DIR}/state-{state_index}-el-{element_index}.png"
 
 
 # Network-request categories (§2e slice 6d). A flat list of every request seen at a
@@ -299,44 +310,52 @@ def _state_view(
 
 
 def _elements(
-    actions: list[dict[str, object]], outgoing: list[dict[str, object]]
+    actions: list[dict[str, object]],
+    outgoing: list[dict[str, object]],
+    clips: Sequence[str | None],
 ) -> list[dict[str, object]]:
     """The state's actionable elements as table rows, each with its destination (6e).
 
     One row per discovered element (`node.actions`), joined to the transition it fired
     (matched by redacted label + role) so the row can link to that transition page,
     labelled by the target state. An element that was never fired has no destination.
-    The screen-capture cell is always None for now — no per-element screenshot is
-    captured yet (the deferred visual-capture work) — so the column reads "none"
-    honestly rather than implying an image exists. Defensively, a fired transition whose
-    element is somehow absent from the discovered list still gets a row, so no edge the
-    graph recorded is dropped from the page.
+    `clips` is the per-element screen-capture filename, aligned by discovery position
+    with `actions` (§2e slice 8d): a row gets its clip when the caller opted in and one
+    was captured, else None so the column reads "none" honestly. Defensively, a fired
+    transition whose element is somehow absent from the discovered list still gets a
+    row (with no clip), so no edge the graph recorded is dropped from the page.
     """
     destination: dict[tuple[object, object], dict[str, object]] = {}
     for tv in outgoing:
         destination.setdefault((tv["action_name"], tv["action_role"]), tv)
     rows: list[dict[str, object]] = []
     seen: set[tuple[object, object]] = set()
-    for action in actions:
+    for i, action in enumerate(actions):
         key = (action["name"], action["role"])
         seen.add(key)
-        rows.append(_element_row(action["name"], action["role"], destination.get(key)))
+        clip = clips[i] if i < len(clips) else None
+        rows.append(
+            _element_row(action["name"], action["role"], destination.get(key), clip)
+        )
     for tv in outgoing:
         key = (tv["action_name"], tv["action_role"])
         if key not in seen:
             seen.add(key)
-            rows.append(_element_row(tv["action_name"], tv["action_role"], tv))
+            rows.append(_element_row(tv["action_name"], tv["action_role"], tv, None))
     return rows
 
 
 def _element_row(
-    label: object, role: object, transition: dict[str, object] | None
+    label: object,
+    role: object,
+    transition: dict[str, object] | None,
+    clip: str | None,
 ) -> dict[str, object]:
-    """One Actions-table row: label, type, (no) screen capture, and destination (6e)."""
+    """One Actions-table row: label, type, screen-capture clip, and destination (6e)."""
     return {
         "label": label,
         "type": role,
-        "screenshot": None,  # per-element screen capture is not captured yet (deferred)
+        "screenshot": clip,  # the element clip's relative path, or None (8d)
         "dest_label": None if transition is None else transition["to_label"],
         "dest_filename": None if transition is None else transition["filename"],
     }
@@ -395,6 +414,7 @@ def build_pages(
     *,
     target: str,
     screenshots: Collection[str] | None = None,
+    element_screenshots: Mapping[str, Sequence[str | None]] | None = None,
 ) -> dict[str, str]:
     """Render `graph` into a map of wiki filename → HTML (§2e slice 6a).
 
@@ -409,9 +429,15 @@ def build_pages(
     screenshot cannot be secret-redacted the way every text signal is (§2h). The image
     bytes themselves are placed next to the pages by the caller; here a marked state's
     view just carries the relative filename to reference.
+
+    `element_screenshots` is the per-element counterpart (§2e slice 8d): a state id maps
+    to the clip filenames for its actions, aligned by discovery position, so each
+    Actions-table row can embed its element's image. Same opt-in posture — omitted or
+    None means the column stays empty and pixel-free.
     """
     states = graph.states
     shot_ids = set(screenshots or ())
+    element_clips = element_screenshots or {}
     state_index = {sid: i for i, sid in enumerate(states)}
     labels = {sid: _state_label(sid, graph.node(sid).signals) for sid in states}
     state_views = [
@@ -432,6 +458,7 @@ def build_pages(
         view["elements"] = _elements(
             view["actions"],  # type: ignore[arg-type]
             outgoing,
+            element_clips.get(str(view["id"]), ()),
         )
         # A full-page screenshot is embedded only for states the caller opted in (8a);
         # the marked state carries the relative filename its image is written under.
@@ -471,6 +498,7 @@ def render_wiki(
     *,
     target: str,
     screenshots: Mapping[str, bytes] | None = None,
+    element_screenshots: Mapping[str, Sequence[ElementShot]] | None = None,
 ) -> list[Path]:
     """Write the wiki for `graph` under `out_dir`, returning the paths written.
 
@@ -484,13 +512,40 @@ def render_wiki(
     default), nothing is written and every page stays pixel-free — embedding pixels is
     always an explicit opt-in, since a screenshot cannot be secret-redacted the way
     every text value on the pages is (§2h).
+
+    `element_screenshots` maps a state id to one `ElementShot` per discovered element,
+    in discovery order (§2e slice 8d). For each element it has clip bytes for, this
+    writes `screenshots/state-{i}-el-{e}.png` and passes the filename to `build_pages`
+    so the Actions row embeds it. Same opt-in, pixel-free-by-default posture as the
+    full-page sink, and for the same §2h reason.
     """
     shot_bytes = screenshots or {}
+    element_shots = element_screenshots or {}
     embed_ids = {sid for sid in graph.states if sid in shot_bytes}
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
+
+    # Write each element clip and record the filename its Actions row will embed,
+    # keyed by state id and aligned by discovery position with the state's actions.
+    clip_files: dict[str, list[str | None]] = {}
+    for s_index, sid in enumerate(graph.states):
+        shots = element_shots.get(sid, ())
+        names: list[str | None] = []
+        for e_index, shot in enumerate(shots):
+            if shot.clip is None:
+                names.append(None)
+                continue
+            name = _element_screenshot_filename(s_index, e_index)
+            path = out_dir / name
+            path.parent.mkdir(parents=True, exist_ok=True)  # the screenshots/ subfolder
+            path.write_bytes(shot.clip)
+            written.append(path)
+            names.append(name)
+        if names:
+            clip_files[sid] = names
+
     for filename, html in build_pages(
-        graph, target=target, screenshots=embed_ids
+        graph, target=target, screenshots=embed_ids, element_screenshots=clip_files
     ).items():
         path = out_dir / filename
         path.write_text(html, encoding="utf-8")
@@ -611,8 +666,8 @@ so this snapshot is best-effort and may be incomplete.</p>
   <tr>
     <td>{{ el.label }}</td>
     <td><em>{{ el.type }}</em></td>
-    <td>{% if el.screenshot %}<code>{{ el.screenshot }}</code>
-      {% else %}<em>none</em>{% endif %}</td>
+    <td>{% if el.screenshot %}<img class="screenshot" src="{{ el.screenshot }}"
+      alt="Screenshot of {{ el.label }}" />{% else %}<em>none</em>{% endif %}</td>
     <td>
       {% if el.dest_filename %}<a href="{{ el.dest_filename }}">{{ el.dest_label }}</a>
       {% else %}<em>none</em>{% endif %}</td>

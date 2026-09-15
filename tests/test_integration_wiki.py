@@ -32,7 +32,7 @@ import pytest
 
 from spoor.exploration.control import RunBudget, RunController
 from spoor.exploration.driver import PlaywrightDriver
-from spoor.exploration.explorer import explore
+from spoor.exploration.explorer import ElementShot, explore
 from spoor.exploration.graph import ExplorationGraph
 from spoor.exploration.wiki import render_wiki
 
@@ -145,6 +145,50 @@ def test_screenshots_are_captured_and_embedded_when_opted_in() -> None:
             assert (
                 f'src="screenshots/state-{index}.png"' in page
             ), f"state {index} does not embed"
+
+
+def test_element_screenshots_are_clipped_and_embedded_when_opted_in() -> None:
+    """The live driver clips a real element PNG and the wiki embeds it per row (8d).
+
+    Proves the opt-in per-element path end to end against a real browser: `Playwright
+    Driver.element_screenshot()` re-locates a discovered element and returns genuine
+    PNG bytes cropped to it, the explorer fills the per-element sink in discovery order,
+    and `render_wiki` writes `screenshots/state-{i}-el-{e}.png` and embeds it in the
+    element's Actions row. Structural, not a golden count: a real page's exact element
+    set isn't a contract, so it asserts at least one clip round-trips and every written
+    clip is embedded. Juice Shop alone keeps it fast; the mechanism is generic (§0).
+    """
+    _require_reachable(_JUICE_SHOP_BASE)
+    budget = RunBudget(max_states=3, max_requests=6, max_seconds=120)
+    element_shots: dict[str, list[ElementShot]] = {}
+    with PlaywrightDriver(_JUICE_SHOP_BASE) as driver:
+        graph = explore(
+            driver,
+            target=_JUICE_SHOP_BASE,
+            controller=RunController(budget),
+            element_screenshots=element_shots,
+        )
+
+    clips = [s.clip for shots in element_shots.values() for s in shots if s.clip]
+    assert clips, "opting in should clip at least one actionable element"
+    for png in clips:
+        assert png[:8] == b"\x89PNG\r\n\x1a\n", "element clip is not a PNG"
+
+    out_dir = _OUTPUT_ROOT / "wiki-juice-shop-elements"
+    written = render_wiki(
+        graph, out_dir, target=_JUICE_SHOP_BASE, element_screenshots=element_shots
+    )
+    images = [p for p in written if p.suffix == ".png"]
+    assert images, "element clips should be written to disk"
+    assert all(p.parent.name == "screenshots" for p in images), "not in subfolder"
+    pages = {
+        i: (out_dir / f"state-{i}.html").read_text(encoding="utf-8")
+        for i in range(len(graph.states))
+    }
+    for img in images:
+        assert any(
+            f'src="screenshots/{img.name}"' in page for page in pages.values()
+        ), f"{img.name} is not embedded on any state page"
 
 
 def test_default_run_leaves_the_wiki_pixel_free(tmp_path: Path) -> None:
