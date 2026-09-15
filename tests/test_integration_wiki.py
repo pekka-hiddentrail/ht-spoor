@@ -111,3 +111,47 @@ def test_wiki_is_reliably_created(base: str, name: str) -> None:
     #    dangling navigation in the generated site.
     for target_name in re.findall(r'href="((?:state|transition)-\d+\.html)"', index):
         assert (out_dir / target_name).is_file(), f"index links missing {target_name}"
+
+
+def test_screenshots_are_captured_and_embedded_when_opted_in() -> None:
+    """The live driver takes a real full-page PNG per state and the wiki embeds it (8b).
+
+    Proves the opt-in path end to end against a real browser: `PlaywrightDriver.
+    screenshot()` returns genuine PNG bytes, the explorer fills the sink per state, and
+    `render_wiki` writes `state-N.png` beside the pages and embeds each one. Juice Shop
+    alone keeps it fast; the mechanism is generic (§0).
+    """
+    _require_reachable(_JUICE_SHOP_BASE)
+    budget = RunBudget(max_states=3, max_requests=6, max_seconds=120)
+    shots: dict[str, bytes] = {}
+    with PlaywrightDriver(_JUICE_SHOP_BASE) as driver:
+        graph = explore(
+            driver,
+            target=_JUICE_SHOP_BASE,
+            controller=RunController(budget),
+            screenshots=shots,
+        )
+
+    assert shots, "opting in should capture at least the entry state's screenshot"
+    for sid, png in shots.items():
+        assert png[:8] == b"\x89PNG\r\n\x1a\n", f"{sid[:12]} is not a PNG"
+
+    out_dir = _OUTPUT_ROOT / "wiki-juice-shop-shots"
+    written = render_wiki(graph, out_dir, target=_JUICE_SHOP_BASE, screenshots=shots)
+
+    images = [p for p in written if p.suffix == ".png"]
+    assert len(images) == len(shots), "one image file per captured state"
+    for index, sid in enumerate(graph.states):
+        if sid in shots:
+            page = (out_dir / f"state-{index}.html").read_text(encoding="utf-8")
+            assert f'src="state-{index}.png"' in page, f"state {index} does not embed"
+
+
+def test_default_run_leaves_the_wiki_pixel_free(tmp_path: Path) -> None:
+    """A default run (no opt-in) captures no pixels and embeds none: the §2h posture."""
+    _require_reachable(_JUICE_SHOP_BASE)
+    graph = _explore_to_graph(_JUICE_SHOP_BASE)
+    written = render_wiki(graph, tmp_path / "wiki", target=_JUICE_SHOP_BASE)
+    assert not [p for p in written if p.suffix == ".png"]
+    for path in written:
+        assert "<img" not in path.read_text(encoding="utf-8")

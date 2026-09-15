@@ -86,3 +86,19 @@ def test_bad_format_aborts_before_extraction(
     assert result.exit_code != 0
     assert calls["n"] == 0  # format is resolved before anything is fetched
     assert not out.exists()
+
+
+def test_explore_screenshots_requires_wiki(monkeypatch: pytest.MonkeyPatch) -> None:
+    # --screenshots without --wiki is rejected before any browser is launched: there is
+    # nowhere to put the images (§2e slice 8b). Guard against ever starting a driver.
+    from spoor.exploration import driver as driver_mod
+
+    def _boom(*_a: object, **_k: object) -> object:
+        raise AssertionError("a browser must not be launched when the flag is rejected")
+
+    monkeypatch.setattr(driver_mod, "PlaywrightDriver", _boom)
+    result = runner.invoke(
+        cli.app, ["explore", "http://localhost:8000/", "--screenshots"]
+    )
+    assert result.exit_code != 0
+    assert "--wiki" in result.output

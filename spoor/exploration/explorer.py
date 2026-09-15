@@ -45,10 +45,10 @@ not retried: there is nothing transient to wait out.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from spoor.exploration.actuation import ActuationVerdict, CoveringElement, Verdict
 from spoor.exploration.capture import StateSignals, diff_signals
@@ -163,6 +163,22 @@ class BrowserDriver(Protocol):
         ...
 
 
+@runtime_checkable
+class _ScreenshotCapable(Protocol):
+    """A driver that can also hand back a full-page screenshot (§2e slice 8b).
+
+    Kept off the core `BrowserDriver` contract on purpose: capturing pixels is an
+    opt-in extra, so a driver (or a test fake) that never produces images stays a
+    valid `BrowserDriver`. The explorer only asks for a screenshot when it is both
+    given a sink *and* the driver satisfies this capability, so the default run — and
+    every existing fake — is untouched.
+    """
+
+    def screenshot(self) -> bytes | None:
+        """A full-page PNG of the current page, or None if it can't be captured."""
+        ...
+
+
 class _Reach(Enum):
     """Whether an action can be actuated now, or why not (§2e, 7c)."""
 
@@ -231,6 +247,7 @@ def explore(
     target: str,
     controller: RunController,
     declared_sandbox: bool = False,
+    screenshots: MutableMapping[str, bytes] | None = None,
 ) -> ExplorationGraph:
     """Explore `target` through `driver`, returning the state-action graph (§2e).
 
@@ -238,6 +255,12 @@ def explore(
     controller stops it (budget reached or kill switch thrown). Destructive actions
     are fired only inside a sandbox; on any other target they are recorded as skips
     and their state is never reached (§2e non-negotiable).
+
+    `screenshots` is an opt-in sink for full-page screenshots (§2e slice 8b): when a
+    mapping is passed and the driver can take one, each newly discovered state's image
+    is stored under its state id. Left None (the default), no screenshot is taken, so
+    a default run captures no pixels — embedding them anywhere shared is always an
+    explicit opt-in, because a picture cannot be secret-redacted the way text is (§2h).
     """
     graph = ExplorationGraph()
 
@@ -256,6 +279,13 @@ def explore(
             discover_actions(driver.ax_nodes()),
             signals if signals is not None else driver.capture_signals(),
         )
+        # Opt-in only, and once per distinct state (this branch runs for new states):
+        # store the current page's full-page screenshot under its id if a sink was
+        # provided and the driver can produce one (§2e slice 8b).
+        if screenshots is not None and isinstance(driver, _ScreenshotCapable):
+            png = driver.screenshot()
+            if png is not None:
+                screenshots[sid] = png
         controller.record_state()
         return sid, True
 

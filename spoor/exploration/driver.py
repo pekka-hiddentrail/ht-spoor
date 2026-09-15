@@ -433,6 +433,23 @@ class PlaywrightDriver:
         except (PlaywrightError, InvalidImageError):
             return None
 
+    def screenshot(self) -> bytes | None:
+        """A full-page PNG of the current page, or None if it can't be captured (8b).
+
+        The raw image bytes, kept for the opt-in screenshot embedding (§2e slice 8) —
+        distinct from `_screenshot_hash`, which reduces a *viewport* shot to a 64-bit
+        perceptual hash. This is a full-page capture (`full_page=True`), the whole
+        scrollable document, so the wiki shows the entire screen rather than the fold.
+        Opportunistic like every signal: a capture failure yields None, never a run
+        failure. The explorer only calls this when given a screenshot sink, so a default
+        run takes no full-page shot; embedding pixels is always an explicit opt-in
+        because a picture cannot be secret-redacted the way a text signal is (§2h).
+        """
+        try:
+            return self._live_page.screenshot(full_page=True)
+        except PlaywrightError:
+            return None
+
     def probe(self, action: ActionableElement) -> ActuationVerdict:
         """The actuation verdict for `action` here, without clicking it (§2e, 7c).
 

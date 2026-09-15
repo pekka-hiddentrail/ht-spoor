@@ -68,7 +68,6 @@ def test_two_state_graph_links_are_navigable() -> None:
     assert set(pages) == {
         "help.html",
         "index.html",
-        "help.html",
         "state-0.html",
         "state-1.html",
         "transition-0.html",
@@ -101,10 +100,35 @@ def test_render_wiki_writes_every_page(tmp_path: Path) -> None:
     assert {p.name for p in written} == {
         "help.html",
         "index.html",
-        "help.html",
         "state-0.html",
         "state-1.html",
         "transition-0.html",
     }
     for path in written:
         assert path.read_text(encoding="utf-8").startswith("<!DOCTYPE html>")
+
+
+def test_render_wiki_writes_and_embeds_only_captured_screenshots(
+    tmp_path: Path,
+) -> None:
+    # The writer places a state-N.png only for a state it has bytes for, embeds exactly
+    # those, and leaves an uncaptured state (and every other page) pixel-free (8b).
+    graph = _two_state_graph()  # _ID_A is index 0, _ID_B is index 1
+    written = render_wiki(
+        graph, tmp_path, target="https://example.test", screenshots={_ID_A: b"\x89PNGa"}
+    )
+    names = {p.name for p in written}
+    assert "state-0.png" in names
+    assert "state-1.png" not in names
+    assert (tmp_path / "state-0.png").read_bytes() == b"\x89PNGa"
+    page_a = (tmp_path / "state-0.html").read_text(encoding="utf-8")
+    page_b = (tmp_path / "state-1.html").read_text(encoding="utf-8")
+    assert 'src="state-0.png"' in page_a
+    assert "<img" not in page_b
+
+
+def test_render_wiki_default_is_pixel_free(tmp_path: Path) -> None:
+    written = render_wiki(_two_state_graph(), tmp_path, target="https://example.test")
+    assert not [p for p in written if p.suffix == ".png"]
+    for path in written:
+        assert "<img" not in path.read_text(encoding="utf-8")

@@ -81,7 +81,7 @@ site-specific (§0): the same templates render every target's graph.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -457,18 +457,41 @@ def build_pages(
     return pages
 
 
-def render_wiki(graph: ExplorationGraph, out_dir: Path, *, target: str) -> list[Path]:
+def render_wiki(
+    graph: ExplorationGraph,
+    out_dir: Path,
+    *,
+    target: str,
+    screenshots: Mapping[str, bytes] | None = None,
+) -> list[Path]:
     """Write the wiki for `graph` under `out_dir`, returning the paths written.
 
     Creates `out_dir` (and parents) if needed and writes each page from `build_pages`
     as UTF-8. Paths are returned sorted for a stable, testable result.
+
+    `screenshots` maps a state id to its full-page PNG bytes (§2e slice 8b). This is the
+    writer that turns those raw captures into a shared surface: for each state it has an
+    image for, it writes `state-{index}.png` beside the pages and tells `build_pages`
+    to embed it. Left None (the default), nothing is written and every page stays
+    pixel-free — embedding pixels is always an explicit opt-in, since a screenshot
+    cannot be secret-redacted the way every text value on the pages is (§2h).
     """
+    shot_bytes = screenshots or {}
+    embed_ids = {sid for sid in graph.states if sid in shot_bytes}
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    for filename, html in build_pages(graph, target=target).items():
+    for filename, html in build_pages(
+        graph, target=target, screenshots=embed_ids
+    ).items():
         path = out_dir / filename
         path.write_text(html, encoding="utf-8")
         written.append(path)
+    for index, sid in enumerate(graph.states):
+        png = shot_bytes.get(sid)
+        if png is not None:
+            path = out_dir / _screenshot_filename(index)
+            path.write_bytes(png)
+            written.append(path)
     return sorted(written)
 
 
