@@ -50,12 +50,20 @@ Report what you find honestly — in the working summary and the PR description 
 ```
 ruff check .
 mypy .                        # or pyright
-pytest                        # unit tests, .feature scenarios, golden-master regression
+pytest                        # FAST local tier: unit, fake-driver .feature scenarios, golden-master, mutation — seconds
 pytest -m mutation            # tier-3 mutation corpus — must be >= 95% (see §5.3)
 python scripts/check_genericity.py
 ```
 
-A change that touches tier 3 must report the mutation-corpus success rate in the PR description.
+**Test tiering (§5.1 decision).** A bare `pytest` runs only the fast in-process tier: `pyproject.toml`'s `addopts` deselects the two slow tiers — `browser` (launches a real Chromium) and `integration` (needs a live docker archetype). This keeps the local edit-run loop fast; **CI runs the full suite** via `pytest -m ""` (empty marker expression = everything), so the browser tier and, with the container up, the Juice Shop end-to-end still gate every PR. When your change touches a browser-tier or integration path, exercise it locally before the PR — the fast gate will *not* have run it:
+
+```
+pytest -m browser             # the real-Chromium scenarios (slow)
+pytest -m integration         # docker-archetype end-to-end (needs the bench up; skips if not)
+pytest -m ""                  # everything, exactly as CI runs it
+```
+
+The `browser` marker is applied per *scenario* via a Gherkin `@browser` tag on the browser-tier scenarios (most step files are mixed — a browser scenario beside network-free tier-1 ones), not as a file-level `pytestmark`. A change that touches tier 3 must report the mutation-corpus success rate in the PR description.
 
 **Docs consistency is part of the gate, not just self-review.** Before calling a feature done, confirm the whole documentation set still describes what actually ships — the automated checks above cannot catch a stale sentence. At every gate, re-read and reconcile, for anything the change touched:
 

@@ -77,49 +77,53 @@ def test_blocked_result_does_not_escalate() -> None:
 
 
 # --- run_report: the walk over the ladder ---------------------------------
+# These take `mock_client` purely for isolation: run_report probes the target's
+# origin for an API spec (§2b companion), and with no client it opens a real one
+# and hits `http://localhost/x` — a multi-second network timeout per test. The
+# fake tiers ignore the client; the mock just keeps the probe off the network.
 
 
-def test_walk_stops_at_first_nonempty_tier() -> None:
+def test_walk_stops_at_first_nonempty_tier(mock_client: httpx.Client) -> None:
     tier1 = _FakeResolver(tier=1, _result=RunResult(records=_records("a")))
     tier2 = _FakeResolver(tier=2, _result=RunResult(records=_records("b")))
-    result = extract.run_report(_CONFIG, tiers=(tier1, tier2))
+    result = extract.run_report(_CONFIG, client=mock_client, tiers=(tier1, tier2))
     assert result.records == _records("a")
     assert tier1.ran is True
     assert tier2.ran is False
 
 
-def test_empty_first_tier_escalates_to_the_next() -> None:
+def test_empty_first_tier_escalates_to_the_next(mock_client: httpx.Client) -> None:
     tier1 = _FakeResolver(tier=1, _result=RunResult(records=[]))
     tier2 = _FakeResolver(tier=2, _result=RunResult(records=_records("b")))
-    result = extract.run_report(_CONFIG, tiers=(tier1, tier2))
+    result = extract.run_report(_CONFIG, client=mock_client, tiers=(tier1, tier2))
     assert result.records == _records("b")
     assert tier1.ran is True
     assert tier2.ran is True
 
 
-def test_blocked_first_tier_is_not_escalated() -> None:
+def test_blocked_first_tier_is_not_escalated(mock_client: httpx.Client) -> None:
     tier1 = _FakeResolver(tier=1, _result=RunResult(records=[], blocked=["http://x"]))
     tier2 = _FakeResolver(tier=2, _result=RunResult(records=_records("b")))
-    result = extract.run_report(_CONFIG, tiers=(tier1, tier2))
+    result = extract.run_report(_CONFIG, client=mock_client, tiers=(tier1, tier2))
     assert result.blocked == ["http://x"]
     assert result.records == []
     assert tier2.ran is False
 
 
-def test_all_tiers_empty_returns_last_result() -> None:
+def test_all_tiers_empty_returns_last_result(mock_client: httpx.Client) -> None:
     tier1 = _FakeResolver(tier=1, _result=RunResult(records=[]))
     tier2 = _FakeResolver(tier=2, _result=RunResult(records=[]))
-    result = extract.run_report(_CONFIG, tiers=(tier1, tier2))
+    result = extract.run_report(_CONFIG, client=mock_client, tiers=(tier1, tier2))
     assert result.records == []
     assert tier1.ran is True
     assert tier2.ran is True
 
 
-def test_only_accepting_tiers_run() -> None:
+def test_only_accepting_tiers_run(mock_client: httpx.Client) -> None:
     # A tier that declines the config is skipped entirely, even if tier 1 is empty.
     tier1 = _FakeResolver(tier=1, _result=RunResult(records=[]), _accepts=False)
     tier2 = _FakeResolver(tier=2, _result=RunResult(records=_records("b")))
-    result = extract.run_report(_CONFIG, tiers=(tier1, tier2))
+    result = extract.run_report(_CONFIG, client=mock_client, tiers=(tier1, tier2))
     assert result.records == _records("b")
     assert tier1.ran is False
     assert tier2.ran is True

@@ -14,6 +14,7 @@ Feature: The browser tier records raw network traffic to a local-only cache
   I want the browser tier to save the raw network traffic it saw
   So that later analysis has the real requests to work from, kept off shared output
 
+  @browser
   Scenario: Capturing a browser-tier run writes a HAR to the local-only cache
     Given a live fixture server
     And capture is enabled with the cache redirected to a temp directory

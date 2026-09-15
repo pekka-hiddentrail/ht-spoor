@@ -111,6 +111,7 @@ Feature: Exploration deals with blockers instead of abandoning what is behind th
     And the graph has a transition "home --Open--> menu"
     And the graph has states: home, menu
 
+  @browser
   Scenario: Mapping a live site whose entry screen is behind an overlay
     # The whole real stack: a headless browser against a fixture that shows a consent
     # overlay intercepting every click until it is accepted. Before this capability the

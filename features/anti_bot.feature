@@ -58,6 +58,7 @@ Feature: Detect anti-bot challenges and fail loudly, never scrape one as data
     And the target is dead-lettered with reason "server error (503)"
     And the run reports no anti-bot challenge
 
+  @browser
   Scenario: A challenge behind an error status is detected through a real browser
     Given a browser navigation returning a Cloudflare interstitial with status 403
     When I run the config through a real browser

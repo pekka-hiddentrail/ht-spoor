@@ -48,6 +48,7 @@ Feature: Exploration waits for in-flight requests to finish before it reads the 
     Then it reports the page did not settle
     And the wait ended at the timeout
 
+  @browser
   Scenario: Discovery waits for content fetched after the load event
     # The entry page renders instantly and then fetches a fragment whose response the
     # server delays past the quiet window, injecting a button on arrival. DOM-quiet alone

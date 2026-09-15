@@ -370,7 +370,7 @@ it to the CLI — `spoor explore --wiki <dir>` renders the mapped graph to a bro
 site after the crawl and reports its `index.html` — pinned live in
 `exploration_browser.feature`, and proven against the real archetype bench by a
 reliability integration test (`tests/test_integration_wiki.py`) that crawls Juice
-Shop and Sauce Demo under a small budget and asserts a complete, internally
+Shop under a small budget and asserts a complete, internally
 consistent wiki is produced every run (a page per state and per transition, index
 counts and links matching the graph, well-formed HTML). Surfacing the live crawl's
 un-actuatable elements as skips (the loop's `ActionError` path) rather than a crash

@@ -25,6 +25,7 @@
 # fingerprint cache across runs. The heal counts are read from the run summary;
 # the matched text is never exposed (§2h).
 
+@browser
 Feature: A visual (perceptual-hash) signal heals a no-text element whose markup churns
   As someone scraping icon/image/logo fields whose surrounding markup churns
   I want a cropped-screenshot perceptual hash to corroborate a shaky DOM heal

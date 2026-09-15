@@ -19,6 +19,7 @@ Feature: The browser tier observes console output and JS errors
   I want the browser tier to record its console output and uncaught errors
   So that I can see how noisy or broken a page is, with raw text kept off shared output
 
+  @browser
   Scenario: A browser-tier run records console output and page errors
     Given a live fixture server
     And capture is enabled with the cache redirected to a temp directory

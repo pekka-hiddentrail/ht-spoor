@@ -38,6 +38,7 @@ Feature: A run authenticates with a supplied browser session (bring-your-own-ses
     When I run a static config with no session
     Then no item is extracted
 
+  @browser
   Scenario: The browser tier loads the session's localStorage to reach JS-gated content
     Given an auth-aware fixture server whose items render only for a localStorage token
     And a session file carrying that localStorage token

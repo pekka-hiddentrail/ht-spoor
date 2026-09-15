@@ -41,6 +41,7 @@ Feature: The dispatcher resolves a config through the right tier
     Then the run escalates past tier 1 to tier 2
     And tier 1 declined it while tier 2 accepted it
 
+  @browser
   Scenario: An empty tier-1 result escalates to the browser tier
     Given a live fixture server
     And a config whose items only exist after JS renders them:

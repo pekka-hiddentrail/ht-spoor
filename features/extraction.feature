@@ -151,6 +151,7 @@ Feature: Declarative extraction from a config file
     Then items are extracted from all 3 pages
     And the run stops after the page with no "a.next-page" link
 
+  @browser
   Scenario: Infinite-scroll pagination is driven by a flag (tier 2)
     Given a live fixture server
     And a config:

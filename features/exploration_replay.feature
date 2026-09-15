@@ -88,6 +88,7 @@ Feature: Exploration survives a flaky, nondeterministic reset-and-replay
     Then the graph has a transition "hall --Look--> vault"
     And the graph has states: home, hall, vault
 
+  @browser
   Scenario: Mapping a live site whose first render of a step is degraded
     # The whole real stack: a scripted server whose entry page is served degraded on one
     # reset (no link to the page behind it) and complete otherwise. Without retry the

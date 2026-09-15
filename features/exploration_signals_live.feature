@@ -9,6 +9,7 @@
 # click reports what that click actually changed. Nothing here is site-specific (§0):
 # the same five signals are read from every target.
 
+@browser
 Feature: The live browser driver captures real page signals
   As the exploration engine mapping a target with no config
   I want the real driver to read every free signal from the live page

@@ -21,6 +21,7 @@
 # verification drive every target's every element. Juice Shop is only the witness that
 # exposed the bug; the fixture reproduces the *class* of it, not that one site.
 
+@browser
 Feature: The live driver actuates elements reliably and detects covered ones
   As the exploration engine acting on a real, dynamic page in a headless browser
   I want clicks located by the accessibility tree and landed by verified coordinates

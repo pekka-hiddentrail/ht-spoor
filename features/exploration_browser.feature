@@ -17,6 +17,7 @@
 # its state-action graph into the local map, so the read-only serving layer can
 # answer "what happens when I click X" for the URL later without re-exploring.
 
+@browser
 Feature: Exploring a live site with the spoor explore command
   As an operator pointing Spoor at a target with no config
   I want one command that maps the site in a real browser
