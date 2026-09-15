@@ -110,6 +110,15 @@ def a_state_with_network_mix(
     graph.add_state(name, [], signals)
 
 
+@given(parsers.parse('a discovered element "{label}" on "{name}"'))
+def a_discovered_element(context: dict[str, Any], label: str, name: str) -> None:
+    # An element found on a state but never fired (so it produces no transition).
+    graph: ExplorationGraph = context["graph"]
+    graph.node(name).actions.append(
+        ActionableElement(role="button", name=label, backend_node_id=1)
+    )
+
+
 @given(parsers.parse('a state "{name}" with no page title'))
 def a_state_without_title(context: dict[str, Any], name: str) -> None:
     graph: ExplorationGraph = context["graph"]
@@ -275,13 +284,109 @@ def network_marked(context: dict[str, Any], name: str, mark: str) -> None:
     assert mark in _state_page(context, name)
 
 
+# --- Then: help / glossary page (slice 6f) -------------------------------
+
+
+@then("the wiki has a help page")
+def has_help_page(context: dict[str, Any]) -> None:
+    assert "help.html" in _pages(context)
+
+
+@then(parsers.parse('the help page defines "{term}"'))
+def help_defines(context: dict[str, Any], term: str) -> None:
+    # Each term is a definition-list entry, so it is defined, not merely mentioned.
+    assert f"<dt>{term}</dt>" in _pages(context)["help.html"]
+
+
+@then("every wiki page links to the help page")
+def every_page_links_help(context: dict[str, Any]) -> None:
+    for name, html in _pages(context).items():
+        assert 'href="help.html"' in html, f"{name} does not link to the help page"
+
+
+# --- Then: actions table (slice 6e) --------------------------------------
+
+
+def _actions_table(page: str) -> str:
+    """The state page's Actions section, up to the next section heading."""
+    start = page.index("<h2>Actions</h2>")
+    end = page.find("<h2", start + 1)
+    return page[start:] if end == -1 else page[start:end]
+
+
+def _element_row(page: str, label: str) -> str:
+    """The Actions-table `<tr>` whose Label cell is `label`."""
+    table = _actions_table(page)
+    marker = f"<td>{label}</td>"
+    assert marker in table, f"no element row for {label!r} in Actions table"
+    idx = table.index(marker)
+    return table[table.rindex("<tr>", 0, idx) : table.index("</tr>", idx)]
+
+
+@then(parsers.parse('the state page for "{name}" has an Actions table'))
+def has_actions_table(context: dict[str, Any], name: str) -> None:
+    section = _actions_table(_state_page(context, name))
+    assert "<table>" in section
+    assert "<th>Label</th>" in section
+    assert "<th>Destination / target state</th>" in section
+
+
+@then(
+    parsers.parse(
+        'the Actions table on the "{name}" state page comes before the captured signals'
+    )
+)
+def actions_before_signals(context: dict[str, Any], name: str) -> None:
+    page = _state_page(context, name)
+    assert page.index("<h2>Actions</h2>") < page.index("<h2>Console messages</h2>")
+
+
+@then(
+    parsers.parse(
+        'the state page for "{name}" lists the element "{label}" of type "{role}"'
+    )
+)
+def lists_element(context: dict[str, Any], name: str, label: str, role: str) -> None:
+    row = _element_row(_state_page(context, name), label)
+    assert f"<td>{label}</td>" in row
+    assert f"<em>{role}</em>" in row
+
+
+@then(
+    parsers.parse(
+        'the element "{label}" on the "{name}" state page has destination "{dest}"'
+    )
+)
+def element_destination(
+    context: dict[str, Any], label: str, name: str, dest: str
+) -> None:
+    row = _element_row(_state_page(context, name), label)
+    assert 'href="transition-' in row, f"destination is not a transition link: {row!r}"
+    assert f">{dest}</a>" in row, f"destination not labelled {dest!r}: {row!r}"
+
+
+@then(
+    parsers.parse(
+        'the element "{label}" on the "{name}" state page has no destination'
+    )
+)
+def element_no_destination(context: dict[str, Any], label: str, name: str) -> None:
+    row = _element_row(_state_page(context, name), label)
+    assert "href=" not in row, f"expected no destination link, got: {row!r}"
+
+
 # --- Then: network categories (slice 6d) ---------------------------------
 
 
 def _network_section(page: str) -> str:
-    """The state page's Network-requests block, up to the next section heading."""
+    """The state page's Network-requests block, up to the next section heading.
+
+    Network requests is now the last <h2> on the page (the Actions table moved to the
+    top in 6e), so fall back to the end of the body when no further heading follows.
+    """
     start = page.index("<h2>Network requests</h2>")
-    return page[start : page.index("<h2", start + 1)]
+    end = page.find("<h2", start + 1)
+    return page[start:] if end == -1 else page[start:end]
 
 
 @then(

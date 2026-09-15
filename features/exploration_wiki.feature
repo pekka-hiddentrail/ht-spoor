@@ -24,6 +24,21 @@ Feature: Exploration wiki generation — the browsable map (ROADMAP.md §2e, sli
   the driver, so a state reflects only the walk that reached it; that behaviour is
   covered by the live signal-capture feature, not this pure-renderer one.)
 
+  Slice 6f adds a help/glossary page linked from every page's nav — a fixed,
+  target-independent glossary that explains, in plain language, every term the other
+  pages use (state, transition, accessibility nodes, storage keys added, network
+  requests, the redaction placeholder, and so on) for a reader who did not build Spoor.
+
+  Slice 6e rearranges the state page to lead with its actionable elements. The old
+  "Actions here" bullet list and the separate "Outgoing transitions" list are replaced
+  by one "Actions" table (Label, Type, Screen capture, Destination / target state)
+  placed immediately after the state-identity block, before the captured signals, so the
+  thing a reader acts on comes first. The destination cell folds in what the outgoing
+  list carried — a link to the transition page, labelled by the target state — when the
+  element was fired, and reads "none" otherwise. The screen-capture column reads "none"
+  for every element for now: Spoor captures no per-element screenshot yet, so the column
+  is honest about there being nothing to show rather than implying one exists.
+
   Background:
     Given an explored graph of a small app:
       | state | title     | ax_nodes | console     | storage        | network            |
@@ -92,6 +107,38 @@ Feature: Exploration wiki generation — the browsable map (ROADMAP.md §2e, sli
     Then the state page for "poller" shows the network request "/api/ping"
     And the state page for "poller" shows that network request only once
     And the state page for "poller" marks that network request "× 12"
+
+  Scenario: The wiki has a help page that defines its terms
+    # A reader who did not build Spoor can look up any term the pages use. The glossary
+    # is linked from every page's nav so it is always one click away.
+    When I render the wiki for "https://shop.example"
+    Then the wiki has a help page
+    And the help page defines "Accessibility nodes"
+    And the help page defines "Storage keys added"
+    And the help page defines "Network requests"
+    And the help page defines "Screenshot hash"
+    And every wiki page links to the help page
+
+  Scenario: A state page leads with an Actions table of its elements, before the signals
+    # The elements a tester acts on come first: an Actions table sits immediately after
+    # the state-identity block and ahead of the captured-signal sections.
+    When I render the wiki for "https://shop.example"
+    Then the state page for "home" has an Actions table
+    And the Actions table on the "home" state page comes before the captured signals
+    And the state page for "home" lists the element "Open menu" of type "button"
+
+  Scenario: A fired element's destination links to the target state
+    # "Open menu" was fired and produced a transition, so its Destination cell links on
+    # to that transition, labelled by the state it reached.
+    When I render the wiki for "https://shop.example"
+    Then the element "Open menu" on the "home" state page has destination "Menu open"
+
+  Scenario: An element that was never fired shows no destination
+    # A discovered-but-unfired element still gets a row; its Destination cell reads none.
+    Given a discovered element "Search" on "home"
+    When I render the wiki for "https://shop.example"
+    Then the state page for "home" lists the element "Search" of type "button"
+    And the element "Search" on the "home" state page has no destination
 
   Scenario: Network requests on a state page are grouped by kind
     # A flat list of every request is noise. Slice 6d collates them under a small fixed
