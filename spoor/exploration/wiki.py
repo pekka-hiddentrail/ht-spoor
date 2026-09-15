@@ -17,15 +17,15 @@ Two scoping decisions (recorded in the §2e slice-6a decision note) shape it:
   (5c-ii), so a state page always shows its hash and a transition page reports whether
   the screenshot *changed* — a hash is a 64-bit int, safe to share unconditionally.
   Embedding the *image* is the deferred visual-capture work (§9), begun in slice 8a:
-  `build_pages` accepts a `screenshots` set of state ids, and a state so marked embeds
-  its full-page screenshot as an `<img>` referenced by the relative filename
-  `_screenshot_filename(index)`, leading the page as the screen's visual identity. It is
-  gated for a §2h reason: string redaction cannot scrub a secret that is *visible on the
-  page* (a token shown in the DOM, PII), so a screenshot bypasses the redaction every
-  other signal goes through. So pixels reach the shared wiki only behind an explicit
-  opt-in — the default is an empty set, and a default run stays pixel-free. Persisting
-  the image bytes and threading that opt-in through the CLI is a following slice; here
-  the renderer only knows *which* states have an image and *where* it will sit.
+  `build_pages` accepts a `screenshots` mapping of state id → relative filename, and a
+  state so marked embeds its full-page screenshot as an `<img>` referencing that
+  filename, leading the page as the screen's visual identity. It is gated for a §2h
+  reason: string redaction cannot scrub a secret that is *visible on the page* (a token
+  shown in the DOM, PII), so a screenshot bypasses the redaction every other signal goes
+  through. So pixels reach the shared wiki only behind an explicit opt-in — the default
+  is no mapping, and a default run stays pixel-free. The image bytes are streamed to
+  disk by the explorer as it captures them (§2e slice 8f); the renderer only knows
+  *which* states have an image and *where* it sits, and writes the HTML referencing it.
 
 Slice 6c makes the state pages readable after a live PrestaShop run showed them barely
 usable. Two generic fixes (§0): a state is labelled by its captured **page title**
@@ -81,7 +81,7 @@ site-specific (§0): the same templates render every target's graph.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -97,44 +97,6 @@ from spoor.security.redaction import REDACTED, redact
 # 12-char prefix is enough to tell states apart in links and the overview diagram.
 _SHORT_ID = 12
 _UNNAMED = "(unnamed)"
-
-
-# Screenshot images are grouped under their own subfolder rather than sitting flat
-# beside the HTML pages, so the wiki directory stays readable as the page set grows.
-# The name is used both as the `<img src>` (relative to a page at the wiki root) and,
-# joined to the output dir, as the on-disk path the writer creates.
-_SCREENSHOT_DIR = "screenshots"
-
-
-def _screenshot_filename(index: int) -> str:
-    """The relative path a state's full-page screenshot is embedded under (8a).
-
-    Lives under the `screenshots/` subfolder (not flat beside the pages) and parallels
-    the `state-{index}.html` page name, so the writer that persists the image bytes and
-    the renderer that references them agree on one path.
-    """
-    return f"{_SCREENSHOT_DIR}/state-{index}.png"
-
-
-def _element_screenshot_filename(state_index: int, element_index: int) -> str:
-    """The relative path one element's clip is embedded under (§2e slice 8d).
-
-    Lives in the same `screenshots/` subfolder as the full-page shots and is keyed by
-    both the state and the element's discovery position, so every clip on a state has a
-    distinct, stable name the writer and the renderer agree on.
-    """
-    return f"{_SCREENSHOT_DIR}/state-{state_index}-el-{element_index}.png"
-
-
-def _element_opened_filename(state_index: int, element_index: int) -> str:
-    """The relative path one element's *opened* capture is embedded under (§2e, 8e).
-
-    The counterpart to `_element_screenshot_filename` for the content a disclosure
-    element reveals when opened: same `screenshots/` subfolder, same state/element
-    keying, with an `-opened` suffix so a control's closed clip and its opened image
-    never collide on one name.
-    """
-    return f"{_SCREENSHOT_DIR}/state-{state_index}-el-{element_index}-opened.png"
 
 
 # Network-request categories (§2e slice 6d). A flat list of every request seen at a
@@ -435,7 +397,7 @@ def build_pages(
     graph: ExplorationGraph,
     *,
     target: str,
-    screenshots: Collection[str] | None = None,
+    screenshots: Mapping[str, str] | None = None,
     element_screenshots: Mapping[str, Sequence[str | None]] | None = None,
     element_opened: Mapping[str, Sequence[str | None]] | None = None,
 ) -> dict[str, str]:
@@ -446,12 +408,12 @@ def build_pages(
     template autoescapes, so nothing raw or executable reaches a page. `render_wiki`
     is the thin writer around it.
 
-    `screenshots` is the set of state ids whose full-page screenshot should be embedded
-    as an `<img>` (slice 8a). It defaults to none, so a default wiki is pixel-free;
-    pixels reach this shared surface only behind an explicit opt-in, because a
-    screenshot cannot be secret-redacted the way every text signal is (§2h). The image
-    bytes themselves are placed next to the pages by the caller; here a marked state's
-    view just carries the relative filename to reference.
+    `screenshots` maps a state id to the subfolder-relative filename of its full-page
+    screenshot, to embed as an `<img>` (slice 8a). It defaults to none, so a default
+    wiki is pixel-free; pixels reach this shared surface only behind an explicit opt-in,
+    because a screenshot cannot be secret-redacted the way every text signal is (§2h).
+    The image bytes themselves are written to disk by the explorer as they are captured
+    (§2e slice 8f); here a marked state's view just carries the relative filename.
 
     `element_screenshots` is the per-element counterpart (§2e slice 8d): a state id maps
     to the clip filenames for its actions, aligned by discovery position, so each
@@ -461,7 +423,7 @@ def build_pages(
     stays empty and pixel-free.
     """
     states = graph.states
-    shot_ids = set(screenshots or ())
+    shot_files = screenshots or {}
     element_clips = element_screenshots or {}
     element_opens = element_opened or {}
     state_index = {sid: i for i, sid in enumerate(states)}
@@ -488,12 +450,8 @@ def build_pages(
             element_opens.get(str(view["id"]), ()),
         )
         # A full-page screenshot is embedded only for states the caller opted in (8a);
-        # the marked state carries the relative filename its image is written under.
-        view["screenshot_image"] = (
-            _screenshot_filename(view["index"])  # type: ignore[arg-type]
-            if view["id"] in shot_ids
-            else None
-        )
+        # the marked state carries the relative filename its image was written under.
+        view["screenshot_image"] = shot_files.get(str(view["id"]))
 
     env = _environment()
     safe_target = redact(target)
@@ -519,109 +477,65 @@ def build_pages(
     return pages
 
 
-def _write_element_image(
-    data: bytes | None, out_dir: Path, name: str, written: list[Path]
-) -> str | None:
-    """Write one element image under `out_dir/name`, or return None if there's none.
-
-    Shared by the closed-clip (8d) and opened-content (8e) passes: bytes present means
-    write them into the `screenshots/` subfolder, record the path, and return the
-    relative name the Actions row embeds; None bytes means nothing is written and the
-    row's cell reads "none" — keeping the two passes byte-identical in behaviour.
-    """
-    if data is None:
-        return None
-    path = out_dir / name
-    path.parent.mkdir(parents=True, exist_ok=True)  # the screenshots/ subfolder
-    path.write_bytes(data)
-    written.append(path)
-    return name
-
-
 def render_wiki(
     graph: ExplorationGraph,
     out_dir: Path,
     *,
     target: str,
-    screenshots: Mapping[str, bytes] | None = None,
+    screenshots: Mapping[str, str] | None = None,
     element_screenshots: Mapping[str, Sequence[ElementShot]] | None = None,
 ) -> list[Path]:
-    """Write the wiki for `graph` under `out_dir`, returning the paths written.
+    """Write the wiki's HTML pages for `graph` under `out_dir`, returning them sorted.
 
     Creates `out_dir` (and parents) if needed and writes each page from `build_pages`
-    as UTF-8. Paths are returned sorted for a stable, testable result.
+    as UTF-8. Paths are returned sorted for a stable, testable result. Only HTML is
+    written here: the screenshot images were already streamed to disk by the explorer
+    as they were captured (§2e slice 8f), so this writer never holds image bytes — it
+    embeds the filename references the explorer produced.
 
-    `screenshots` maps a state id to its full-page PNG bytes (§2e slice 8b). This is the
-    writer that turns those raw captures into a shared surface: for each state it has an
-    image for, it writes `screenshots/state-{index}.png` (grouped in its own subfolder,
-    not flat beside the pages) and tells `build_pages` to embed it. Left None (the
-    default), nothing is written and every page stays pixel-free — embedding pixels is
-    always an explicit opt-in, since a screenshot cannot be secret-redacted the way
-    every text value on the pages is (§2h).
+    `screenshots` maps a state id to the subfolder-relative filename of its full-page
+    screenshot (§2e slices 8b/8f). The explorer must have written those images under
+    this same `out_dir` (that is why it takes a `screenshot_dir` — pass it `out_dir`);
+    here each marked state's page embeds its reference. Left None (the default), a page
+    stays pixel-free — embedding pixels is always an explicit opt-in, since a screenshot
+    cannot be secret-redacted the way every text value on the pages is (§2h).
 
     `element_screenshots` maps a state id to one `ElementShot` per discovered element,
-    in discovery order (§2e slices 8d/8e). For each element it has clip bytes for, this
-    writes `screenshots/state-{i}-el-{e}.png`; for each element with an opened capture
-    it also writes `screenshots/state-{i}-el-{e}-opened.png`, and passes both names to
-    `build_pages` so the Actions row embeds the closed clip and the revealed content.
-    Same opt-in, pixel-free-by-default posture as the full-page sink, and for the same
-    §2h reason.
+    in discovery order (§2e slices 8d/8e), each field a filename reference. The
+    closed-clip reference embeds in the element's Actions row and, when present, the
+    `opened` reference embeds the revealed content beside it — the images themselves,
+    again, already on disk. Same opt-in, pixel-free-by-default posture as the full-page
+    sink, for the same §2h reason.
     """
-    shot_bytes = screenshots or {}
+    shot_files = screenshots or {}
     element_shots = element_screenshots or {}
-    embed_ids = {sid for sid in graph.states if sid in shot_bytes}
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
-    # Write each element clip and its opened capture, recording the filenames their
-    # Actions row will embed, keyed by state id and aligned by discovery position with
-    # the state's actions. The closed clip (8d) and the opened image (8e) are written
-    # and tracked independently, so an element can have one, both, or neither.
+    # The clip and opened references each Actions row will embed, keyed by state id and
+    # aligned by discovery position with the state's actions. The closed clip (8d) and
+    # the opened image (8e) are tracked independently, so an element can have one, both,
+    # or neither. The bytes are already on disk (streamed by the explorer, 8f); here we
+    # only thread the filenames the shots carry into the renderer.
     clip_files: dict[str, list[str | None]] = {}
     opened_files: dict[str, list[str | None]] = {}
-    for s_index, sid in enumerate(graph.states):
+    for sid in graph.states:
         shots = element_shots.get(sid, ())
-        clip_names: list[str | None] = []
-        opened_names: list[str | None] = []
-        for e_index, shot in enumerate(shots):
-            clip_names.append(
-                _write_element_image(
-                    shot.clip,
-                    out_dir,
-                    _element_screenshot_filename(s_index, e_index),
-                    written,
-                )
-            )
-            opened_names.append(
-                _write_element_image(
-                    shot.opened,
-                    out_dir,
-                    _element_opened_filename(s_index, e_index),
-                    written,
-                )
-            )
-        if clip_names:
-            clip_files[sid] = clip_names
-        if opened_names:
-            opened_files[sid] = opened_names
+        if not shots:
+            continue
+        clip_files[sid] = [shot.clip for shot in shots]
+        opened_files[sid] = [shot.opened for shot in shots]
 
     for filename, html in build_pages(
         graph,
         target=target,
-        screenshots=embed_ids,
+        screenshots=shot_files,
         element_screenshots=clip_files,
         element_opened=opened_files,
     ).items():
         path = out_dir / filename
         path.write_text(html, encoding="utf-8")
         written.append(path)
-    for index, sid in enumerate(graph.states):
-        png = shot_bytes.get(sid)
-        if png is not None:
-            path = out_dir / _screenshot_filename(index)
-            path.parent.mkdir(parents=True, exist_ok=True)  # the screenshots/ subfolder
-            path.write_bytes(png)
-            written.append(path)
     return sorted(written)
 
 

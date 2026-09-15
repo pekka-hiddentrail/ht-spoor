@@ -121,9 +121,12 @@ def a_discovered_element(context: dict[str, Any], label: str, name: str) -> None
 
 @given(parsers.parse('a captured screenshot for state "{name}"'))
 def a_captured_screenshot(context: dict[str, Any], name: str) -> None:
-    # Mark the state (by id) as having a captured full-page screenshot, as the writer
-    # will once slice 8b persists the bytes; here it only tells the renderer to embed.
-    context.setdefault("screenshots", set()).add(name)
+    # Mark the state (by id) as having a captured full-page screenshot: map it to the
+    # subfolder-relative filename the explorer streams to (§2e slice 8f), which
+    # is what the renderer embeds. Purely tells the renderer to embed that reference;
+    # no bytes are involved here (name == id in these scenarios).
+    index = context["graph"].states.index(name)
+    context.setdefault("screenshots", {})[name] = f"screenshots/state-{index}.png"
 
 
 @given(parsers.parse('a state "{name}" with no page title'))

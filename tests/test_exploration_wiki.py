@@ -109,22 +109,21 @@ def test_render_wiki_writes_every_page(tmp_path: Path) -> None:
         assert path.read_text(encoding="utf-8").startswith("<!DOCTYPE html>")
 
 
-def test_render_wiki_writes_and_embeds_only_captured_screenshots(
+def test_render_wiki_embeds_only_referenced_screenshots(
     tmp_path: Path,
 ) -> None:
-    # The writer places a screenshots/state-N.png only for a state it has bytes for,
-    # embeds exactly those by that subfolder-relative path, and leaves an uncaptured
-    # state (and every other page) pixel-free (8b). Images live in their own subfolder,
-    # not flat beside the pages.
+    # render_wiki embeds a state's screenshot reference only for a state it has one for,
+    # by that subfolder-relative path, and leaves an unreferenced state (and every other
+    # page) pixel-free (8b/8f). It writes only HTML — the image bytes were streamed to
+    # disk by the explorer as they were captured, so no image is written here.
     graph = _two_state_graph()  # _ID_A is index 0, _ID_B is index 1
     written = render_wiki(
-        graph, tmp_path, target="https://example.test", screenshots={_ID_A: b"\x89PNGa"}
+        graph,
+        tmp_path,
+        target="https://example.test",
+        screenshots={_ID_A: "screenshots/state-0.png"},
     )
-    shots_dir = tmp_path / "screenshots"
-    assert (shots_dir / "state-0.png") in set(written)
-    assert (shots_dir / "state-1.png") not in set(written)
-    assert not list(tmp_path.glob("*.png"))  # nothing flat in the root
-    assert (shots_dir / "state-0.png").read_bytes() == b"\x89PNGa"
+    assert not [p for p in written if p.suffix == ".png"]  # render writes no images
     page_a = (tmp_path / "state-0.html").read_text(encoding="utf-8")
     page_b = (tmp_path / "state-1.html").read_text(encoding="utf-8")
     assert 'src="screenshots/state-0.png"' in page_a
@@ -147,39 +146,38 @@ def _two_element_graph() -> ExplorationGraph:
     return graph
 
 
-def test_render_wiki_writes_and_embeds_element_clips_by_position(
+def test_render_wiki_embeds_element_clip_references_by_position(
     tmp_path: Path,
 ) -> None:
-    # A clip per element is written under screenshots/state-{i}-el-{e}.png, aligned by
-    # discovery position, and embedded in that element's Actions row (8d). A None clip
-    # in the list (element 1 here) writes nothing and its row stays pixel-free — proving
-    # the list stays aligned even when a middle element could not be captured. Images
-    # live in their own subfolder, never flat in the wiki root.
+    # A clip reference per element is embedded in that element's Actions row, aligned by
+    # discovery position (8d/8f). A None clip (element 1 here) leaves its row
+    # pixel-free — proving the list stays aligned when a middle element could not be
+    # captured. render_wiki writes HTML; the clip bytes were streamed to disk by the
+    # explorer as they were captured, so no image is written here.
     graph = _two_element_graph()
     written = render_wiki(
         graph,
         tmp_path,
         target="https://example.test",
-        element_screenshots={_ID_A: [ElementShot(b"\x89PNG-next"), ElementShot(None)]},
+        element_screenshots={
+            _ID_A: [ElementShot("screenshots/state-0-el-0.png"), ElementShot(None)]
+        },
     )
-    shots_dir = tmp_path / "screenshots"
-    assert (shots_dir / "state-0-el-0.png") in set(written)
-    assert (shots_dir / "state-0-el-1.png") not in set(written)  # None clip
-    assert not list(tmp_path.glob("*.png"))  # nothing flat in the root
-    assert (shots_dir / "state-0-el-0.png").read_bytes() == b"\x89PNG-next"
+    assert not [p for p in written if p.suffix == ".png"]  # render writes no images
     page = (tmp_path / "state-0.html").read_text(encoding="utf-8")
     assert 'src="screenshots/state-0-el-0.png"' in page  # the "Next" row
     assert "state-0-el-1.png" not in page  # the uncaptured "Currency" row
 
 
-def test_render_wiki_writes_and_embeds_opened_captures_independently(
+def test_render_wiki_embeds_opened_references_independently(
     tmp_path: Path,
 ) -> None:
-    # The opened capture (8e) is written under state-{i}-el-{e}-opened.png and embedded
-    # in the element's row, tracked independently of the closed clip: here "Currency"
-    # (element 1) has both a clip and an opened image, while "Next" (element 0) has only
-    # a clip and no opened image — proving one element can have both and another
-    # neither, with the opened files kept separate from the closed clips.
+    # The opened reference (8e) is embedded in its row, tracked independently of
+    # the closed clip: here "Currency" (element 1) has both a clip and an opened image,
+    # while "Next" (element 0) has only a clip and no opened image — proving one element
+    # can have both and another neither, with the opened kept separate from the
+    # closed clip. render_wiki writes only HTML; the bytes were streamed to disk by the
+    # explorer as they were captured.
     graph = _two_element_graph()
     written = render_wiki(
         graph,
@@ -187,16 +185,15 @@ def test_render_wiki_writes_and_embeds_opened_captures_independently(
         target="https://example.test",
         element_screenshots={
             _ID_A: [
-                ElementShot(clip=b"\x89PNG-next"),
-                ElementShot(clip=b"\x89PNG-cur", opened=b"\x89PNG-cur-open"),
+                ElementShot(clip="screenshots/state-0-el-0.png"),
+                ElementShot(
+                    clip="screenshots/state-0-el-1.png",
+                    opened="screenshots/state-0-el-1-opened.png",
+                ),
             ]
         },
     )
-    shots_dir = tmp_path / "screenshots"
-    assert (shots_dir / "state-0-el-1-opened.png") in set(written)
-    assert (shots_dir / "state-0-el-0-opened.png") not in set(written)  # no opened
-    assert (shots_dir / "state-0-el-1-opened.png").read_bytes() == b"\x89PNG-cur-open"
-    assert not list(tmp_path.glob("*.png"))  # nothing flat in the root
+    assert not [p for p in written if p.suffix == ".png"]  # render writes no images
     page = (tmp_path / "state-0.html").read_text(encoding="utf-8")
     assert 'src="screenshots/state-0-el-1.png"' in page  # Currency closed clip
     assert 'src="screenshots/state-0-el-1-opened.png"' in page  # Currency opened

@@ -2,13 +2,14 @@
 
 Exercised in-process like the 8d element-clip steps: a tiny deterministic fake screen
 exposing a few actionable elements, a fake driver that hands back a distinct fake
-"opened" capture per element, the real explorer filling the opt-in per-element sink, and
-the real `render_wiki` writing and embedding the opened images in each element's Actions
-row. No browser and no real PNGs — the bytes only need to be distinct and to round-trip
-to disk; the live opened capture (click, settle, shot, Escape-restore) is proven by the
-integration test. Two driver flavours prove the granular protocol: one that can open
-disclosure elements, one that can only clip and so leaves every `opened` None. Element
-names double as the friendly key.
+"opened" capture per element, the real explorer streaming each image to disk as it
+is captured and keeping only a filename reference (§2e slice 8f), and the real
+`render_wiki` embedding references in each element's Actions row. No browser and no
+real PNGs — the bytes need to be distinct and to round-trip to disk; the live opened
+capture (click, settle, shot, Escape-restore) is proven by the integration test. Two
+driver flavours prove the granular protocol: one that can open disclosure elements, one
+that can only clip and leaves every `opened` None. Element names double as the friendly
+key.
 """
 
 from __future__ import annotations
@@ -124,8 +125,12 @@ def context() -> dict[str, Any]:
     }
 
 
-def _explore(context: dict[str, Any], *, capture: bool) -> None:
+def _explore(context: dict[str, Any], tmp_path: Path, *, capture: bool) -> None:
     app: _FakeApp = context["app"]
+    # The wiki directory is fixed up front and doubles as the screenshot directory: the
+    # explorer streams each opened image straight into it as it is captured (§2e 8f).
+    out = tmp_path / "wiki"
+    context["out_dir"] = out
     sink: dict[str, list[ElementShot]] | None = {} if capture else None
     context["element_shots"] = sink
     context["graph"] = explore(
@@ -134,6 +139,7 @@ def _explore(context: dict[str, Any], *, capture: bool) -> None:
         controller=RunController(RunBudget()),
         declared_sandbox=context["sandbox"],
         element_screenshots=sink,
+        screenshot_dir=out,
     )
 
 
@@ -169,35 +175,33 @@ def clip_only_driver(context: dict[str, Any]) -> None:
 
 
 @given("I explored it with opened-contents capture on")
-def explored_on(context: dict[str, Any]) -> None:
-    _explore(context, capture=True)
+def explored_on(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=True)
 
 
 @given("I explored it with opened-contents capture off")
-def explored_off(context: dict[str, Any]) -> None:
-    _explore(context, capture=False)
+def explored_off(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=False)
 
 
 # --- When ----------------------------------------------------------------
 
 
 @when("I explore it with opened-contents capture on")
-def explore_on(context: dict[str, Any]) -> None:
-    _explore(context, capture=True)
+def explore_on(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=True)
 
 
 @when("I explore it with opened-contents capture off")
-def explore_off(context: dict[str, Any]) -> None:
-    _explore(context, capture=False)
+def explore_off(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=False)
 
 
 @when("I render the wiki to disk")
-def render_to_disk(context: dict[str, Any], tmp_path: Path) -> None:
-    out = tmp_path / "wiki"
-    context["out_dir"] = out
+def render_to_disk(context: dict[str, Any]) -> None:
     render_wiki(
         context["graph"],
-        out,
+        context["out_dir"],
         target=context["target"],
         element_screenshots=context.get("element_shots"),
     )
@@ -226,7 +230,13 @@ def opened_captured_for(context: dict[str, Any], name: str) -> None:
     assert sink is not None
     shots = sink[app.state_id_of("home")]
     index = _element_index(context, name)
-    assert shots[index].opened == app.opened_of(name), f"no opened capture for {name}"
+    # The shot holds a filename reference; the image was streamed to disk under it
+    # as it was captured (§2e slice 8f), so the bytes live on disk, not in memory.
+    ref = shots[index].opened
+    assert ref == f"screenshots/state-0-el-{index}-opened.png", (
+        f"no opened capture for {name}"
+    )
+    assert (context["out_dir"] / ref).read_bytes() == app.opened_of(name)
 
 
 @then(parsers.parse('no opened-contents screenshot was captured for "{name}"'))
