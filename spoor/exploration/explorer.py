@@ -9,11 +9,15 @@ before every action so a budget or the kill switch always stops it (slice 4).
 
 The browser is behind the `BrowserDriver` protocol, so this whole loop runs in-process
 against a fake deterministic app; the real Playwright driver and a live-browser run
-are sub-slice 5b. The walk is depth-first with **reset-and-replay** navigation: to
-reach a state again, the driver is reset to the start and the path of actions that
-first reached it is replayed. That needs no back-button assumption from the target and
-works for any driver whose actions are deterministic. Nothing here is site-specific
-(§0): the same loop maps every target.
+are sub-slice 5b. The walk is **breadth-first** (§2e slice 9 — peel the site layer by
+layer so a bounded run maps the shallow structural pages first) with
+**reset-and-replay** navigation: to reach a state again, the driver is reset to the
+start and the path of actions that first reached it is replayed. That needs no
+back-button assumption from the target and works for any driver whose actions are
+deterministic. An optional depth bound prunes how deep the walk descends, and — when
+the driver reports URLs — the frontier forks on the URL path so a distinct page
+rendering an already-seen DOM is still explored. Nothing here is site-specific (§0):
+the same loop maps every target.
 
 Layer recovery (§2e sub-slice 7c) is what keeps a site guarded by a welcome or consent
 overlay from collapsing to its first screen. When an action can't be actuated because a
@@ -45,10 +49,12 @@ not retried: there is nothing transient to wait out.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
+from urllib.parse import urlparse
 
 from spoor.exploration.actuation import ActuationVerdict, CoveringElement, Verdict
 from spoor.exploration.capture import StateSignals, diff_signals
@@ -239,6 +245,34 @@ class _OpenedScreenshotCapable(Protocol):
         ...
 
 
+@runtime_checkable
+class _UrlAware(Protocol):
+    """A driver that can report the current page's URL (§2e slice 9).
+
+    Kept off the core `BrowserDriver` contract on purpose, like `_ScreenshotCapable`:
+    a fake app has no URL, so requiring one would break every in-process fake. When a
+    driver *does* report a URL, the explorer forks its crawl frontier on the URL path
+    — so a distinct path that happens to render an already-seen DOM is still explored
+    outward, rather than collapsed away by the DOM-only state id. The graph's state
+    identity stays the DOM `state_id` regardless; this only widens what gets walked.
+    """
+
+    def current_url(self) -> str:
+        """The URL of the page currently loaded."""
+        ...
+
+
+def _url_path(url: str) -> str:
+    """The path component of `url`, dropping query and fragment (§2e slice 9).
+
+    The frontier forks on the path alone, so `/7-stationery` and its
+    `?q=…`/`#…` variants are one thing to expand (their query/fragment don't change
+    which page this is), while `/4-men` and `/9-art` are distinct. An empty path
+    (a bare origin) normalises to "/" so the root compares equal to itself.
+    """
+    return urlparse(url).path or "/"
+
+
 class _Reach(Enum):
     """Whether an action can be actuated now, or why not (§2e, 7c)."""
 
@@ -334,6 +368,18 @@ def explore(
     never contaminates the clean-page state id and signals, which are captured first. It
     carries the same opt-in, off-by-default posture and the same §2h reason as the
     full-page sink.
+
+    The walk is **breadth-first** (§2e slice 9): a FIFO frontier expands the start
+    state, then every state one action away, then the next layer, and so on — so a
+    bounded run maps the shallow, structural pages (a shop's top categories, its cart)
+    before descending into deep product/variant tendrils. `controller.max_depth`, when
+    set, prunes the frontier: a state is expanded only while its depth (clicks from the
+    start) is below the bound, so the crawl reaches states up to that layer but goes no
+    deeper. When the driver reports URLs (`_UrlAware`), the frontier forks on the URL
+    path: a distinct path rendering an already-seen DOM is still expanded, while
+    query/fragment variants of an already-expanded path are not. Reset-and-replay,
+    verification (7d), and layer recovery (7c) are unchanged — only the order and the
+    frontier's dedup key differ from the original depth-first walk.
     """
     graph = ExplorationGraph()
 
@@ -529,63 +575,109 @@ def explore(
         assert last is not None  # the loop ran at least once, so a failure was recorded
         raise ActionError(last.reason(_MAX_REPLAY_ATTEMPTS))
 
-    def walk(state: str, path: list[_PathStep], root_id: str) -> None:
-        # Snapshot the action list: a deeper call may add states, and we iterate the
-        # actions discovered for this state when it was first seen.
-        for action in list(graph.node(state).actions):
+    def current_path() -> str | None:
+        """The current page's URL path for the frontier key, or None if not reported.
+
+        None when the driver isn't `_UrlAware`, which collapses the frontier key to the
+        state id alone — the pre-slice-9 behaviour every fakeless-URL driver keeps.
+        """
+        if isinstance(driver, _UrlAware):
+            return _url_path(driver.current_url())
+        return None
+
+    def walk(root_id: str, root_path: str | None) -> None:
+        """Breadth-first walk from the root, forking the frontier on the URL path (9).
+
+        A FIFO frontier holds `(state, path)`; `expanded` guards each
+        `(state, url_path)` from being walked twice. Popping a state expands it —
+        firing each gate-permitted action via reset-and-replay (7c/7d) and recording
+        where it led — then enqueues each landing whose `(state, url_path)` is new, so
+        the graph fills layer by layer. `max_depth`, when set, stops a state from being
+        expanded once its depth (its path length) reaches the bound: the state is still
+        reached and recorded, the walk simply does not descend past it.
+        """
+        max_depth = controller.max_depth
+        frontier: deque[tuple[str, list[_PathStep]]] = deque()
+        frontier.append((root_id, []))
+        expanded: set[tuple[str, str | None]] = {(root_id, root_path)}
+        while frontier:
             if controller.check().should_stop:
                 return
-            decision = evaluate_action(
-                target, action.name, action.role, declared_sandbox
-            )
-            if not decision.allowed:
-                graph.record_skip(state, action, decision.reason)
+            state, path = frontier.popleft()
+            # Reach bound (not a stop bound): expand only while below the depth limit,
+            # so states up to `max_depth` are mapped but the walk descends no further.
+            if max_depth is not None and len(path) >= max_depth:
                 continue
-            # Replay to `state` and make the action reachable, retrying a transient bad
-            # render and clearing a recoverable layer (7c/7d). A step that stayed
-            # unreachable or a replay that diverged is flagged honestly (naming the step
-            # that failed); a covered action nothing can clear is flagged as blocked —
-            # never a mute skip.
-            try:
-                outcome = navigate_and_reach(path, action, root_id)
-            except ActionError as exc:
-                # Replay could not be made faithful within the retry bound: record this
-                # action honestly and carry on — the next iteration resets and replays
-                # afresh, so one dead branch never aborts the whole map.
-                graph.record_skip(state, action, f"could not be performed: {exc}")
-                continue
-            if outcome.status is _Reach.BLOCKED:
-                graph.record_skip(
+            # Snapshot the action list: expanding a later state may add states, and we
+            # iterate the actions discovered for this state when it was first seen.
+            for action in list(graph.node(state).actions):
+                if controller.check().should_stop:
+                    return
+                decision = evaluate_action(
+                    target, action.name, action.role, declared_sandbox
+                )
+                if not decision.allowed:
+                    graph.record_skip(state, action, decision.reason)
+                    continue
+                # Replay to `state` and make the action reachable, retrying a transient
+                # bad render and clearing a recoverable layer (7c/7d). A step that
+                # stayed unreachable or a replay that diverged is flagged honestly
+                # (naming the step that failed); a covered action nothing can clear is
+                # flagged as blocked — never a mute skip.
+                try:
+                    outcome = navigate_and_reach(path, action, root_id)
+                except ActionError as exc:
+                    # Replay could not be made faithful within the retry bound: record
+                    # this action honestly and carry on — the next pop resets and
+                    # replays afresh, so one dead branch never aborts the whole map.
+                    graph.record_skip(state, action, f"could not be performed: {exc}")
+                    continue
+                if outcome.status is _Reach.BLOCKED:
+                    graph.record_skip(
+                        state,
+                        action,
+                        f"blocked by an unresolved layer: {outcome.blocker}",
+                    )
+                    continue
+                # Capture the free signals either side of the action so the transition
+                # records what it changed (§2e sub-slice 5c). `before` is taken after
+                # any layer was cleared, so the diff is the action's effect not the
+                # layer's.
+                before = driver.capture_signals()
+                try:
+                    driver.perform(action)
+                except ActionError as exc:
+                    graph.record_skip(state, action, f"could not be performed: {exc}")
+                    continue
+                controller.record_request()
+                after = driver.capture_signals()
+                # Read the URL path from the clean landed page, before `capture` may
+                # take an opened-element screenshot (§2e slice 8e), which clicks a
+                # disclosure element and could momentarily change what URL is loaded.
+                # The frontier's url_path must describe the same clean page as the
+                # state id capture computes first, so read it here, not after.
+                to_path = current_path()
+                to_state, _first_seen = capture(after)
+                graph.add_transition(
                     state,
                     action,
-                    f"blocked by an unresolved layer: {outcome.blocker}",
+                    to_state,
+                    diff_signals(before, after),
+                    recovered_via=outcome.recovered_via,
                 )
-                continue
-            # Capture the free signals either side of the action so the transition
-            # records what it changed (§2e sub-slice 5c). `before` is taken after any
-            # layer was cleared, so the diff is the action's effect, not the layer's.
-            before = driver.capture_signals()
-            try:
-                driver.perform(action)
-            except ActionError as exc:
-                graph.record_skip(state, action, f"could not be performed: {exc}")
-                continue
-            controller.record_request()
-            after = driver.capture_signals()
-            to_state, first_seen = capture(after)
-            graph.add_transition(
-                state,
-                action,
-                to_state,
-                diff_signals(before, after),
-                recovered_via=outcome.recovered_via,
-            )
-            # Only recurse into a genuinely new state; a transition back to a known
-            # state is recorded but not re-explored — that is what keeps this finite.
-            if first_seen:
-                walk(to_state, path + [_PathStep(action, to_state)], root_id)
+                # Enqueue a landing the frontier hasn't expanded under this URL path.
+                # Keyed on `(state, url_path)`, not first-seen: a known DOM reached at a
+                # new path is still walked (the fork), while a repeat of an
+                # already-expanded pair is recorded but not re-explored — what keeps the
+                # walk finite. Without URLs the key is the state id alone (pre-9).
+                key = (to_state, to_path)
+                if key not in expanded:
+                    expanded.add(key)
+                    frontier.append((to_state, path + [_PathStep(action, to_state)]))
 
     driver.reset()
+    # From the clean start page, before capture may mutate it (opened screenshots, 8e).
+    root_path = current_path()
     root, _ = capture()
-    walk(root, [], root)
+    walk(root, root_path)
     return graph

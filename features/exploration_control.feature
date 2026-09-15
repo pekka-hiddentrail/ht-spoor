@@ -65,3 +65,4 @@ Feature: An exploration run is always bounded and stoppable
   Scenario: A budget bound must be positive
     Then building a run budget of max_states 0 is rejected
     And building a run budget of max_requests -1 is rejected
+    And building a run budget of max_depth 0 is rejected

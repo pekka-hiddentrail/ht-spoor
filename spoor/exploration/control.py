@@ -33,20 +33,32 @@ from dataclasses import dataclass
 class RunBudget:
     """Hard, user-set bounds for one exploration run (§2e).
 
-    Each dimension is optional; `None` means that dimension is unbounded. A run
-    stops as soon as *any* set bound is reached. A set bound must be positive — a
-    zero or negative bound is a configuration error, not a silent instant stop.
+    Each dimension is optional; `None` means that dimension is unbounded. A set
+    bound must be positive — a zero or negative bound is a configuration error, not
+    a silent instant stop.
+
+    Two kinds of bound, deliberately distinct: `max_states`, `max_requests` and
+    `max_seconds` are *stop* bounds — the run halts as soon as any is reached, via
+    `RunController.check()`. `max_depth` is a *reach* bound and behaves differently:
+    it never stops the run, it prunes the crawl frontier so the walk does not descend
+    past the given layer (§2e slice 9). Depth is counted in clicks from the start
+    state — the start is depth 0, a state one action away is depth 1 — and a state is
+    *expanded* (its own actions fired) only while its depth is below `max_depth`, so
+    states up to `max_depth` are still reached and captured but the crawl goes no
+    deeper. `max_depth=1` maps the start page and everything one click from it.
     """
 
     max_states: int | None = None
     max_requests: int | None = None
     max_seconds: float | None = None
+    max_depth: int | None = None
 
     def __post_init__(self) -> None:
         for name, value in (
             ("max_states", self.max_states),
             ("max_requests", self.max_requests),
             ("max_seconds", self.max_seconds),
+            ("max_depth", self.max_depth),
         ):
             if value is not None and value <= 0:
                 raise ValueError(f"{name} must be positive, got {value!r}")
@@ -101,6 +113,16 @@ class RunController:
     @property
     def killed(self) -> bool:
         return self._killed.is_set()
+
+    @property
+    def max_depth(self) -> int | None:
+        """The run's depth bound, or None if unbounded (§2e slice 9).
+
+        Exposed for the explorer's frontier pruning: unlike the stop bounds this is
+        not consulted by `check()`, it decides how deep the walk descends. Kept on the
+        controller so the explorer reads one run-control object, not the budget too.
+        """
+        return self._budget.max_depth
 
     def elapsed(self) -> float:
         """Wall-clock seconds since this controller was created."""

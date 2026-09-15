@@ -112,6 +112,16 @@ def explore(
     max_seconds: Annotated[
         float | None, typer.Option(help="Stop after this many seconds of wall-clock.")
     ] = None,
+    max_depth: Annotated[
+        int | None,
+        typer.Option(
+            help=(
+                "Only map pages within this many clicks of the start. The crawl works "
+                "outward layer by layer, so 1 maps the start page and everything one "
+                "click away, 2 adds the next layer, and so on. Unlimited if unset."
+            )
+        ),
+    ] = None,
     wiki: Annotated[
         Path | None,
         typer.Option(
@@ -171,6 +181,7 @@ def explore(
             max_states=max_states,
             max_requests=max_requests,
             max_seconds=max_seconds,
+            max_depth=max_depth,
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc

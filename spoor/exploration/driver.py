@@ -358,6 +358,16 @@ class PlaywrightDriver:
         """The current rendered DOM, for computing the abstract state id."""
         return self._live_page.content()
 
+    def current_url(self) -> str:
+        """The URL of the page currently loaded (§2e slice 9).
+
+        Used by the explorer to fork its crawl frontier on the URL path, so a distinct
+        page that renders an already-seen DOM is still explored. Reads Playwright's live
+        `page.url`, which tracks navigations (including client-side history updates), so
+        it reflects wherever the last action landed.
+        """
+        return self._live_page.url
+
     def ax_nodes(self) -> Sequence[Mapping[str, object]]:
         """The current accessibility-tree nodes, read over CDP (for discovery)."""
         page = self._live_page

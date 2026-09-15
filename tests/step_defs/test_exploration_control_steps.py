@@ -128,3 +128,9 @@ def budget_states_rejected(context: dict[str, Any], states: int) -> None:
 def budget_requests_rejected(context: dict[str, Any], requests: int) -> None:
     with pytest.raises(ValueError):
         RunBudget(max_requests=requests)
+
+
+@then(parsers.parse("building a run budget of max_depth {depth:d} is rejected"))
+def budget_depth_rejected(context: dict[str, Any], depth: int) -> None:
+    with pytest.raises(ValueError):
+        RunBudget(max_depth=depth)
