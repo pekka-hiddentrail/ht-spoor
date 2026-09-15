@@ -47,7 +47,7 @@ are authored when their phase begins, not up front.
 | `exploration_browser.feature` | Exploration in a real browser: the `spoor explore` command drives the whole stack against a live site via a headless-Chromium driver, renders a wiki, and persists the graph for serving | §2e / §2f | `spoor/exploration`, `spoor/serving`, CLI | 5 |
 | `exploration_signals.feature` | Exploration per-transition signal capture: a free-signal bundle per state and a before/after diff (a11y, console, storage, network, screenshot) per transition | §2e | `spoor/exploration` | 5 |
 | `exploration_signals_live.feature` | Live per-transition signal capture: the real driver reads console, storage, network, a11y, and a screenshot hash from an actual Chromium page; a reset scopes the console/network buffers to the current visit (6d) | §2e | `spoor/exploration` | 5 |
-| `exploration_wiki.feature` | Exploration wiki generation: render the state-action graph into a browsable static HTML site (index + Mermaid overview, one page per state/transition), with captured values redacted before rendering; state pages labelled by page title and repeated console/network lines collapsed with a count (6c), network requests grouped by kind (6d), and each state page leading with an Actions table of its elements (Label / Type / Screen capture / Destination) before the signals (6e), plus a help/glossary page linked from every page defining the terms used (6f) | §2e | `spoor/exploration` | 5 |
+| `exploration_wiki.feature` | Exploration wiki generation: render the state-action graph into a browsable static HTML site (index + Mermaid overview, one page per state/transition), with captured values redacted before rendering; state pages labelled by page title and repeated console/network lines collapsed with a count (6c), network requests grouped by kind (6d), and each state page leading with an Actions table of its elements (Label / Type / Screen capture / Destination) before the signals (6e), plus a help/glossary page linked from every page defining the terms used (6f), and a per-state full-page screenshot embedded as an image when opted in — pixel-free by default (8a) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation.feature` | Robust actuation, pure verdict: classify a discovered element's click point as ACTUATE / COVERED / NOT LOCATED (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation_live.feature` | Robust actuation, live driver: relocate via the CDP tree and click by a verified coordinate; detect a covered element without mis-clicking (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_settling.feature` | State settling, pure quiescence policy: settle when DOM mutations go quiet for a window, report unsettled at a bounded timeout — under a fake clock (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
@@ -423,6 +423,18 @@ console messages, storage keys (added/removed), network requests, screenshot has
 no captured values, so nothing on it needs redaction, and being identical for every
 target it holds nothing site-specific (§0). The scenarios pin that the page exists,
 defines its terms as glossary entries, and is reachable from every page.
+
+**Slice 8a** begins embedding **screenshots** in the wiki (the "Visual capture" backlog
+item), staged and opt-in. The pure renderer learns to embed a per-state **full-page
+screenshot** as an `<img>` referenced by the relative filename `state-{index}.png`,
+leading the state page as its visual identity ahead of the Actions table, when
+`build_pages` is told (via a `screenshots` set of state ids) that a state has one.
+`screenshots` defaults to none, so a default wiki stays **pixel-free** — because a
+screenshot is pixels, not text, it cannot be secret-redacted the way every other signal
+is (§2h), so pixels are embedded only behind an explicit opt-in. Capturing the image
+bytes and the CLI opt-in flag are a later slice; the scenarios here pin that a marked
+state embeds its image before the Actions table, an unmarked state embeds none, and a
+default wiki embeds no screenshots at all.
 
 `exploration_actuation.feature` + `exploration_actuation_live.feature` (§2e) are
 **sub-slice 7a** — robust actuation. A live diagnostic showed the explorer's skips on

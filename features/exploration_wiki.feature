@@ -24,6 +24,15 @@ Feature: Exploration wiki generation — the browsable map (ROADMAP.md §2e, sli
   the driver, so a state reflects only the walk that reached it; that behaviour is
   covered by the live signal-capture feature, not this pure-renderer one.)
 
+  Slice 8a is the first step of embedding screenshots in the wiki (the "Visual capture"
+  backlog item). The pure renderer learns to embed a per-state full-page screenshot as
+  an <img>, referenced by a relative filename, when it is told that a state has one
+  captured. Capturing the image bytes and the opt-in flag that turns embedding on are a
+  later slice; here, by default no state has a screenshot and the pages stay pixel-free.
+  Because a screenshot is pixels, not text, it cannot be secret-redacted the way every
+  other signal is (§2h) — a token or PII visible on the page survives as an image — so a
+  screenshot is only ever embedded behind an explicit opt-in, never on a default run.
+
   Slice 6f adds a help/glossary page linked from every page's nav — a fixed,
   target-independent glossary that explains, in plain language, every term the other
   pages use (state, transition, accessibility nodes, storage keys added, network
@@ -139,6 +148,26 @@ Feature: Exploration wiki generation — the browsable map (ROADMAP.md §2e, sli
     When I render the wiki for "https://shop.example"
     Then the state page for "home" lists the element "Search" of type "button"
     And the element "Search" on the "home" state page has no destination
+
+  Scenario: A state page embeds its full-page screenshot when one was captured
+    # When the renderer is told a state has a captured screenshot, the state page embeds
+    # it as an image referenced by a relative filename, leading the page as the screen's
+    # visual identity — ahead of the Actions table.
+    Given a captured screenshot for state "home"
+    When I render the wiki for "https://shop.example"
+    Then the state page for "home" embeds its screenshot image
+    And the screenshot on the "home" state page comes before the Actions table
+
+  Scenario: A state with no captured screenshot embeds no image
+    Given a captured screenshot for state "home"
+    When I render the wiki for "https://shop.example"
+    Then the state page for "menu" embeds no screenshot image
+
+  Scenario: By default a wiki embeds no screenshots
+    # A default run is told of no screenshots, so every page stays pixel-free — pixels
+    # reach the shared wiki only behind an explicit opt-in (§2h).
+    When I render the wiki for "https://shop.example"
+    Then no wiki page embeds a screenshot image
 
   Scenario: Network requests on a state page are grouped by kind
     # A flat list of every request is noise. Slice 6d collates them under a small fixed

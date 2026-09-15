@@ -35,9 +35,10 @@ def _two_state_graph() -> ExplorationGraph:
     return graph
 
 
-def test_empty_graph_renders_only_an_index() -> None:
+def test_empty_graph_renders_index_and_help() -> None:
     pages = build_pages(ExplorationGraph(), target="https://example.test")
-    assert set(pages) == {"index.html"}
+    # Even an empty graph gets the index and the fixed help/glossary page (6f).
+    assert set(pages) == {"index.html", "help.html"}
     index = pages["index.html"]
     assert "<strong>0</strong> states discovered" in index
     # A Mermaid header with no nodes/edges is still valid, so the overview holds.
@@ -66,6 +67,7 @@ def test_two_state_graph_links_are_navigable() -> None:
     pages = build_pages(_two_state_graph(), target="https://example.test")
     assert set(pages) == {
         "index.html",
+        "help.html",
         "state-0.html",
         "state-1.html",
         "transition-0.html",
@@ -97,6 +99,7 @@ def test_render_wiki_writes_every_page(tmp_path: Path) -> None:
     assert [p.name for p in written] == sorted(p.name for p in written)
     assert {p.name for p in written} == {
         "index.html",
+        "help.html",
         "state-0.html",
         "state-1.html",
         "transition-0.html",

@@ -84,10 +84,11 @@ def test_wiki_is_reliably_created(base: str, name: str) -> None:
     # A real site always yields at least the entry state, so the wiki is never empty.
     assert len(states) >= 1, "exploration produced no states to render"
 
-    # 1) Exactly one page per state and per transition, plus the index — no more, no
-    #    fewer — so the wiki is a complete, faithful view of the graph.
+    # 1) Exactly one page per state and per transition, plus the index and the fixed
+    #    help/glossary page (6f) — no more, no fewer — so the wiki is a complete,
+    #    faithful view of the graph.
     expected = (
-        {"index.html"}
+        {"index.html", "help.html"}
         | {f"state-{i}.html" for i in range(len(states))}
         | {f"transition-{j}.html" for j in range(len(transitions))}
     )
