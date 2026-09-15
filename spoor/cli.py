@@ -172,6 +172,7 @@ def explore(
     from spoor.exploration.driver import PlaywrightDriver
     from spoor.exploration.explorer import ElementShot
     from spoor.exploration.explorer import explore as explore_target
+    from spoor.exploration.screenshot_store import ImageRef
 
     if screenshots and wiki is None:
         raise typer.BadParameter("--screenshots needs --wiki: there is no wiki to put "
@@ -188,13 +189,16 @@ def explore(
     controller = RunController(budget)
     # The opt-in screenshot sinks: dicts only when asked for, so a default run captures
     # no pixels at all (§2e slice 8). During exploration each image is written straight
-    # to disk under the wiki directory as it is captured (§2e slice 8f), and the sinks
-    # hold only the filename references — so a run never piles image bytes in memory.
-    # The wiki writer then embeds those references: one full-page shot per screen (8b),
-    # one clip per element (8d), all behind this single opt-in. `--screenshots`
-    # requires `--wiki` (validated above), so the output directory is known up front and
-    # is where both the images and the pages that embed them land.
-    shots: dict[str, str] | None = {} if screenshots else None
+    # to disk under the wiki directory as it is captured (§2e slice 8f) — and only when
+    # the picture is new, since a deduplicating store reuses a file already written for
+    # an identical or near-identical screen (§2e slice 8g). The sinks hold only
+    # references, so a run never piles image bytes in memory. The wiki writer then
+    # embeds those references: one full-page shot per screen (8b), one clip per element
+    # (8d) — a clip that is a region of its page embeds as a crop of that shared picture
+    # rather than a file of its own (§2e slice 8g). All behind this single opt-in.
+    # `--screenshots` requires `--wiki` (validated above), so the output directory is
+    # known up front and is where both the images and the pages that embed them land.
+    shots: dict[str, ImageRef] | None = {} if screenshots else None
     element_shots: dict[str, list[ElementShot]] | None = {} if screenshots else None
     screenshot_dir: Path | None = wiki if screenshots else None
     # Ctrl-C throws the kill switch, so the run stops gracefully at the next action
@@ -251,9 +255,18 @@ def explore(
             all_shots = [s for shots_ in (element_shots or {}).values() for s in shots_]
             element_count = sum(1 for s in all_shots if s.clip)
             opened_count = sum(1 for s in all_shots if s.opened)
+            # How many distinct image files back all those references: dedup means many
+            # screens/clips can share one file, and a contained clip is a crop of a
+            # picture already counted, so the file total is typically far below the
+            # reference total (§2e slice 8g).
+            all_refs = [*(shots or {}).values()]
+            all_refs += [s.clip for s in all_shots if s.clip is not None]
+            all_refs += [s.opened for s in all_shots if s.opened is not None]
+            file_count = len({ref.src for ref in all_refs})
             typer.echo(f"  screenshots:       {len(shots or {})} screens embedded")
             typer.echo(f"  element clips:     {element_count} embedded")
             typer.echo(f"  opened contents:   {opened_count} embedded")
+            typer.echo(f"  image files:       {file_count} written after dedup")
 
 
 @app.command()

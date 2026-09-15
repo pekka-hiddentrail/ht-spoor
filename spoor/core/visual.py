@@ -77,6 +77,18 @@ def perceptual_hash(png_bytes: bytes) -> int:
     return value
 
 
+def hamming_distance(a: int, b: int) -> int:
+    """The bit distance between two 64-bit dHashes: how many bits differ (0..64).
+
+    The XOR is masked to 64 bits so a stray high bit can never push the count past
+    the hash width. 0 means the hashes are identical; 64 means they are complements.
+    Deterministic and commutative. Screenshot dedup (§2e slice 8g) thresholds on this
+    directly, rather than on the `[0, 1]` similarity, so the near-duplicate cut-off
+    reads as a plain "differs by at most N bits".
+    """
+    return ((a ^ b) & _HASH_MASK).bit_count()
+
+
 def visual_similarity(a: int, b: int) -> float:
     """Similarity of two 64-bit dHashes in `[0.0, 1.0]`: `1 - hamming/64`.
 
@@ -84,5 +96,4 @@ def visual_similarity(a: int, b: int) -> float:
     XOR is masked to 64 bits so a stray high bit can never push the distance past
     the bit count. Deterministic and commutative.
     """
-    distance = ((a ^ b) & _HASH_MASK).bit_count()
-    return 1.0 - distance / _HASH_BITS
+    return 1.0 - hamming_distance(a, b) / _HASH_BITS

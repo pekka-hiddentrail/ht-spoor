@@ -15,6 +15,7 @@ from spoor.exploration.capture import StateSignals, diff_signals
 from spoor.exploration.discovery import ActionableElement
 from spoor.exploration.explorer import ElementShot
 from spoor.exploration.graph import ExplorationGraph
+from spoor.exploration.screenshot_store import ImageRef
 from spoor.exploration.wiki import build_pages, render_wiki
 
 _ID_A = "a" * 64
@@ -121,7 +122,7 @@ def test_render_wiki_embeds_only_referenced_screenshots(
         graph,
         tmp_path,
         target="https://example.test",
-        screenshots={_ID_A: "screenshots/state-0.png"},
+        screenshots={_ID_A: ImageRef("screenshots/state-0.png")},
     )
     assert not [p for p in written if p.suffix == ".png"]  # render writes no images
     page_a = (tmp_path / "state-0.html").read_text(encoding="utf-8")
@@ -160,7 +161,10 @@ def test_render_wiki_embeds_element_clip_references_by_position(
         tmp_path,
         target="https://example.test",
         element_screenshots={
-            _ID_A: [ElementShot("screenshots/state-0-el-0.png"), ElementShot(None)]
+            _ID_A: [
+                ElementShot(ImageRef("screenshots/state-0-el-0.png")),
+                ElementShot(None),
+            ]
         },
     )
     assert not [p for p in written if p.suffix == ".png"]  # render writes no images
@@ -185,10 +189,10 @@ def test_render_wiki_embeds_opened_references_independently(
         target="https://example.test",
         element_screenshots={
             _ID_A: [
-                ElementShot(clip="screenshots/state-0-el-0.png"),
+                ElementShot(clip=ImageRef("screenshots/state-0-el-0.png")),
                 ElementShot(
-                    clip="screenshots/state-0-el-1.png",
-                    opened="screenshots/state-0-el-1-opened.png",
+                    clip=ImageRef("screenshots/state-0-el-1.png"),
+                    opened=ImageRef("screenshots/state-0-el-1-opened.png"),
                 ),
             ]
         },

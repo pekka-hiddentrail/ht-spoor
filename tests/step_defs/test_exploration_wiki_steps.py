@@ -18,6 +18,7 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from spoor.exploration.capture import StateSignals, diff_signals
 from spoor.exploration.discovery import ActionableElement
 from spoor.exploration.graph import ExplorationGraph
+from spoor.exploration.screenshot_store import ImageRef
 from spoor.exploration.wiki import REDACTED, build_pages
 
 scenarios("exploration_wiki.feature")
@@ -126,7 +127,9 @@ def a_captured_screenshot(context: dict[str, Any], name: str) -> None:
     # is what the renderer embeds. Purely tells the renderer to embed that reference;
     # no bytes are involved here (name == id in these scenarios).
     index = context["graph"].states.index(name)
-    context.setdefault("screenshots", {})[name] = f"screenshots/state-{index}.png"
+    context.setdefault("screenshots", {})[name] = ImageRef(
+        f"screenshots/state-{index}.png"
+    )
 
 
 @given(parsers.parse('a state "{name}" with no page title'))

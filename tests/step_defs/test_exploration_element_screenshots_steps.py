@@ -24,6 +24,7 @@ from spoor.exploration.capture import StateSignals
 from spoor.exploration.control import RunBudget, RunController
 from spoor.exploration.discovery import ActionableElement
 from spoor.exploration.explorer import ElementShot, explore
+from spoor.exploration.screenshot_store import ImageRef
 from spoor.exploration.state import state_id
 from spoor.exploration.wiki import render_wiki
 
@@ -191,8 +192,8 @@ def captured_for(context: dict[str, Any], name: str) -> None:
     # The shot holds a filename reference; the clip was streamed to disk under it as it
     # was captured (§2e slice 8f), so the bytes live on disk, not in memory.
     ref = shots[index].clip
-    assert ref == f"screenshots/state-0-el-{index}.png", f"no clip captured for {name}"
-    assert (context["out_dir"] / ref).read_bytes() == app.clip_of(name)
+    assert ref == ImageRef(f"screenshots/state-0-el-{index}.png"), f"no clip for {name}"
+    assert (context["out_dir"] / ref.src).read_bytes() == app.clip_of(name)
 
 
 @then("no element screenshots were captured")
@@ -211,8 +212,8 @@ def clips_are_references_on_disk(context: dict[str, Any]) -> None:
             if shot.clip is None:
                 continue
             seen_clip = True
-            assert isinstance(shot.clip, str), "clip is not a filename reference"
-            assert (out_dir / shot.clip).is_file(), f"clip {shot.clip} is not on disk"
+            assert isinstance(shot.clip, ImageRef), "clip is not a reference"
+            assert (out_dir / shot.clip.src).is_file(), f"clip {shot.clip} not on disk"
     assert seen_clip, "no element clip reference was captured"
 
 

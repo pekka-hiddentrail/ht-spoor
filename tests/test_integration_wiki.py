@@ -34,9 +34,20 @@ from spoor.exploration.control import RunBudget, RunController
 from spoor.exploration.driver import PlaywrightDriver
 from spoor.exploration.explorer import ElementShot, explore
 from spoor.exploration.graph import ExplorationGraph
+from spoor.exploration.screenshot_store import ImageRef
 from spoor.exploration.wiki import render_wiki
 
 pytestmark = pytest.mark.integration
+
+
+def _is_embedded(ref: ImageRef, page: str) -> bool:
+    """Whether `ref` is embedded on `page`, as a whole-file `<img>` or a crop span.
+
+    Dedup (§2e slice 8g) means a clip may be a crop of a bigger picture rather than its
+    own file: the wiki then references the shared `src` inside a CSS `url(...)` crop box
+    rather than an `<img src>`. Either shape counts as embedded.
+    """
+    return f'src="{ref.src}"' in page or f"url('{ref.src}')" in page
 
 _JUICE_SHOP_BASE = "http://127.0.0.1:3000"
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -124,7 +135,7 @@ def test_screenshots_are_captured_and_embedded_when_opted_in() -> None:
     # The output dir is fixed up front and doubles as the screenshot directory the
     # explorer streams into, so its references resolve against the pages rendered here.
     out_dir = _OUTPUT_ROOT / "wiki-juice-shop-shots"
-    shots: dict[str, str] = {}
+    shots: dict[str, ImageRef] = {}
     with PlaywrightDriver(_JUICE_SHOP_BASE) as driver:
         graph = explore(
             driver,
@@ -137,10 +148,12 @@ def test_screenshots_are_captured_and_embedded_when_opted_in() -> None:
     assert shots, "opting in should capture at least the entry state's screenshot"
     # Each sink value is a filename reference; the real PNG bytes were streamed to disk
     # as they were captured, so the image lives under the reference, not in the sink.
+    # A full-page reference is always a whole file (dedup may point two states at one
+    # shared file, but never a crop — a crop is an element-clip concern, §2e slice 8g).
     for sid, ref in shots.items():
-        image = out_dir / ref
-        assert image.is_file(), f"{sid[:12]} screenshot {ref} is not on disk"
-        assert image.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", f"{ref} is not a PNG"
+        image = out_dir / ref.src
+        assert image.is_file(), f"{sid[:12]} screenshot {ref.src} is not on disk"
+        assert image.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", f"{ref.src} not a PNG"
 
     written = render_wiki(graph, out_dir, target=_JUICE_SHOP_BASE, screenshots=shots)
 
@@ -148,9 +161,12 @@ def test_screenshots_are_captured_and_embedded_when_opted_in() -> None:
     for index, sid in enumerate(graph.states):
         if sid in shots:
             page = (out_dir / f"state-{index}.html").read_text(encoding="utf-8")
-            assert (
-                f'src="screenshots/state-{index}.png"' in page
-            ), f"state {index} does not embed"
+            # Each captured state embeds *its own* reference — which dedup (§2e slice
+            # 8g) may point at a file first written for an earlier, identical-looking
+            # state rather than this state's own index, so assert the ref it holds.
+            assert _is_embedded(shots[sid], page), (
+                f"state {index} does not embed its screenshot {shots[sid].src}"
+            )
 
 
 def test_element_screenshots_are_clipped_and_embedded_when_opted_in() -> None:
@@ -180,11 +196,13 @@ def test_element_screenshots_are_clipped_and_embedded_when_opted_in() -> None:
 
     clips = [s.clip for shots in element_shots.values() for s in shots if s.clip]
     assert clips, "opting in should clip at least one actionable element"
-    # Each clip is a filename reference; the real PNG bytes were streamed to disk.
+    # Each clip references a real PNG on disk. Dedup (§2e slice 8g) means the reference
+    # may be a crop of the state's full-page picture rather than an own file — either
+    # way `ref.src` names a real PNG that was streamed to disk.
     for ref in clips:
-        image = out_dir / ref
-        assert image.is_file(), f"element clip {ref} is not on disk"
-        assert image.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", f"{ref} is not a PNG"
+        image = out_dir / ref.src
+        assert image.is_file(), f"element clip {ref.src} is not on disk"
+        assert image.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", f"{ref.src} not a PNG"
 
     written = render_wiki(
         graph, out_dir, target=_JUICE_SHOP_BASE, element_screenshots=element_shots
@@ -196,7 +214,7 @@ def test_element_screenshots_are_clipped_and_embedded_when_opted_in() -> None:
     }
     for ref in clips:
         assert any(
-            f'src="{ref}"' in page for page in pages.values()
+            _is_embedded(ref, page) for page in pages.values()
         ), f"{ref} is not embedded on any state page"
 
 
@@ -230,11 +248,12 @@ def test_opened_contents_are_captured_and_embedded_when_opted_in() -> None:
     opened = [s.opened for shots in element_shots.values() for s in shots if s.opened]
     if not opened:
         pytest.skip("no openable disclosure element reached within the budget")
-    # Each opened value is a filename reference; the PNG bytes were streamed to disk.
+    # Each opened value references a real PNG on disk; dedup may make it a crop of a
+    # bigger picture (§2e slice 8g), so `ref.src` names the file that was streamed.
     for ref in opened:
-        image = out_dir / ref
-        assert image.is_file(), f"opened capture {ref} is not on disk"
-        assert image.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", f"{ref} is not a PNG"
+        image = out_dir / ref.src
+        assert image.is_file(), f"opened capture {ref.src} is not on disk"
+        assert image.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", f"{ref.src} not a PNG"
 
     written = render_wiki(
         graph, out_dir, target=_JUICE_SHOP_BASE, element_screenshots=element_shots
@@ -246,7 +265,7 @@ def test_opened_contents_are_captured_and_embedded_when_opted_in() -> None:
     }
     for ref in opened:
         assert any(
-            f'src="{ref}"' in page for page in pages.values()
+            _is_embedded(ref, page) for page in pages.values()
         ), f"{ref} is not embedded on any state page"
 
 
