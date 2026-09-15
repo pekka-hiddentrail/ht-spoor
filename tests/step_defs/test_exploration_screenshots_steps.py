@@ -1,11 +1,12 @@
 """Step definitions for features/exploration_screenshots.feature (§2e, slice 8b).
 
 Exercised in-process: a tiny deterministic fake app, a fake driver that can hand back a
-distinct fake "screenshot" per screen, the real explorer filling an opt-in sink, and the
-real `render_wiki` writing the images and embedding them. No browser and no real PNGs —
-the bytes only need to be distinct and to round-trip to disk, which is all the capture
-and write contract requires; the live full-page capture is proven by the integration
-test. State names double as the friendly key; the graph is keyed by the abstract id.
+distinct fake "screenshot" per screen, the real explorer streaming each image to disk as
+it is captured and keeping only a filename reference (§2e slice 8f), and the real
+`render_wiki` embedding those references. No browser and no real PNGs — the bytes only
+need to be distinct and to round-trip to disk, which is all the contract
+requires; the live capture is proven by the integration test. State names double
+as the friendly key; the graph is keyed by the abstract id.
 """
 
 from __future__ import annotations
@@ -100,9 +101,14 @@ def context() -> dict[str, Any]:
     return {"app": _FakeApp()}
 
 
-def _explore(context: dict[str, Any], *, capture: bool) -> None:
+def _explore(context: dict[str, Any], tmp_path: Path, *, capture: bool) -> None:
     app: _FakeApp = context["app"]
-    sink: dict[str, bytes] | None = {} if capture else None
+    # The wiki directory is fixed up front and doubles as the screenshot directory: the
+    # explorer streams each image straight into it as it is captured (§2e slice 8f), and
+    # the wiki is later rendered into the same dir so the references resolve.
+    out = tmp_path / "wiki"
+    context["out_dir"] = out
+    sink: dict[str, str] | None = {} if capture else None
     context["shots"] = sink
     context["graph"] = explore(
         _FakeDriver(app),
@@ -110,6 +116,7 @@ def _explore(context: dict[str, Any], *, capture: bool) -> None:
         controller=RunController(RunBudget()),
         declared_sandbox=True,
         screenshots=sink,
+        screenshot_dir=out,
     )
 
 
@@ -128,35 +135,33 @@ def app_two_screens(context: dict[str, Any], home: str, menu: str, label: str) -
 
 
 @given("I explored it with screenshot capture on")
-def explored_on(context: dict[str, Any]) -> None:
-    _explore(context, capture=True)
+def explored_on(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=True)
 
 
 @given("I explored it with screenshot capture off")
-def explored_off(context: dict[str, Any]) -> None:
-    _explore(context, capture=False)
+def explored_off(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=False)
 
 
 # --- When ----------------------------------------------------------------
 
 
 @when("I explore it with screenshot capture on")
-def explore_on(context: dict[str, Any]) -> None:
-    _explore(context, capture=True)
+def explore_on(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=True)
 
 
 @when("I explore it with screenshot capture off")
-def explore_off(context: dict[str, Any]) -> None:
-    _explore(context, capture=False)
+def explore_off(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=False)
 
 
 @when("I render the wiki to disk")
-def render_to_disk(context: dict[str, Any], tmp_path: Path) -> None:
-    out = tmp_path / "wiki"
-    context["out_dir"] = out
+def render_to_disk(context: dict[str, Any]) -> None:
     render_wiki(
         context["graph"],
-        out,
+        context["out_dir"],
         target="http://localhost:8000/",
         screenshots=context.get("shots"),
     )
@@ -184,12 +189,33 @@ def captured_for(context: dict[str, Any], name: str) -> None:
     assert shots is not None
     sid = app.state_id_of(name)
     assert sid in shots, f"no screenshot captured for {name}"
-    assert shots[sid] == app.screenshot_of(name)
+    # The sink holds a filename reference; the image was streamed to disk under it as
+    # it was captured (§2e slice 8f) — the bytes live on disk, not in memory.
+    index = context["graph"].states.index(sid)
+    ref = shots[sid]
+    assert ref == f"screenshots/state-{index}.png"
+    assert (context["out_dir"] / ref).read_bytes() == app.screenshot_of(name)
 
 
 @then("no screenshots were captured")
 def none_captured(context: dict[str, Any]) -> None:
     assert context["shots"] is None
+
+
+@then("the screenshot sink holds a file reference for each screen, not image bytes")
+def sink_holds_references(context: dict[str, Any]) -> None:
+    shots = context["shots"]
+    assert shots, "expected at least one captured screenshot reference"
+    for value in shots.values():
+        assert isinstance(value, str), f"sink holds {type(value)!r}, not a reference"
+        assert value.endswith(".png"), f"reference {value!r} is not an image filename"
+
+
+@then("each referenced screenshot file already exists on disk")
+def referenced_files_exist(context: dict[str, Any]) -> None:
+    out_dir: Path = context["out_dir"]
+    for value in context["shots"].values():
+        assert (out_dir / value).is_file(), f"streamed image {value} is not on disk"
 
 
 # --- Then: written wiki --------------------------------------------------

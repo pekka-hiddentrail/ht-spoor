@@ -2,11 +2,12 @@
 
 Exercised in-process, like the full-page screenshot steps: a tiny deterministic fake
 screen exposing two actionable elements, a fake driver that hands back a distinct fake
-"clip" per element, the real explorer filling an opt-in per-element sink, and the real
-`render_wiki` writing the clips and embedding them in each element's Actions row. No
-browser and no real PNGs — the bytes only need to be distinct and to round-trip to disk,
-which is all the capture-and-write contract requires; the live element clip is proven by
-the integration test. Element names double as the friendly key.
+"clip" per element, the real explorer streaming each clip to disk as it is captured and
+keeping only a filename reference (§2e slice 8f), and the real `render_wiki` embedding
+those references in each element's Actions row. No browser and no real PNGs — the bytes
+only need to be distinct and to round-trip to disk, which is all the capture-and-write
+contract requires; the live clip is proven by the integration test. Element names
+double as the friendly key.
 """
 
 from __future__ import annotations
@@ -99,8 +100,12 @@ def context() -> dict[str, Any]:
     return {"app": _FakeApp()}
 
 
-def _explore(context: dict[str, Any], *, capture: bool) -> None:
+def _explore(context: dict[str, Any], tmp_path: Path, *, capture: bool) -> None:
     app: _FakeApp = context["app"]
+    # The wiki directory is fixed up front and doubles as the screenshot directory: the
+    # explorer streams each clip straight into it as it is captured (§2e slice 8f).
+    out = tmp_path / "wiki"
+    context["out_dir"] = out
     sink: dict[str, list[ElementShot]] | None = {} if capture else None
     context["element_shots"] = sink
     context["graph"] = explore(
@@ -109,6 +114,7 @@ def _explore(context: dict[str, Any], *, capture: bool) -> None:
         controller=RunController(RunBudget()),
         declared_sandbox=True,
         element_screenshots=sink,
+        screenshot_dir=out,
     )
 
 
@@ -127,35 +133,33 @@ def screen_with_elements(context: dict[str, Any], dropdown: str, button: str) ->
 
 
 @given("I explored it with element-screenshot capture on")
-def explored_on(context: dict[str, Any]) -> None:
-    _explore(context, capture=True)
+def explored_on(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=True)
 
 
 @given("I explored it with element-screenshot capture off")
-def explored_off(context: dict[str, Any]) -> None:
-    _explore(context, capture=False)
+def explored_off(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=False)
 
 
 # --- When ----------------------------------------------------------------
 
 
 @when("I explore it with element-screenshot capture on")
-def explore_on(context: dict[str, Any]) -> None:
-    _explore(context, capture=True)
+def explore_on(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=True)
 
 
 @when("I explore it with element-screenshot capture off")
-def explore_off(context: dict[str, Any]) -> None:
-    _explore(context, capture=False)
+def explore_off(context: dict[str, Any], tmp_path: Path) -> None:
+    _explore(context, tmp_path, capture=False)
 
 
 @when("I render the wiki to disk")
-def render_to_disk(context: dict[str, Any], tmp_path: Path) -> None:
-    out = tmp_path / "wiki"
-    context["out_dir"] = out
+def render_to_disk(context: dict[str, Any]) -> None:
     render_wiki(
         context["graph"],
-        out,
+        context["out_dir"],
         target="http://localhost:8000/",
         element_screenshots=context.get("element_shots"),
     )
@@ -184,12 +188,32 @@ def captured_for(context: dict[str, Any], name: str) -> None:
     assert sink is not None
     shots = sink[app.state_id_of("home")]
     index = _element_index(context, name)
-    assert shots[index].clip == app.clip_of(name), f"no clip captured for {name}"
+    # The shot holds a filename reference; the clip was streamed to disk under it as it
+    # was captured (§2e slice 8f), so the bytes live on disk, not in memory.
+    ref = shots[index].clip
+    assert ref == f"screenshots/state-0-el-{index}.png", f"no clip captured for {name}"
+    assert (context["out_dir"] / ref).read_bytes() == app.clip_of(name)
 
 
 @then("no element screenshots were captured")
 def none_captured(context: dict[str, Any]) -> None:
     assert context["element_shots"] is None
+
+
+@then("each captured element clip is a file reference on disk, not image bytes")
+def clips_are_references_on_disk(context: dict[str, Any]) -> None:
+    sink = context["element_shots"]
+    assert sink, "expected at least one captured element clip"
+    out_dir: Path = context["out_dir"]
+    seen_clip = False
+    for shots in sink.values():
+        for shot in shots:
+            if shot.clip is None:
+                continue
+            seen_clip = True
+            assert isinstance(shot.clip, str), "clip is not a filename reference"
+            assert (out_dir / shot.clip).is_file(), f"clip {shot.clip} is not on disk"
+    assert seen_clip, "no element clip reference was captured"
 
 
 # --- Then: written wiki --------------------------------------------------

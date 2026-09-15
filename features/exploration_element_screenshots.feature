@@ -19,6 +19,13 @@ Feature: Opt-in per-element screenshots in the wiki (ROADMAP.md §2e, slice 8d)
     Then an element screenshot was captured for "Currency"
     And an element screenshot was captured for "Next"
 
+  Scenario: Each element clip is streamed to disk as it is captured, kept only by reference
+    # The memory contract (slice 8f): each clip is written to disk the moment it is taken
+    # and the shot holds only its file reference, so a run over many elements never piles
+    # image bytes up in RAM.
+    When I explore it with element-screenshot capture on
+    Then each captured element clip is a file reference on disk, not image bytes
+
   Scenario: Exploring with element capture off clips none
     When I explore it with element-screenshot capture off
     Then no element screenshots were captured

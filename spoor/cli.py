@@ -187,11 +187,16 @@ def explore(
         raise typer.BadParameter(str(exc)) from exc
     controller = RunController(budget)
     # The opt-in screenshot sinks: dicts only when asked for, so a default run captures
-    # no pixels at all (§2e slice 8). Filled during exploration and handed to the wiki
-    # writer, which places the images and embeds them — one full-page shot per screen
-    # (8b) and one clip per actionable element (8d), both behind this single opt-in.
-    shots: dict[str, bytes] | None = {} if screenshots else None
+    # no pixels at all (§2e slice 8). During exploration each image is written straight
+    # to disk under the wiki directory as it is captured (§2e slice 8f), and the sinks
+    # hold only the filename references — so a run never piles image bytes in memory.
+    # The wiki writer then embeds those references: one full-page shot per screen (8b),
+    # one clip per element (8d), all behind this single opt-in. `--screenshots`
+    # requires `--wiki` (validated above), so the output directory is known up front and
+    # is where both the images and the pages that embed them land.
+    shots: dict[str, str] | None = {} if screenshots else None
     element_shots: dict[str, list[ElementShot]] | None = {} if screenshots else None
+    screenshot_dir: Path | None = wiki if screenshots else None
     # Ctrl-C throws the kill switch, so the run stops gracefully at the next action
     # rather than aborting mid-click. Restore the previous handler afterwards so the
     # run doesn't leave a global side effect behind.
@@ -206,6 +211,7 @@ def explore(
                 declared_sandbox=sandbox,
                 screenshots=shots,
                 element_screenshots=element_shots,
+                screenshot_dir=screenshot_dir,
             )
     finally:
         signal.signal(signal.SIGINT, previous_handler)

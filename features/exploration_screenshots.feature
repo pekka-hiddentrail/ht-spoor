@@ -20,6 +20,14 @@ Feature: Opt-in full-page screenshots in the wiki (ROADMAP.md §2e, slice 8b)
     Then a screenshot was captured for "home"
     And a screenshot was captured for "menu"
 
+  Scenario: Each screenshot is streamed to disk as it is captured, kept only by reference
+    # The memory contract (slice 8f): a screenshot is written to disk the moment it is
+    # taken and only its file reference is held in memory, so a long, deep run's images
+    # never pile up in RAM. The image bytes live on disk; the sink holds paths, not pixels.
+    When I explore it with screenshot capture on
+    Then the screenshot sink holds a file reference for each screen, not image bytes
+    And each referenced screenshot file already exists on disk
+
   Scenario: Exploring with screenshots off captures none
     When I explore it with screenshot capture off
     Then no screenshots were captured

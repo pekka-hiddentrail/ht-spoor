@@ -53,6 +53,7 @@ from collections import deque
 from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 from urllib.parse import urlparse
 
@@ -187,22 +188,80 @@ class _ScreenshotCapable(Protocol):
 
 @dataclass(frozen=True)
 class ElementShot:
-    """The captured screenshot(s) of one actionable element (§2e slices 8d/8e).
+    """The captured screenshot(s) of one actionable element (§2e slices 8d/8e/8f).
 
-    `clip` is a PNG cropped to the element as it sits on the screen — the "Next"
-    button, the closed "Currency" dropdown — or None when the driver could not clip it
-    (a zero-size or off-page element). `opened` is a PNG of the content the element
-    *reveals* when activated — the option list an opened dropdown shows (§2e slice 8e) —
-    or None when the element reveals nothing, the driver can't capture it, or opening it
-    was not attempted (a non-disclosure role, or an action the safety gate refuses).
-    One `ElementShot` is stored per discovered element, in the same order the state's
-    actions are discovered, so the wiki can line each up with its Actions-table row.
-    Like every screenshot both exist only behind the opt-in element sink; a default run
-    produces none (§2h).
+    Both fields are **relative filename references**, not image bytes (§2e slice 8f):
+    the explorer writes each capture to disk the moment it is taken and keeps only the
+    path, so a run's images never accumulate in memory. `clip` is the reference to a
+    PNG cropped to the element as it sits on the screen — the "Next" button, the closed
+    "Currency" dropdown — or None when the driver could not clip it (a zero-size or
+    off-page element). `opened` references a PNG of the content the element *reveals*
+    when activated — the option list an opened dropdown shows (§2e slice 8e) — or None
+    when the element reveals nothing, the driver can't capture it, or opening it was not
+    attempted (a non-disclosure role, or an action the safety gate refuses). One
+    `ElementShot` is
+    stored per discovered element, in the same order the state's actions are discovered,
+    so the wiki can line each up with its Actions-table row. Like every screenshot both
+    exist only behind the opt-in element sink; a default run produces none (§2h).
     """
 
-    clip: bytes | None = None
-    opened: bytes | None = None
+    clip: str | None = None
+    opened: str | None = None
+
+
+# Screenshot images are grouped under their own subfolder rather than sitting flat
+# beside the wiki's HTML pages, so the wiki directory stays readable as the page set
+# grows (§2e slice 8c). The explorer writes each capture under this subfolder of the
+# screenshot directory as it is taken (§2e slice 8f) and stores the returned
+# subfolder-relative name; the wiki renderer embeds that same name as the `<img src>`
+# (a page sits at the wiki root, so the relative path resolves).
+_SCREENSHOT_SUBDIR = "screenshots"
+
+
+def _screenshot_filename(index: int) -> str:
+    """The subfolder-relative path a state's full-page screenshot is written under (8b).
+
+    Parallels the `state-{index}.html` page name so the capture that persists the image
+    and the renderer that references it agree on one path.
+    """
+    return f"{_SCREENSHOT_SUBDIR}/state-{index}.png"
+
+
+def _element_screenshot_filename(state_index: int, element_index: int) -> str:
+    """The subfolder-relative path one element's clip is written under (§2e slice 8d).
+
+    Keyed by both the state and the element's discovery position, so every clip on a
+    state has a distinct, stable name the capture and the renderer agree on.
+    """
+    return f"{_SCREENSHOT_SUBDIR}/state-{state_index}-el-{element_index}.png"
+
+
+def _element_opened_filename(state_index: int, element_index: int) -> str:
+    """The subfolder-relative path one element's *opened* capture is written under (8e).
+
+    The counterpart to `_element_screenshot_filename` for the content a disclosure
+    element reveals when opened: same subfolder and state/element keying, with an
+    `-opened` suffix so a control's closed clip and its opened image never collide.
+    """
+    return f"{_SCREENSHOT_SUBDIR}/state-{state_index}-el-{element_index}-opened.png"
+
+
+def _stream_capture(data: bytes | None, screenshot_dir: Path, name: str) -> str | None:
+    """Write one capture's bytes to `screenshot_dir/name` as it is taken, or skip (8f).
+
+    The heart of streaming visual capture (§2e slice 8f): rather than buffer every image
+    in memory until the wiki is rendered, each PNG is written to disk the instant it is
+    captured and only the subfolder-relative `name` is kept (the reference the sink and
+    the wiki embed). `None` bytes — a capture the driver could not take — writes nothing
+    and returns None, so the sink stays honest about there being no image. Creates the
+    `screenshots/` subfolder on first write.
+    """
+    if data is None:
+        return None
+    path = screenshot_dir / name
+    path.parent.mkdir(parents=True, exist_ok=True)  # the screenshots/ subfolder
+    path.write_bytes(data)
+    return name
 
 
 # Roles whose element reveals further content when activated — a dropdown's option
@@ -373,8 +432,9 @@ def explore(
     target: str,
     controller: RunController,
     declared_sandbox: bool = False,
-    screenshots: MutableMapping[str, bytes] | None = None,
+    screenshots: MutableMapping[str, str] | None = None,
     element_screenshots: MutableMapping[str, list[ElementShot]] | None = None,
+    screenshot_dir: Path | None = None,
 ) -> ExplorationGraph:
     """Explore `target` through `driver`, returning the state-action graph (§2e).
 
@@ -384,22 +444,31 @@ def explore(
     and their state is never reached (§2e non-negotiable).
 
     `screenshots` is an opt-in sink for full-page screenshots (§2e slice 8b): when a
-    mapping is passed and the driver can take one, each newly discovered state's image
-    is stored under its state id. Left None (the default), no screenshot is taken, so
-    a default run captures no pixels — embedding them anywhere shared is always an
-    explicit opt-in, because a picture cannot be secret-redacted the way text is (§2h).
+    mapping is passed and the driver can take one, each discovered state's image is
+    **written to disk the moment it is captured** and only its subfolder-relative
+    filename is stored under the state id (§2e slice 8f) — so a run holds references,
+    never a pile of image bytes in memory. Left None (the default), no screenshot
+    is taken, so a default run captures no pixels — embedding them anywhere shared is
+    an explicit opt-in, because a picture cannot be secret-redacted like text (§2h).
 
     `element_screenshots` is the per-element counterpart (§2e slices 8d/8e): when a
     mapping is passed and the driver can clip an element, each newly discovered state
     stores an `ElementShot` per actionable element, in discovery order, so the wiki's
-    Actions table can show each control. When the driver can also *open* a disclosure
-    element (a dropdown or list) and the safety gate permits firing it, the
-    shot's `opened` image captures what that element reveals — but only after every
-    non-mutating clip for the state is taken, and only for gate-permitted disclosure
-    roles, so opening never fires a destructive action on a non-sandbox target (§2e) and
-    never contaminates the clean-page state id and signals, which are captured first. It
-    carries the same opt-in, off-by-default posture and the same §2h reason as the
-    full-page sink.
+    Actions table can show each control. Each clip is likewise written to disk as it is
+    taken and the `ElementShot` holds only the filename reference (§2e slice 8f). When
+    the driver can also *open* a disclosure element (a dropdown or list) and the safety
+    gate permits firing it, the shot's `opened` reference points to a written capture of
+    what that element reveals — but only after every non-mutating clip for the state is
+    taken, and only for gate-permitted disclosure roles, so opening never fires a
+    destructive action on a non-sandbox target (§2e) and never contaminates the
+    clean-page state id and signals, which are captured first. It carries the same
+    opt-in, off-by-default posture and the same §2h reason as the full-page sink.
+
+    `screenshot_dir` is the directory each capture is written under (in a `screenshots/`
+    subfolder); it is **required whenever either screenshot sink is provided** and must
+    be the same directory the wiki is later rendered into, so the subfolder-relative
+    references resolve against the pages. It is unused (and may stay None)
+    when no sink is passed.
 
     The walk is **breadth-first** (§2e slice 9): a FIFO frontier expands the start
     state, then every state one action away, then the next layer, and so on — so a
@@ -413,6 +482,14 @@ def explore(
     verification (7d), and layer recovery (7c) are unchanged — only the order and the
     frontier's dedup key differ from the original depth-first walk.
     """
+    if (
+        screenshots is not None or element_screenshots is not None
+    ) and screenshot_dir is None:
+        raise ValueError(
+            "screenshot_dir is required when a screenshot sink is provided: each "
+            "capture is written to disk as it is taken (§2e slice 8f), so a directory "
+            "to write it under must be given."
+        )
     graph = ExplorationGraph()
 
     def capture(signals: StateSignals | None = None) -> tuple[str, bool]:
@@ -431,23 +508,41 @@ def explore(
             actions,
             signals if signals is not None else driver.capture_signals(),
         )
+        # This new state's position in the graph, which is the render-time enumeration
+        # order, so the filenames written here match the `state-{index}.*` names the
+        # wiki embeds and the `state-{index}.html` page each image sits beside.
+        state_index = len(graph.states) - 1
         # Opt-in only, and once per distinct state (this branch runs for new states):
-        # store the current page's full-page screenshot under its id if a sink was
-        # provided and the driver can produce one (§2e slice 8b).
+        # write the current page's full-page screenshot to disk as it is captured and
+        # store its filename reference under the state id, if a sink was provided and
+        # the driver can produce one (§2e slices 8b/8f). `screenshot_dir` is non-None:
+        # the opening validation requires it whenever a sink is present.
         if screenshots is not None and isinstance(driver, _ScreenshotCapable):
-            png = driver.screenshot()
-            if png is not None:
-                screenshots[sid] = png
-        # The per-element counterpart (§2e slices 8d/8e): a clip of each discovered
-        # element, in discovery order so the wiki can line each up with its Actions row.
-        # A clip that can't be taken is stored as None rather than dropped, so the list
-        # stays aligned with the actions. Same opt-in gate as the full-page sink.
+            assert screenshot_dir is not None
+            ref = _stream_capture(
+                driver.screenshot(), screenshot_dir, _screenshot_filename(state_index)
+            )
+            if ref is not None:
+                screenshots[sid] = ref
+        # The per-element counterpart (§2e slices 8d/8e/8f): a clip of each discovered
+        # element, in discovery order so the wiki can line each up with its Actions row,
+        # each written to disk as it is taken with only its filename kept. A clip that
+        # can't be taken is kept as None not dropped, so the list stays aligned
+        # with the actions. Same opt-in gate as the full-page sink.
         if element_screenshots is not None and isinstance(
             driver, _ElementScreenshotCapable
         ):
-            # Every clip first: element_screenshot is non-mutating, so the page is still
-            # the clean state captured above while these are taken.
-            clips = [driver.element_screenshot(action) for action in actions]
+            assert screenshot_dir is not None
+            # Every clip first: element_screenshot is non-mutating, so the page is
+            # still the clean state captured above while these are taken.
+            clips = [
+                _stream_capture(
+                    driver.element_screenshot(action),
+                    screenshot_dir,
+                    _element_screenshot_filename(state_index, e),
+                )
+                for e, action in enumerate(actions)
+            ]
             # Then, and only then, the opened captures (§2e slice 8e). Opening clicks
             # the element, which mutates the page — safe here because it runs *after*
             # the state id, signals and every clip are recorded, and the next driver
@@ -456,8 +551,8 @@ def explore(
             # non-sandbox target (§2e non-negotiable); every other element keeps
             # opened=None. Restore is the driver's job and best-effort.
             opener = driver if isinstance(driver, _OpenedScreenshotCapable) else None
-            opened: list[bytes | None] = []
-            for action in actions:
+            opened: list[str | None] = []
+            for e, action in enumerate(actions):
                 if (
                     opener is not None
                     and action.role in _DISCLOSURE_ROLES
@@ -465,7 +560,13 @@ def explore(
                         target, action.name, action.role, declared_sandbox
                     ).allowed
                 ):
-                    opened.append(opener.opened_screenshot(action))
+                    opened.append(
+                        _stream_capture(
+                            opener.opened_screenshot(action),
+                            screenshot_dir,
+                            _element_opened_filename(state_index, e),
+                        )
+                    )
                 else:
                     opened.append(None)
             element_screenshots[sid] = [

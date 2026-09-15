@@ -444,11 +444,12 @@ default wiki embeds no screenshots at all.
 
 `exploration_screenshots.feature` (§2e) is **slice 8b** — the capture-and-write half.
 `PlaywrightDriver.screenshot()` returns a full-page PNG (`page.screenshot(full_page=True)`,
-or `None` if it can't be captured); `explore(..., screenshots=<sink>)` stores one image
-per discovered state into a caller-provided mapping, and `render_wiki(..., screenshots=
-<state-id→bytes>)` writes each `screenshots/state-{index}.png` (grouped in its own
-subfolder, not flat beside the pages — slice 8c) and hands the captured ids to
-`build_pages` to embed them. Capture is opt-in by the *presence* of the sink,
+or `None` if it can't be captured); `explore(..., screenshots=<sink>)` records one image
+per discovered state, and `render_wiki(..., screenshots=…)` places each
+`screenshots/state-{index}.png` (grouped in its own subfolder, not flat beside the
+pages — slice 8c) and hands the captured ids to `build_pages` to embed them. (As of
+slice 8f, below, the image is streamed to disk as it is captured and the sink holds only
+the filename reference, not the bytes; `render_wiki` writes only the HTML.) Capture is opt-in by the *presence* of the sink,
 gated behind a separate `@runtime_checkable` `_ScreenshotCapable` protocol so the core
 `BrowserDriver` contract and every existing fake driver stay untouched; a default run
 passes no sink and captures nothing. The `spoor explore --screenshots` flag turns both
@@ -507,6 +508,24 @@ and Escape-restoring, asserting the capture is a real PNG that differs from the 
 page — and an integration test opens a real disclosure element against the bench when one
 is reached (skipping honestly if the small budget reaches none). Pixel-free by default
 behind the same `--screenshots` opt-in, for the same §2h reason.
+
+**Slice 8f** is the memory fix that made comprehensive screenshotted crawls possible:
+where 8b/8d/8e buffered every captured image's *bytes* in the sink until `render_wiki`
+wrote them all at the end (so a deep `--screenshots` run piled the whole run's pixels
+into RAM and OOM-killed a comprehensive crawl), 8f **streams each capture to disk the
+instant it is taken** and keeps only its subfolder-relative filename reference. `explore`
+gained a required `screenshot_dir` (set to the `--wiki` directory, so images and the
+pages that embed them land together); the sinks changed shape — `screenshots` maps a
+state id to a filename and `ElementShot.clip`/`.opened` are filename references — and
+`render_wiki` **no longer writes any image bytes**, only the HTML that embeds the
+references the explorer already streamed. The screenshot-naming helpers moved from
+`wiki.py` to `explorer.py` (breaking a circular import, since only the capture path now
+computes a filename). The three screenshot features each gained a scenario pinning that a
+capture is a file reference on disk — not bytes in the sink — the moment it is taken; the
+pure-renderer unit tests became reference-embedding tests (render writes no `.png`); and
+the live integration tests pass `screenshot_dir` and assert the real PNG bytes round-trip
+on disk under the reference. The §2h opt-in posture and 8e's ordering invariant are
+unchanged. Generic to every target (§0).
 
 `exploration_actuation.feature` + `exploration_actuation_live.feature` (§2e) are
 **sub-slice 7a** — robust actuation. A live diagnostic showed the explorer's skips on
