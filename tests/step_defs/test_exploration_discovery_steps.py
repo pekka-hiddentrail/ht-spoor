@@ -37,6 +37,9 @@ def _ax_node(fields: dict[str, str]) -> dict[str, object]:
     backend = fields.get("backend_node_id")
     if backend:
         node["backendDOMNodeId"] = int(backend)
+    destination = fields.get("destination")
+    if destination:
+        node["destination"] = destination
     return node
 
 
@@ -85,6 +88,16 @@ def first_element_role_name(context: dict[str, Any], role: str, name: str) -> No
 @then(parsers.parse("the first discovered element keeps backend node id {node_id:d}"))
 def first_element_backend_id(context: dict[str, Any], node_id: int) -> None:
     assert context["discovered"][0].backend_node_id == node_id
+
+
+@then(parsers.parse('the first discovered element has destination "{dest}"'))
+def first_element_destination(context: dict[str, Any], dest: str) -> None:
+    assert context["discovered"][0].destination == dest
+
+
+@then("the second discovered element has no destination")
+def second_element_no_destination(context: dict[str, Any]) -> None:
+    assert context["discovered"][1].destination is None
 
 
 @then("no actionable elements are discovered")

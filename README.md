@@ -136,7 +136,15 @@ unsettled and continues on the last snapshot instead of hanging. It recognizes a
 screen it has already seen, so it maps the site instead of looping forever, and
 prints a summary of how many states and transitions it found. Press **Ctrl-C** to
 stop early; it finishes the current step cleanly rather than aborting mid-click.
-Use `--max-states`, `--max-requests`, and `--max-seconds` to cap the run. If an
+Spoor works outward layer by layer — it maps the start page, then everything one
+click away, then the next layer, and so on — so a run that stops early still covers
+the shallow, high-value pages (a shop's top categories, its cart) before descending
+into deep product or variant pages. Within each layer it tries links that point to
+top-level pages before ones that point deep into the site, so the highest-value
+pages come first even when the run is capped tightly. Use `--max-states`,
+`--max-requests`, and
+`--max-seconds` to cap the run, and `--max-depth` to map only the first few layers
+(`--max-depth 1` maps the start page and everything one click from it). If an
 element it found can't actually be clicked (it disappeared, is hidden, or is
 covered by the time Spoor gets to it), that one action is recorded as skipped and
 the run keeps going — a single dead button never aborts the map.

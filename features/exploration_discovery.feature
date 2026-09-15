@@ -50,6 +50,17 @@ Feature: Exploration discovers the actionable elements on a page
     When I discover the actionable elements
     Then the first discovered element has role "button" and name ""
 
+  Scenario: A link's destination hint is read from its enriched node
+    # When the driver enriches a node with a destination (a link's href path, §2e
+    # slice 9b), discovery carries it as a hint; an element with none carries None.
+    Given an accessibility tree:
+      | role   | name       | ignored | destination |
+      | link   | Art        | false   | /9-art      |
+      | button | Add to cart| false   |             |
+    When I discover the actionable elements
+    Then the first discovered element has destination "/9-art"
+    And the second discovered element has no destination
+
   Scenario: A page with no interactive roles yields no actions
     Given an accessibility tree:
       | role      | name    | ignored |
