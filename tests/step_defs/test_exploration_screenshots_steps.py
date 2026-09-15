@@ -23,6 +23,7 @@ from spoor.exploration.capture import StateSignals
 from spoor.exploration.control import RunBudget, RunController
 from spoor.exploration.discovery import ActionableElement
 from spoor.exploration.explorer import explore
+from spoor.exploration.screenshot_store import ImageRef
 from spoor.exploration.state import state_id
 from spoor.exploration.wiki import render_wiki
 
@@ -108,7 +109,7 @@ def _explore(context: dict[str, Any], tmp_path: Path, *, capture: bool) -> None:
     # the wiki is later rendered into the same dir so the references resolve.
     out = tmp_path / "wiki"
     context["out_dir"] = out
-    sink: dict[str, str] | None = {} if capture else None
+    sink: dict[str, ImageRef] | None = {} if capture else None
     context["shots"] = sink
     context["graph"] = explore(
         _FakeDriver(app),
@@ -193,8 +194,8 @@ def captured_for(context: dict[str, Any], name: str) -> None:
     # it was captured (§2e slice 8f) — the bytes live on disk, not in memory.
     index = context["graph"].states.index(sid)
     ref = shots[sid]
-    assert ref == f"screenshots/state-{index}.png"
-    assert (context["out_dir"] / ref).read_bytes() == app.screenshot_of(name)
+    assert ref == ImageRef(f"screenshots/state-{index}.png")
+    assert (context["out_dir"] / ref.src).read_bytes() == app.screenshot_of(name)
 
 
 @then("no screenshots were captured")
@@ -207,15 +208,15 @@ def sink_holds_references(context: dict[str, Any]) -> None:
     shots = context["shots"]
     assert shots, "expected at least one captured screenshot reference"
     for value in shots.values():
-        assert isinstance(value, str), f"sink holds {type(value)!r}, not a reference"
-        assert value.endswith(".png"), f"reference {value!r} is not an image filename"
+        assert isinstance(value, ImageRef), f"sink holds {type(value)!r}, not a ref"
+        assert value.src.endswith(".png"), f"ref {value!r} is not an image filename"
 
 
 @then("each referenced screenshot file already exists on disk")
 def referenced_files_exist(context: dict[str, Any]) -> None:
     out_dir: Path = context["out_dir"]
     for value in context["shots"].values():
-        assert (out_dir / value).is_file(), f"streamed image {value} is not on disk"
+        assert (out_dir / value.src).is_file(), f"streamed image {value} is not on disk"
 
 
 # --- Then: written wiki --------------------------------------------------

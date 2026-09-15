@@ -588,6 +588,44 @@ class PlaywrightDriver:
         except PlaywrightError:
             return None
 
+    def element_box(
+        self, action: ActionableElement
+    ) -> tuple[int, int, int, int] | None:
+        """`(x, y, width, height)` of `action`'s element in the page, or None (8g).
+
+        The integer bounding box of the element in the full-page screenshot's own pixel
+        space, so a clip can be stored as a crop reference into that picture instead of
+        its own file (§2e slice 8g containment). Reuses the exact `find_target` +
+        `DOM.getBoxModel` path `element_screenshot` uses, then rounds the
+        document-relative CSS-pixel border box to integers — at the fixed device-scale-1
+        viewport CSS pixels equal image pixels, so the box maps straight into the
+        full-page shot. Returns None on the same conditions the clip does (element not
+        located, no backend id, no rendered box, or a driver error), so the explorer
+        falls back to pixel search.
+        """
+        page = self._live_page
+        target = find_target(self.ax_nodes(), action.role, action.name)
+        if target is None or target.backend_node_id is None:
+            return None
+        session = page.context.new_cdp_session(page)
+        try:
+            box = session.send(
+                "DOM.getBoxModel", {"backendNodeId": target.backend_node_id}
+            )
+            clip = _border_box_clip(box.get("model"))
+        except PlaywrightError:
+            return None
+        finally:
+            session.detach()
+        if clip is None:
+            return None
+        return (
+            round(clip["x"]),
+            round(clip["y"]),
+            round(clip["width"]),
+            round(clip["height"]),
+        )
+
     def element_screenshot(self, action: ActionableElement) -> bytes | None:
         """A PNG clipped to `action`'s element on the current page, or None (8d).
 

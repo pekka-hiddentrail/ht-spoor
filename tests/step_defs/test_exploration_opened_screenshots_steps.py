@@ -26,6 +26,7 @@ from spoor.exploration.capture import StateSignals
 from spoor.exploration.control import RunBudget, RunController
 from spoor.exploration.discovery import ActionableElement
 from spoor.exploration.explorer import ElementShot, explore
+from spoor.exploration.screenshot_store import ImageRef
 from spoor.exploration.state import state_id
 from spoor.exploration.wiki import render_wiki
 
@@ -233,10 +234,10 @@ def opened_captured_for(context: dict[str, Any], name: str) -> None:
     # The shot holds a filename reference; the image was streamed to disk under it
     # as it was captured (§2e slice 8f), so the bytes live on disk, not in memory.
     ref = shots[index].opened
-    assert ref == f"screenshots/state-0-el-{index}-opened.png", (
+    assert ref == ImageRef(f"screenshots/state-0-el-{index}-opened.png"), (
         f"no opened capture for {name}"
     )
-    assert (context["out_dir"] / ref).read_bytes() == app.opened_of(name)
+    assert (context["out_dir"] / ref.src).read_bytes() == app.opened_of(name)
 
 
 @then(parsers.parse('no opened-contents screenshot was captured for "{name}"'))

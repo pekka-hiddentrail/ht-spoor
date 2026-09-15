@@ -52,6 +52,7 @@ are authored when their phase begins, not up front.
 | `exploration_element_screenshots.feature` | Opt-in per-element screenshot capture and writing: the explorer clips one image per discovered actionable element (the "Next" button, the "Currency" dropdown) into a caller-provided sink, aligned by discovery position, and the wiki writer places each clip under the `screenshots/` subfolder and embeds it in that element's Actions-table row; a default run clips nothing and the wiki stays pixel-free, for the same §2h reason (pixels cannot be secret-redacted) (8d) | §2e | `spoor/exploration` | 5 |
 | `exploration_opened_screenshots.feature` | Opt-in opened-contents screenshot capture: for a gate-permitted disclosure element (a dropdown/list — combobox/listbox), the explorer opens it, screenshots what it reveals, and restores, storing it as the `ElementShot`'s `opened` image; the wiki writer embeds it in a new "Opened contents" Actions-table column beside the closed clip. Opening runs only after the clean-page state/signals/clips are recorded and only for a role the safety gate permits, so it never corrupts the graph or fires a destructive action outside a sandbox; a default run and a clip-only driver produce none (8e) | §2e | `spoor/exploration` | 5 |
 | `exploration_opened_screenshots_live.feature` | Live opened-contents capture: the real PlaywrightDriver opens an ARIA "Currency" combobox on a loopback fixture in a headless Chromium, captures the revealed in-DOM option list, and Escape-restores; the capture is a real PNG that differs from the closed page and the page is left closed — proving the live half of slice 8e the in-process scenarios can't (8e) | §2e | `spoor/exploration` | 5 |
+| `exploration_screenshot_dedup.feature` | Screenshot deduplication and sub-image containment: two states that render the same picture (byte-exact, or near-identical within a tight perceptual distance) share one file rather than each writing a copy — but stay separate states, and a flat/blank screen is matched byte-exactly only; an element clip that is a region of its page's full-page shot is stored as a crop reference into that picture (located by the driver's element geometry first, by pixel search when geometry is missing), and only a clip in no bigger picture gets its own file; a re-run writes the identical file set (8g) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation.feature` | Robust actuation, pure verdict: classify a discovered element's click point as ACTUATE / COVERED / NOT LOCATED (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_actuation_live.feature` | Robust actuation, live driver: relocate via the CDP tree and click by a verified coordinate; detect a covered element without mis-clicking (sub-slice 7a) | §2e | `spoor/exploration` | 5 |
 | `exploration_settling.feature` | State settling, pure quiescence policy: settle when DOM mutations go quiet for a window, report unsettled at a bounded timeout — under a fake clock (sub-slice 7b) | §2e | `spoor/exploration` | 5 |
@@ -526,6 +527,31 @@ pure-renderer unit tests became reference-embedding tests (render writes no `.pn
 the live integration tests pass `screenshot_dir` and assert the real PNG bytes round-trip
 on disk under the reference. The §2h opt-in posture and 8e's ordering invariant are
 unchanged. Generic to every target (§0).
+
+**Slice 8g** removes the redundancy 8f's streaming exposed: a comprehensive crawl wrote
+the *same picture* to disk many times — one run produced 2,409 element clips against
+just 40 full-page shots, most clips a region of the page they came from, and identical
+looking states each wrote their own copy. Two deterministic, generic (§0) mechanisms. A
+`ScreenshotStore` routes every capture through `add(data, name) -> ImageRef`:
+a **byte-exact** duplicate reuses the existing file, and a **near-identical** one (only
+anti-aliasing/cursor noise between two renders of a screen) is matched by the tier-3
+difference hash within a tight 3-bit distance and reuses it too — while a **flat/blank**
+image (which hashes to 0) is matched byte-exactly *only*, so distinct blank screens are
+never merged. This shares an *image* between two pages, never the states themselves (the
+graph identity stays the DOM `state_id`). And **sub-image containment**: a clip that is a
+region of its state's full-page shot is stored as a **crop reference** into that picture
+— no file of its own — located by the driver's reported element geometry first (a new
+opt-in `_ElementBoxCapable.element_box`, verified pixel-for-pixel against the clip's own
+size) and by exact pixel search (`find_subimage`) when geometry is missing; only a clip
+in no bigger picture is written (deduped) as its own file. The `str` references became a
+frozen `ImageRef(src, box)` (box `None` = whole file, else an `(x,y,w,h)` crop), and the
+wiki renders a crop as a CSS-cropped `<span>` rather than an `<img>`. The pure primitives
+live in a new `dedup.py`; the writer in `screenshot_store.py`. The §2h opt-in posture is
+unchanged — dedup only touches pixels a caller opted into, an `ImageRef` holds only a
+filename and integers, and a default run still writes nothing.
+`exploration_screenshot_dedup.feature` pins the seven behaviours with **real-PNG** fakes
+(so decode/hash/search run for real); the live integration assertion now embeds each
+state's *own* reference, since dedup may point a later state at an earlier state's file.
 
 `exploration_actuation.feature` + `exploration_actuation_live.feature` (§2e) are
 **sub-slice 7a** — robust actuation. A live diagnostic showed the explorer's skips on

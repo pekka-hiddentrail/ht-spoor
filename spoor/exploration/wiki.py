@@ -90,6 +90,7 @@ from jinja2 import DictLoader, Environment, select_autoescape
 from spoor.exploration.capture import StateSignals
 from spoor.exploration.explorer import ElementShot
 from spoor.exploration.graph import ExplorationGraph, SkippedAction, Transition
+from spoor.exploration.screenshot_store import ImageRef
 from spoor.security.redaction import REDACTED, redact
 
 # Length of the state-id prefix shown as a human-readable label. State ids are
@@ -282,22 +283,44 @@ def _state_view(
     }
 
 
+def _image_view(ref: ImageRef | None) -> dict[str, object] | None:
+    """A template-ready view of an image reference, or None (§2e slices 8f/8g).
+
+    A whole-file reference (`box` None) renders as an `<img>`; a crop reference — a clip
+    that is a region of a bigger picture (§2e slice 8g) — carries the `crop` rectangle,
+    so the template shows just that region of the shared `src` (a CSS-cropped box)
+    instead of embedding a separate image. `src` is the subfolder-relative filename
+    either way — the same path the image sits at beside the pages. Holds only a filename
+    and integers, so it adds nothing to redact (§2h).
+    """
+    if ref is None:
+        return None
+    if ref.box is None:
+        return {"src": ref.src, "crop": None}
+    x, y, width, height = ref.box
+    return {
+        "src": ref.src,
+        "crop": {"x": x, "y": y, "width": width, "height": height},
+    }
+
+
 def _elements(
     actions: list[dict[str, object]],
     outgoing: list[dict[str, object]],
-    clips: Sequence[str | None],
-    opens: Sequence[str | None],
+    clips: Sequence[ImageRef | None],
+    opens: Sequence[ImageRef | None],
 ) -> list[dict[str, object]]:
     """The state's actionable elements as table rows, each with its destination (6e).
 
     One row per discovered element (`node.actions`), joined to the transition it fired
     (matched by redacted label + role) so the row can link to that transition page,
     labelled by the target state. An element that was never fired has no destination.
-    `clips` is the per-element screen-capture filename, aligned by discovery position
-    with `actions` (§2e slice 8d): a row gets its clip when the caller opted in and one
-    was captured, else None so the column reads "none" honestly. `opens` is the same,
-    aligned the same way, for the element's *opened* capture — the content a dropdown or
-    list reveals (§2e slice 8e) — None for a non-disclosure element or one never opened.
+    `clips` is the per-element screen-capture reference, aligned by discovery position
+    with `actions` (§2e slices 8d/8g): a row gets its clip — a whole-file `<img>` or a
+    crop of the state's full-page picture — when the caller opted in and one was
+    captured, else None so the column reads "none" honestly. `opens` is aligned
+    the same way, for the element's *opened* capture — the content a dropdown or list
+    reveals (§2e slice 8e) — None for a non-disclosure element or one never opened.
     Defensively, a fired transition whose element is somehow absent from the discovered
     list still gets a row (with no clip and no opened image), so no edge the graph
     recorded is dropped from the page.
@@ -331,15 +354,15 @@ def _element_row(
     label: object,
     role: object,
     transition: dict[str, object] | None,
-    clip: str | None,
-    opened: str | None,
+    clip: ImageRef | None,
+    opened: ImageRef | None,
 ) -> dict[str, object]:
     """One Actions row: label, type, clip, opened capture, and destination (6e)."""
     return {
         "label": label,
         "type": role,
-        "screenshot": clip,  # the element clip's relative path, or None (8d)
-        "opened": opened,  # the opened-content capture's relative path, or None (8e)
+        "screenshot": _image_view(clip),  # clip: img or crop of the page (8d/8g)
+        "opened": _image_view(opened),  # opened-content capture: img or crop (8e/8g)
         "dest_label": None if transition is None else transition["to_label"],
         "dest_filename": None if transition is None else transition["filename"],
     }
@@ -397,9 +420,9 @@ def build_pages(
     graph: ExplorationGraph,
     *,
     target: str,
-    screenshots: Mapping[str, str] | None = None,
-    element_screenshots: Mapping[str, Sequence[str | None]] | None = None,
-    element_opened: Mapping[str, Sequence[str | None]] | None = None,
+    screenshots: Mapping[str, ImageRef] | None = None,
+    element_screenshots: Mapping[str, Sequence[ImageRef | None]] | None = None,
+    element_opened: Mapping[str, Sequence[ImageRef | None]] | None = None,
 ) -> dict[str, str]:
     """Render `graph` into a map of wiki filename → HTML (§2e slice 6a).
 
@@ -408,19 +431,22 @@ def build_pages(
     template autoescapes, so nothing raw or executable reaches a page. `render_wiki`
     is the thin writer around it.
 
-    `screenshots` maps a state id to the subfolder-relative filename of its full-page
-    screenshot, to embed as an `<img>` (slice 8a). It defaults to none, so a default
-    wiki is pixel-free; pixels reach this shared surface only behind an explicit opt-in,
-    because a screenshot cannot be secret-redacted the way every text signal is (§2h).
-    The image bytes themselves are written to disk by the explorer as they are captured
-    (§2e slice 8f); here a marked state's view just carries the relative filename.
+    `screenshots` maps a state id to the `ImageRef` for its full-page screenshot,
+    embedded as an `<img>` (slice 8a); dedup means two states with the same screen may
+    share one file (§2e slice 8g). It defaults to none, so a default wiki is pixel-free;
+    pixels reach this shared surface only behind an explicit opt-in, because a
+    screenshot cannot be secret-redacted the way every text signal is (§2h). The image
+    bytes
+    themselves are written to disk by the explorer as they are captured (§2e slice 8f);
+    here a marked state's view just carries the reference.
 
     `element_screenshots` is the per-element counterpart (§2e slice 8d): a state id maps
-    to the clip filenames for its actions, aligned by discovery position, so each
-    Actions-table row can embed its element's image. `element_opened` is the same shape
-    for the *opened* capture of each element (§2e slice 8e) — the content a disclosure
-    control reveals. Same opt-in posture for both — omitted or None means that column
-    stays empty and pixel-free.
+    to the clip `ImageRef`s for its actions, aligned by discovery position, so each
+    Actions-table row can embed its element's image — a whole picture, or a crop of the
+    state's full-page shot when the clip is a region of it (§2e slice 8g).
+    `element_opened` is the same shape for the *opened* capture of each element (§2e,
+    8e) — the content a disclosure control reveals. Same opt-in posture for both —
+    omitted or None means that column stays empty and pixel-free.
     """
     states = graph.states
     shot_files = screenshots or {}
@@ -482,7 +508,7 @@ def render_wiki(
     out_dir: Path,
     *,
     target: str,
-    screenshots: Mapping[str, str] | None = None,
+    screenshots: Mapping[str, ImageRef] | None = None,
     element_screenshots: Mapping[str, Sequence[ElementShot]] | None = None,
 ) -> list[Path]:
     """Write the wiki's HTML pages for `graph` under `out_dir`, returning them sorted.
@@ -493,19 +519,21 @@ def render_wiki(
     as they were captured (§2e slice 8f), so this writer never holds image bytes — it
     embeds the filename references the explorer produced.
 
-    `screenshots` maps a state id to the subfolder-relative filename of its full-page
-    screenshot (§2e slices 8b/8f). The explorer must have written those images under
-    this same `out_dir` (that is why it takes a `screenshot_dir` — pass it `out_dir`);
-    here each marked state's page embeds its reference. Left None (the default), a page
-    stays pixel-free — embedding pixels is always an explicit opt-in, since a screenshot
-    cannot be secret-redacted the way every text value on the pages is (§2h).
+    `screenshots` maps a state id to the `ImageRef` for its full-page screenshot (§2e
+    slices 8b/8f/8g). The explorer must have written those images under this same
+    `out_dir` (that is why it takes a `screenshot_dir` — pass it `out_dir`); here each
+    marked state's page embeds its reference, and dedup means two states may point at
+    one shared file. Left None (the default), a page stays pixel-free — embedding pixels
+    is always an explicit opt-in, since a screenshot cannot be secret-redacted the way
+    every text value on the pages is (§2h).
 
     `element_screenshots` maps a state id to one `ElementShot` per discovered element,
-    in discovery order (§2e slices 8d/8e), each field a filename reference. The
-    closed-clip reference embeds in the element's Actions row and, when present, the
-    `opened` reference embeds the revealed content beside it — the images themselves,
-    again, already on disk. Same opt-in, pixel-free-by-default posture as the full-page
-    sink, for the same §2h reason.
+    in discovery order (§2e slices 8d/8e), each field an `ImageRef`. The closed-clip
+    reference embeds in the element's Actions row — as its own image or as a crop of the
+    state's full-page picture (§2e slice 8g) — and, when present, the `opened` reference
+    embeds the revealed content beside it; the images themselves, again, already on
+    disk. Same opt-in, pixel-free-by-default posture as the full-page sink, for the same
+    §2h reason.
     """
     shot_files = screenshots or {}
     element_shots = element_screenshots or {}
@@ -517,8 +545,8 @@ def render_wiki(
     # the opened image (8e) are tracked independently, so an element can have one, both,
     # or neither. The bytes are already on disk (streamed by the explorer, 8f); here we
     # only thread the filenames the shots carry into the renderer.
-    clip_files: dict[str, list[str | None]] = {}
-    opened_files: dict[str, list[str | None]] = {}
+    clip_files: dict[str, list[ImageRef | None]] = {}
+    opened_files: dict[str, list[ImageRef | None]] = {}
     for sid in graph.states:
         shots = element_shots.get(sid, ())
         if not shots:
@@ -562,6 +590,7 @@ _LAYOUT = """<!DOCTYPE html>
       nav { margin-bottom: 1rem; }
       .count { color: #888; font-size: 0.85em; }
       .screenshot { max-width: 100%; height: auto; border: 1px solid #ccc; }
+      .screenshot-crop { max-width: none; }
     </style>
   </head>
   <body>
@@ -623,6 +652,21 @@ _INDEX = """{% extends "layout.html" %}
 
 _STATE = """{% extends "layout.html" %}
 {% block title %}{{ state.label }}{% endblock %}
+{# Render one image reference: a whole file as an <img>, or a crop of a shared picture
+   (a clip that is a region of a bigger image, §2e slice 8g) as a CSS-cropped box that
+   shows just that rectangle of `src`. Both keep the `screenshot` class so existing
+   styling and assertions hold; the crop adds `screenshot-crop`. #}
+{% macro shot(image, alt) %}
+{% if image.crop %}
+<span class="screenshot screenshot-crop" role="img" aria-label="{{ alt }}"
+  style="display:inline-block;width:{{ image.crop.width }}px;
+  height:{{ image.crop.height }}px;background-image:url('{{ image.src }}');
+  background-position:-{{ image.crop.x }}px -{{ image.crop.y }}px;
+  background-repeat:no-repeat;"></span>
+{% else %}
+<img class="screenshot" src="{{ image.src }}" alt="{{ alt }}" />
+{% endif %}
+{% endmacro %}
 {% block body %}
 <h1>{{ state.label }}</h1>
 <p>State id: <code>{{ state.id }}</code></p>
@@ -632,8 +676,7 @@ so this snapshot is best-effort and may be incomplete.</p>
 {% endif %}
 {% if state.screenshot_image %}
 <h2>Screenshot</h2>
-<img class="screenshot" src="{{ state.screenshot_image }}"
-  alt="Full-page screenshot of {{ state.label }}" />
+{{ shot(state.screenshot_image, "Full-page screenshot of " ~ state.label) }}
 {% endif %}
 
 <h2>Actions</h2>
@@ -645,10 +688,10 @@ so this snapshot is best-effort and may be incomplete.</p>
   <tr>
     <td>{{ el.label }}</td>
     <td><em>{{ el.type }}</em></td>
-    <td>{% if el.screenshot %}<img class="screenshot" src="{{ el.screenshot }}"
-      alt="Screenshot of {{ el.label }}" />{% else %}<em>none</em>{% endif %}</td>
-    <td>{% if el.opened %}<img class="screenshot" src="{{ el.opened }}"
-      alt="Opened contents of {{ el.label }}" />{% else %}<em>none</em>{% endif %}</td>
+    <td>{% if el.screenshot %}{{ shot(el.screenshot, "Screenshot of " ~ el.label) }}
+      {% else %}<em>none</em>{% endif %}</td>
+    <td>{% if el.opened %}{{ shot(el.opened, "Opened contents of " ~ el.label) }}
+      {% else %}<em>none</em>{% endif %}</td>
     <td>
       {% if el.dest_filename %}<a href="{{ el.dest_filename }}">{{ el.dest_label }}</a>
       {% else %}<em>none</em>{% endif %}</td>
