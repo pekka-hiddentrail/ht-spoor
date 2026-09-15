@@ -98,13 +98,21 @@ _SHORT_ID = 12
 _UNNAMED = "(unnamed)"
 
 
-def _screenshot_filename(index: int) -> str:
-    """The relative filename a state's full-page screenshot is embedded under (8a).
+# Screenshot images are grouped under their own subfolder rather than sitting flat
+# beside the HTML pages, so the wiki directory stays readable as the page set grows.
+# The name is used both as the `<img src>` (relative to a page at the wiki root) and,
+# joined to the output dir, as the on-disk path the writer creates.
+_SCREENSHOT_DIR = "screenshots"
 
-    Parallels the `state-{index}.html` page filename so the writer that persists the
-    image bytes (a later slice) and the renderer that references them agree on one name.
+
+def _screenshot_filename(index: int) -> str:
+    """The relative path a state's full-page screenshot is embedded under (8a).
+
+    Lives under the `screenshots/` subfolder (not flat beside the pages) and parallels
+    the `state-{index}.html` page name, so the writer that persists the image bytes and
+    the renderer that references them agree on one path.
     """
-    return f"state-{index}.png"
+    return f"{_SCREENSHOT_DIR}/state-{index}.png"
 
 
 # Network-request categories (§2e slice 6d). A flat list of every request seen at a
@@ -471,10 +479,11 @@ def render_wiki(
 
     `screenshots` maps a state id to its full-page PNG bytes (§2e slice 8b). This is the
     writer that turns those raw captures into a shared surface: for each state it has an
-    image for, it writes `state-{index}.png` beside the pages and tells `build_pages`
-    to embed it. Left None (the default), nothing is written and every page stays
-    pixel-free — embedding pixels is always an explicit opt-in, since a screenshot
-    cannot be secret-redacted the way every text value on the pages is (§2h).
+    image for, it writes `screenshots/state-{index}.png` (grouped in its own subfolder,
+    not flat beside the pages) and tells `build_pages` to embed it. Left None (the
+    default), nothing is written and every page stays pixel-free — embedding pixels is
+    always an explicit opt-in, since a screenshot cannot be secret-redacted the way
+    every text value on the pages is (§2h).
     """
     shot_bytes = screenshots or {}
     embed_ids = {sid for sid in graph.states if sid in shot_bytes}
@@ -490,6 +499,7 @@ def render_wiki(
         png = shot_bytes.get(sid)
         if png is not None:
             path = out_dir / _screenshot_filename(index)
+            path.parent.mkdir(parents=True, exist_ok=True)  # the screenshots/ subfolder
             path.write_bytes(png)
             written.append(path)
     return sorted(written)

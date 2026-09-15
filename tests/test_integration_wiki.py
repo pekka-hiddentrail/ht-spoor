@@ -114,7 +114,7 @@ def test_screenshots_are_captured_and_embedded_when_opted_in() -> None:
 
     Proves the opt-in path end to end against a real browser: `PlaywrightDriver.
     screenshot()` returns genuine PNG bytes, the explorer fills the sink per state, and
-    `render_wiki` writes `state-N.png` beside the pages and embeds each one. Juice Shop
+    `render_wiki` writes `screenshots/state-N.png` and embeds each one. Juice Shop
     alone keeps it fast; the mechanism is generic (§0).
     """
     _require_reachable(_JUICE_SHOP_BASE)
@@ -137,10 +137,14 @@ def test_screenshots_are_captured_and_embedded_when_opted_in() -> None:
 
     images = [p for p in written if p.suffix == ".png"]
     assert len(images) == len(shots), "one image file per captured state"
+    # Images are grouped in their own subfolder, not flat beside the pages.
+    assert all(p.parent.name == "screenshots" for p in images), "not in subfolder"
     for index, sid in enumerate(graph.states):
         if sid in shots:
             page = (out_dir / f"state-{index}.html").read_text(encoding="utf-8")
-            assert f'src="state-{index}.png"' in page, f"state {index} does not embed"
+            assert (
+                f'src="screenshots/state-{index}.png"' in page
+            ), f"state {index} does not embed"
 
 
 def test_default_run_leaves_the_wiki_pixel_free(tmp_path: Path) -> None:
