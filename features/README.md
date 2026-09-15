@@ -55,7 +55,7 @@ are authored when their phase begins, not up front.
 | `exploration_recovery.feature` | Layer recovery: deal with a blocking layer as its own state and interact past it, safety-gated and progress-bounded, flagging when unresolved (sub-slice 7c) | §2e | `spoor/exploration` | 5 |
 | `exploration_replay.feature` | Replay resilience: verify each reset-and-replay against the state ids it first reached and retry a transient bad render, flagging a persistently unreachable or divergent step honestly (sub-slice 7d) | §2e | `spoor/exploration` | 5 |
 | `exploration_settling_network.feature` | Settling also waits for the network: treat the page as busy while a request is in flight so a late response can't render a different page after a read, bounded so a never-ending request is flagged unsettled not hung (sub-slice 7e) | §2e | `spoor/exploration` | 5 |
-| `testgen.feature` | Test-automation run generation | §2g | `spoor/testgen` | 6 |
+| `testgen.feature` | Test-automation run generation: the pure generator turns a §2e exploration graph into a pytest suite (one Playwright-driven regression test per mapped transition) — replay the path, fire the action, assert the recorded signals, with every captured value and the live observations redacted like-for-like (sub-slice 2g-i) | §2g | `spoor/testgen`, `spoor/security` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
 the machine-readable table above carries any planned-vs-built distinction via its
@@ -517,7 +517,22 @@ the quiet window and asserts the fetched button is discovered (DOM-quiet alone w
 it). Re-running against PrestaShop with 7e gave 7 states, 40 transitions, and 0 skips —
 the 17 divergences gone and coverage up. Nothing is site-specific (§0).
 
-`testgen.feature` (§2g) is
-listed in the table
-above ahead of implementation; its feature file is authored when its phase begins
-(see the Phase column).
+`testgen.feature` (§2g) is **sub-slice 2g-i** — the pure test generator, built
+logic-first like the wiki renderer (6a): `build_tests(graph, target)` maps a §2e
+exploration graph to pytest test *sources* (filename → code) with no browser and no
+disk, so it is fully specifiable in-process. Per mapped transition it emits a
+`test_transition_N.py` that (via a shared `_spoor_testkit.py` and a `conftest.py`)
+drives Playwright to replay the reset-and-replay path that reached the transition's
+from-state — reconstructed by walking the recorded edges from the root — fire the
+action, and assert the additive signals the transition was recorded to add (console
+lines, storage keys, request URLs) still appear: a real regression test the consuming
+team runs against the live product, not a check of the map's own consistency. Because a
+generated test is a shared-output surface, §2h redaction is mandatory on every captured
+value baked in; and — unique to test generation — the emitted suite redacts the *live*
+values it observes with Spoor's own primitive before comparing, so both sides match
+like-for-like and no raw secret is ever the expected literal (which is why running the
+generated suite depends on `ht-spoor` and `playwright`). Only the additive string
+signals are asserted; the a11y-node delta and screenshot hash are deferred, and a graph
+with no transitions generates no tests. Nothing is site-specific (§0). Wiring the suite
+to a command and proving it runs green against a live fixture is sub-slice 2g-ii (see
+the Phase column).
