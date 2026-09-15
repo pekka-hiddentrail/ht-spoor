@@ -90,7 +90,15 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 # Gherkin .feature files live under features/ (ROADMAP.md §4a, pytest-bdd).
 bdd_features_base_dir = "features"
+# Fast by default: the local `pytest` gate runs only the in-process tier (unit,
+# fake-driver BDD, mutation) in seconds. The slow tiers — anything that launches a
+# real browser (`browser`) or needs a live docker archetype (`integration`) — are
+# deselected here and run on CI, which overrides this with `-m ""`. To run them
+# locally on demand: `pytest -m browser`, `pytest -m integration`, or `pytest -m ""`
+# for everything. (ROADMAP.md §5 test-tiering note.)
+addopts = "-m 'not browser and not integration'"
 markers = [
     "mutation: tier-3 mutation corpus (ROADMAP.md §5.3) — success rate must stay >= 95%",
     "integration: end-to-end run against a live docker archetype (ROADMAP.md §5.1) — skips when the container isn't reachable",
+    "browser: launches a real headless Chromium (the live browser tier) — slow; excluded from the fast local gate, run on CI (ROADMAP.md §5)",
 ]

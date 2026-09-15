@@ -18,6 +18,7 @@ Feature: The browser tier snapshots the accessibility tree
   I want the browser tier to snapshot the page's accessibility tree
   So that I have a structural view independent of the visual markup
 
+  @browser
   Scenario: A browser-tier run snapshots the accessibility tree
     Given a live fixture server
     And capture is enabled with the cache redirected to a temp directory

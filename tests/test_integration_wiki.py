@@ -10,10 +10,12 @@ well-formed HTML throughout. This is the maintainer's "check the wikis are relia
 created every time" requirement: not a golden-count assertion (a live SPA's exact graph
 isn't a contract), but a structural-completeness contract that holds for any target.
 
-Both archetypes are exercised. Each is loopback, so the sandbox registry recognises it
-generically (§2e) and the run is free to fire actions; the budget is kept small so the
-test is fast and the disposable container is barely touched. Nothing here is
-site-specific (§0): the same explorer and renderer run against both.
+Juice Shop is the archetype exercised here. It is loopback, so the sandbox registry
+recognises it generically (§2e) and the run is free to fire actions; the budget is kept
+small so the test is fast and the disposable container is barely touched. Nothing here
+is site-specific (§0): the same explorer and renderer run against any target. (Sauce
+Demo was dropped from the *exploration* bench — its login wall yields nothing to map;
+it still earns its keep in the extraction/session tests. See ROADMAP §5.1.)
 
 Marked `integration`: needs the docker bench up
 (`docker compose -f fixtures/docker-compose.yml up -d`) and skips cleanly when a
@@ -22,7 +24,6 @@ container isn't reachable, so the fast unit gate stays Docker-free.
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
@@ -38,18 +39,13 @@ from spoor.exploration.wiki import render_wiki
 pytestmark = pytest.mark.integration
 
 _JUICE_SHOP_BASE = "http://127.0.0.1:3000"
-_SAUCE_DEMO_BASE = os.environ.get("SPOOR_SAUCE_DEMO_BASE", "http://127.0.0.1:3001")
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 # A durable output dir (not a temp folder) so a produced wiki can be opened and
 # inspected, or uploaded as a CI artifact, after the run.
 _OUTPUT_ROOT = _REPO_ROOT / "test-output"
 
-# The archetypes to map. Each is polled and skipped independently, so running only one
-# container still exercises this test against it.
-_ARCHETYPES = (
-    pytest.param(_JUICE_SHOP_BASE, "juice-shop", id="juice-shop"),
-    pytest.param(_SAUCE_DEMO_BASE, "sauce-demo", id="sauce-demo"),
-)
+# The archetype to map. Polled and skipped when the container isn't reachable.
+_ARCHETYPES = (pytest.param(_JUICE_SHOP_BASE, "juice-shop", id="juice-shop"),)
 
 
 def _require_reachable(base: str) -> None:

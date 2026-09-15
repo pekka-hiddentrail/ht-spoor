@@ -28,6 +28,7 @@
 # to every target; the fixtures merely stand in for the general behaviours (persisted
 # state, deferred rendering, endless churn) that any real page can exhibit.
 
+@browser
 Feature: Exploration resets to a clean first visit and waits for real quiescence
   As the exploration engine mapping a stateful, asynchronously-rendered target
   I want each reset to clear persisted state and each read to follow DOM quiescence

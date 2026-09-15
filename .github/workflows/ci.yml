@@ -54,10 +54,13 @@ jobs:
         run: ruff check .
       - name: Type check (mypy)
         run: mypy .
-      - name: Tests (unit, .feature scenarios, golden-master, integration)
-        # The integration test skips when the container is unreachable; here it
-        # is up, so the Juice Shop end-to-end (§5.1) runs as part of the gate.
-        run: pytest
+      - name: Tests (unit, .feature scenarios, golden-master, browser, integration)
+        # `-m ""` overrides the fast-local default in pyproject.toml (which deselects
+        # the `browser` and `integration` tiers) so CI runs the *whole* suite: the
+        # real-Chromium browser tier and, with the container up, the Juice Shop
+        # end-to-end (§5.1). Local devs get a seconds-fast `pytest`; CI carries the
+        # slow tiers. (ROADMAP.md §5 test-tiering note.)
+        run: pytest -m ""
       - name: Upload extraction output
         # The E2E run writes its extracted records here; keep them out of a temp
         # folder and downloadable from the run page, especially on a golden-master

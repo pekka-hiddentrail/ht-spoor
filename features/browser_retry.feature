@@ -1,3 +1,4 @@
+@browser
 Feature: Retry transient browser navigations and dead-letter the unrecoverable
   # ROADMAP.md §2d / Phase 3.5 — reliability essentials, browser tier. The tier-1
   # retry slice classified and retried the httpx fetch path and left "browser-tier

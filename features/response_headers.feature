@@ -18,6 +18,7 @@ Feature: The browser tier records response-header fingerprints
   I want the browser tier to record the response headers it saw
   So that I get a fingerprint without header values leaking to shared output
 
+  @browser
   Scenario: A browser-tier run records response headers
     Given a live fixture server
     And capture is enabled with the cache redirected to a temp directory

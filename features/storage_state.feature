@@ -21,6 +21,7 @@ Feature: The browser tier captures client-side storage state, redacted for shari
   I want the browser tier to record cookies and localStorage
   So that I can see the app's client state with secrets kept off shared output
 
+  @browser
   Scenario: A browser-tier run captures storage state and redacts it for sharing
     Given a live fixture server
     And capture is enabled with the cache redirected to a temp directory
