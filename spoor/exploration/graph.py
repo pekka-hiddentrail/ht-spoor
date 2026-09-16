@@ -15,6 +15,7 @@ is site-specific (§0).
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 
 from spoor.exploration.capture import StateSignals, TransitionSignals
@@ -124,3 +125,46 @@ class ExplorationGraph:
     @property
     def skipped(self) -> list[SkippedAction]:
         return list(self._skipped)
+
+
+def paths_from_root(graph: ExplorationGraph) -> dict[str, list[ActionableElement]]:
+    """The reset-and-replay action path from the root to every reachable state (§2e).
+
+    The root is the first state added (the state the explorer started from). A
+    breadth-first walk over the recorded transitions gives the shortest edge path to
+    each state; the actions along it are what a run replays to reach that state. A
+    state not reachable from the root (which should not arise from an explorer run)
+    simply has no entry. The root maps to an empty path.
+
+    This is the graph-level primitive both the test generator (§2g, replaying to a
+    transition's from-state) and anchor resolution (§2e resume, the `path` selector
+    and the candidate adapter) build on, so the walk lives with the graph rather than
+    being duplicated per consumer.
+    """
+    states = graph.states
+    if not states:
+        return {}
+    root = states[0]
+    predecessor: dict[str, tuple[str, ActionableElement] | None] = {root: None}
+    adjacency: dict[str, list[tuple[str, ActionableElement]]] = {}
+    for transition in graph.transitions:
+        adjacency.setdefault(transition.from_state, []).append(
+            (transition.to_state, transition.action)
+        )
+    queue: deque[str] = deque([root])
+    while queue:
+        state = queue.popleft()
+        for to_state, action in adjacency.get(state, []):
+            if to_state not in predecessor:
+                predecessor[to_state] = (state, action)
+                queue.append(to_state)
+    paths: dict[str, list[ActionableElement]] = {}
+    for state in predecessor:
+        sequence: list[ActionableElement] = []
+        cursor: str | None = state
+        while cursor is not None and predecessor[cursor] is not None:
+            previous, action = predecessor[cursor]  # type: ignore[misc]
+            sequence.append(action)
+            cursor = previous
+        paths[state] = list(reversed(sequence))
+    return paths
