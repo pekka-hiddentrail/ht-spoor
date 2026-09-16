@@ -32,7 +32,9 @@ metrics along the axis of what is actually reproducible:
   offset on the run's time axis and the resident memory (this process + children,
   so Chromium counts) sampled just before and after the call. This is a within-run
   diagnostic (nondeterministic like the call counts, so never gated): emitted as a
-  per-run timeline artifact, with peak RSS reduced onto the advisory trend.
+  per-run timeline artifact and a self-contained interactive HTML report (memory over
+  time, coloured per operation, hover for the call and its before→after delta), with
+  peak RSS reduced onto the advisory trend.
 
 To turn "the run is slow" into "slow *here, because of this*", the run also emits two
 localisation aids (advisory, never gating): a **triage verdict** that reads the
@@ -477,6 +479,35 @@ def resource_trace(metrics: BenchMetrics) -> list[dict[str, object]]:
     ]
 
 
+# The interactive trace report is a single self-contained HTML file: the run's trace
+# is embedded as JSON and drawn by hand-rolled vanilla-JS canvas code (no CDN, no
+# build step, no chart-library dependency — nothing external to break or be blocked,
+# which suits a repo with no JS toolchain). The markup/JS/CSS live in their own asset
+# file (so they are edited and linted as web code, not as a Python string); the run's
+# data, label and peak are spliced into its placeholders here.
+_REPORT_TEMPLATE = Path(__file__).with_name("assets") / "perftrace_report.html"
+
+
+def resource_report_html(metrics: BenchMetrics, label: str) -> str:
+    """A self-contained interactive HTML page for the resource trace (§5.5).
+
+    Fills the `assets/perftrace_report.html` template with the run's `resource_trace`
+    (embedded as JSON) and draws memory-over-time with vanilla-JS canvas: a line for
+    RSS after (before/both are toggle buttons), points coloured per operation, hover
+    for the op/action and its before→after delta, and drag-to-zoom (double-click
+    resets). No external assets, so it renders offline and depends on nothing. This is
+    the per-run diagnostic view the peak-RSS trend cannot show; like the trace it is
+    advisory and within-run only.
+    """
+    template = _REPORT_TEMPLATE.read_text(encoding="utf-8")
+    peak = round(metrics.peak_rss_bytes / 1_000_000, 1)
+    return (
+        template.replace("{{DATA}}", json.dumps(resource_trace(metrics)))
+        .replace("{{LABEL}}", label)
+        .replace("{{PEAK}}", str(peak))
+    )
+
+
 def check_drift(metrics: BenchMetrics, baseline: Mapping[str, object]) -> list[str]:
     """Gated shape counters in `metrics` that differ from `baseline`.
 
@@ -619,6 +650,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default=None,
         help="Write the per-run resource timeline (RSS-per-transaction) JSON here.",
     )
+    parser.add_argument(
+        "--report-out",
+        type=Path,
+        default=None,
+        help="Write the interactive resource-trace HTML report here.",
+    )
     return parser.parse_args(argv)
 
 
@@ -680,6 +717,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.trace_out.parent.mkdir(parents=True, exist_ok=True)
         args.trace_out.write_text(
             json.dumps(resource_trace(metrics), indent=2), encoding="utf-8"
+        )
+
+    if args.report_out is not None:
+        args.report_out.parent.mkdir(parents=True, exist_ok=True)
+        args.report_out.write_text(
+            resource_report_html(metrics, args.label), encoding="utf-8"
         )
 
     if args.update_baseline:

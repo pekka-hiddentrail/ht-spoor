@@ -214,6 +214,10 @@ test-output/
 # live here (ROADMAP.md §2h) and must never be committed or shared.
 .spoor-cache/
 
+# Performance bench output — timing JSON, resource trace, and the HTML report
+# (ROADMAP.md §5.5). Regenerated per run in CI and locally; never committed.
+perf-out/
+
 # PyPI configuration file
 .pypirc
 
