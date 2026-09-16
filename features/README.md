@@ -63,6 +63,7 @@ are authored when their phase begins, not up front.
 | `exploration_settling_announcements.feature` | Settling also waits out an urgent live-region announcement: treat an on-screen `aria-live="assertive"`/`role="alert"` toast as page activity so a transient notification that auto-dismisses can't leave two captures of one screen on different state ids, bounded so a never-clearing announcement is flagged unsettled not hung; durable `polite`/`status` regions are ignored (sub-slice 7f) | §2e | `spoor/exploration` | 5 |
 | `exploration_traversal.feature` | Breadth-first, depth-bounded, URL-forked traversal: the walk peels the site layer by layer (shallow, high-value pages before deep tendrils), a `--max-depth` reach bound maps only the first N layers, and — when the driver reports URLs — the frontier forks on the URL path so a distinct page rendering an already-seen DOM is still explored; graph identity stays the DOM state id (slice 9) | §2e | `spoor/exploration`, CLI | 5 |
 | `exploration_traversal_live.feature` | Live URL reporting for the frontier fork: the real driver's `current_url` reports the URL of the page actually loaded and tracks a real navigation from one page to the next (slice 9) | §2e | `spoor/exploration` | 5 |
+| `exploration_state_selector.feature` | Anchor selection for a resume run: a state-selector (`id:` prefix, `title:` exact, `url:` exact, or a role+name action `path`, combinable AND) resolves an in-memory candidate set to exactly one state, deterministically and never guessing — zero matches reported unmatched, several reported ambiguous with the candidates listed; the pure resolution core of the anchored, depth-relative resume capability (§2e v2), no browser or disk | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation: the pure generator turns a §2e exploration graph into a pytest suite (one Playwright-driven regression test per mapped transition) — replay the path, fire the action, assert the recorded signals, with every captured value and the live observations redacted like-for-like (sub-slice 2g-i) | §2g | `spoor/testgen`, `spoor/security` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -693,6 +694,27 @@ holding the page unsettled until it clears and a never-clearing one reported uns
 the timeout; the live scenario serves a page whose assertive toast carries a button and
 auto-dismisses past the quiet window, asserting the button is *not* discovered (settling
 on DOM-quiet alone would read it). Nothing is site-specific (§0).
+
+`exploration_state_selector.feature` (§2e) is the first slice of the **anchored,
+depth-relative resume** capability (§2e v2, see the resume design note) — built
+logic-first like the wiki renderer (6a) and testgen (2g-i). A resume run must begin from a
+state an earlier run already reached, and because Spoor is config/CLI-driven (not a GUI
+picker) the user names that anchor by a *selector* rather than a raw SHA-256 state id.
+`spoor/exploration/selector.py:resolve_anchor(constraints, candidates)` is the pure
+resolution decision alone, no browser and no disk: four constraint kinds — `id:` (a
+git-style state-id prefix), `title:` (the wiki's state title, exact), `url:` (the route,
+exact), and a structurally-built `path` (the role+name action sequence that reaches the
+state) — combine with AND, and the resolver returns every candidate satisfying all of
+them. Resolution is deterministic and never guesses (the serving layer's stance on an
+unmapped URL): exactly one match resolves, zero is reported *unmatched*, several is
+reported *ambiguous with the candidates listed* so the user can narrow it; a selector with
+no `kind:value` shape or an unknown kind is rejected as malformed. The scenarios pin each
+kind resolving, both no-match and ambiguous paths, a combined selector narrowing an
+otherwise-ambiguous one to a single state, and both malformed rejections. The resolver
+works over an in-memory candidate set here — wiring each kind to the persisted map is a
+separate slice gated on the field being available there (`id:`/path today; `title:` once
+the projection carries the redacted title; `url:` after the per-state-URL decision — see
+the resume design note). One selector grammar resolves for every target (§0).
 
 `testgen.feature` (§2g) is **sub-slice 2g-i** — the pure test generator, built
 logic-first like the wiki renderer (6a): `build_tests(graph, target)` maps a §2e
