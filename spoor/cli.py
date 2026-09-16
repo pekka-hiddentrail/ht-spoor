@@ -149,6 +149,19 @@ def explore(
             ),
         ),
     ] = None,
+    gen_tests: Annotated[
+        Path | None,
+        typer.Option(
+            "--gen-tests",
+            help=(
+                "Also write a runnable pytest regression suite of the map into this "
+                "directory: one test per mapped transition that replays to it, fires "
+                "the action, and asserts what it changed. Re-run the suite later "
+                "against the live site to catch drift. Running it needs Playwright "
+                "installed; captured secrets are redacted before they reach a test."
+            ),
+        ),
+    ] = None,
     screenshots: Annotated[
         bool,
         typer.Option(
@@ -181,7 +194,9 @@ def explore(
     to include pictures in that wiki — a full-page shot of each screen, a clip of
     each interactive element, and a shot of what a dropdown or list reveals when opened
     (off by default, because a picture can't have secrets
-    blanked out the way captured text can). The
+    blanked out the way captured text can). Pass --gen-tests to also write a runnable
+    pytest regression suite of the map (one test per mapped transition) you can re-run
+    against the live site later to catch drift. The
     mapped graph is also saved to the local map, so `spoor serve`/`serve-mcp` can hand
     it back later without re-exploring.
     """
@@ -288,6 +303,16 @@ def explore(
             "  (destructive actions were skipped — this target is not a declared "
             "sandbox)"
         )
+
+    if gen_tests is not None:
+        from spoor.testgen import render_suite
+
+        written = render_suite(graph, gen_tests, target=url)
+        # One test file per transition plus the two fixed support modules, so the count
+        # of runnable regression tests is the written total minus those two (0 when the
+        # graph had no transitions and nothing was written at all).
+        test_count = max(len(written) - 2, 0)
+        typer.echo(f"  tests written to:  {gen_tests} ({test_count} test(s))")
 
     if wiki is not None:
         from spoor.exploration.wiki import render_wiki

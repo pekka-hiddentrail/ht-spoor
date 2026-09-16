@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Gen Deep</title>
+  </head>
+  <body>
+    <h1>Gen Deep</h1>
+    <!-- On load this page adds a console line and a localStorage key that the home
+         page did not have. The transition home --Go deep--> deep therefore records a
+         real additive-signal diff (console + storage), so the generated regression test
+         has concrete assertions to make and running it proves they hold against the
+         live page, not just that replay-and-fire works. -->
+    <script>
+      console.log("deep page loaded");
+      localStorage.setItem("visited_deep", "1");
+    </script>
+  </body>
+</html>

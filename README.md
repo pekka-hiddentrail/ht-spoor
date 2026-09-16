@@ -182,6 +182,19 @@ spoor explore https://example.com --wiki ./site-map
 # then open ./site-map/index.html
 ```
 
+**Turning a map into regression tests.** Add `--gen-tests <dir>` to also write a runnable
+**pytest suite** of the map to that directory — one test per mapped transition that
+replays the path to that screen, fires the action, and asserts the same things changed
+(the console lines, storage keys, and network requests Spoor recorded). Re-run the suite
+against the live site later and a failing test means the site's behaviour drifted from the
+map. Running the suite drives a real browser, so it needs Playwright installed; any
+secrets captured along the way are redacted before they reach a test.
+
+```bash
+spoor explore https://example.com --gen-tests ./tests-from-map
+python -m pytest ./tests-from-map      # re-run later to catch drift
+```
+
 **The safety rule — read this before pointing it at anything real.** Some actions
 are destructive: deleting a record, buying, paying, logging out, submitting a form.
 On any normal site Spoor **always skips** those and tells you it skipped them — it
@@ -209,7 +222,7 @@ or one you declared with `--sandbox`).
 - API discovery: OpenAPI/Swagger discovery, GraphQL introspection, HAR-based synthesis, and action-to-endpoint correlation
 - Tier-3 self-healing: scored matching, uncertain-match handling, cross-run fingerprint persistence, listing field/container healing, re-anchoring, and visual-signal corroboration
 - Authenticated targets: supply a captured browser session (cookies + `localStorage`) via `session:` to scrape login-gated pages — "bring-your-own-session"; Spoor performs no login itself
-- Exploration mode: point Spoor at a URL with no config and it maps the site in a real browser — `spoor explore <url>` discovers the interactive elements it can reach on each screen, waits for the page to settle before reading it, and records where each action leads as a graph of states and transitions (see "Exploring a site" below for the safety rule). When a welcome dialog or cookie-consent overlay sits over the page and intercepts clicks, Spoor interacts past it (dismissing the overlay the same way a visitor would) and maps the site behind it, instead of stopping at the overlay — while still refusing any interaction the safety rule forbids. If a page never fully settles before the safety timeout, the state is flagged as unsettled and the run continues on the last snapshot rather than hanging. Add `--wiki <dir>` to render the result as a browsable wiki — an overview diagram plus a page per state and transition, secrets redacted. Map a large site incrementally with `--resume-from <selector>`: continue an earlier exploration of the same URL from a screen it already reached (named by id), with `--max-depth` counted from that screen, merging what it finds into the saved map. Each exploration is also remembered in the local map, so the serving layer below can hand the graph back later without re-exploring
+- Exploration mode: point Spoor at a URL with no config and it maps the site in a real browser — `spoor explore <url>` discovers the interactive elements it can reach on each screen, waits for the page to settle before reading it, and records where each action leads as a graph of states and transitions (see "Exploring a site" below for the safety rule). When a welcome dialog or cookie-consent overlay sits over the page and intercepts clicks, Spoor interacts past it (dismissing the overlay the same way a visitor would) and maps the site behind it, instead of stopping at the overlay — while still refusing any interaction the safety rule forbids. If a page never fully settles before the safety timeout, the state is flagged as unsettled and the run continues on the last snapshot rather than hanging. Add `--wiki <dir>` to render the result as a browsable wiki — an overview diagram plus a page per state and transition, secrets redacted. Map a large site incrementally with `--resume-from <selector>`: continue an earlier exploration of the same URL from a screen it already reached (named by id), with `--max-depth` counted from that screen, merging what it finds into the saved map. Add `--gen-tests <dir>` to export the map as a runnable pytest suite — one Playwright-driven regression test per mapped transition that replays to the screen, fires the action, and asserts what it changed — so re-running it later catches behavioural drift (captured secrets redacted before they reach a test). Each exploration is also remembered in the local map, so the serving layer below can hand the graph back later without re-exploring
 - Read-only map serving: each run remembers what it mapped for the target URL — extracted records, a safe summary of any API surface it observed (published spec/GraphQL endpoint, plus endpoint/request counts), and, for a URL that was explored, the exploration graph itself (the states discovered and, for each button or link, what clicking it changed). Two ways to consult it without re-crawling: `spoor serve` exposes a small read-only HTTP API, and `spoor serve-mcp` exposes the same data to agents as read-only MCP tools (list mapped domains; fetch a URL's records, observed API surface, and exploration graph with how long ago it was captured — so an agent can ask "what happens when I click X" instead of re-exploring). By default both only read the stored map. Neither ever changes a site: the strongest thing either can do is re-observe one — opt in with `--recheck` and they also accept a request to re-check a mapped URL, which re-runs that URL's extraction (a fresh read of the site) and refreshes the map. Secrets are redacted from everything they return. Install with `pip install 'ht-spoor[serve]'`
 
 ### Optional capture signals (browser tier)
