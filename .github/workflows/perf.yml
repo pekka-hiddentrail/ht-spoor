@@ -7,8 +7,10 @@ name: Performance bench
 # never holds up — or is held up by — the gate). It does two things:
 #
 #   - gates on DETERMINISTIC drift: for the pinned archetype and a count-based
-#     budget the crawl shape (states/transitions/skips, dedup file counts) must
-#     reproduce a committed baseline exactly; any change fails the run.
+#     budget the crawl's graph shape (states/transitions/skips/discovered) must
+#     reproduce a committed baseline exactly; any change fails the run. Capture
+#     (dedup) counts, call counts and the skip histogram are advisory — the walk's
+#     replay/recovery loop makes them wobble run to run (§5.5).
 #   - trends WALL-CLOCK timing on a dashboard (github-action-benchmark on the
 #     gh-pages branch), which is advisory only — runner noise never fails a build.
 #

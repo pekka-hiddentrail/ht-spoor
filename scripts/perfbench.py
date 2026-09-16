@@ -1,26 +1,29 @@
 """Deterministic exploration performance bench (ROADMAP.md §5.5).
 
-Spoor's crawl is deterministic (§0) and its archetypes are pinned (§5.1), so a
-*bounded* run against one of them should map the **same** graph every time — the
-same states, transitions and skips, the same dedup file count (§2e slice 8g), and
-the **same number of each kind of browser operation**. That makes performance
-measurable as a trend rather than a one-off number, and it splits the metrics in
-two along the axis of what is reproducible:
+Spoor's crawl maps the **same graph** every time against a pinned archetype (§5.1)
+under a count-based budget — the same states, transitions, skips and discovered
+actions. Not everything a run touches is that reproducible, though: the capture
+counts and the number of each browser operation depend on the walk, which the
+replay/recovery loop makes nondeterministic against a live SPA. That makes
+performance measurable as a trend rather than a one-off number, and it splits the
+metrics along the axis of what is actually reproducible:
 
-- **Gated structural counters** — states, transitions (actuated actions), skips, the
-  total actions *discovered* (coverage), and the slice-8g image files/refs dedup
-  counts. For a pinned target and a count-based budget these reproduce exactly run to
-  run (two CI seeding runs confirmed it), so a change is real behavioural drift, never
-  CI noise. They are checked against a committed baseline and **fail** the run on any
+- **Gated shape counters** — states, transitions (actuated actions), skips, and the
+  total actions *discovered* (coverage). These describe the *map* the crawl builds;
+  for a pinned target and a count-based budget they reproduce exactly run to run
+  (confirmed across repeated CI runs), so a change is real behavioural drift, never CI
+  noise. They are checked against a committed baseline and **fail** the run on any
   drift — the golden-master model of §5.4 applied to the crawl shape.
-- **Advisory execution counters** — the per-operation *call counts* (how many
-  `perform`s, `reset`s … the run made) and the *skip-reason histogram* (why the gate
-  left actions alone). These are reported (and useful for triage), but **not gated**:
-  the walk's replay/recovery loop reacts to the live target's runtime nondeterminism
-  (an SPA whose reset does not always land identically), so the count of
-  `reset`/`state_html`/`probe`/`perform` calls — and which replay-failure message a
-  skip carries — legitimately varies between runs even though the crawl converges on
-  the same map. Gating them would be flaky.
+- **Advisory counters** — the slice-8g image files/refs dedup counts, the
+  per-operation *call counts* (`reset`/`state_html`/`probe`/`perform` …), and the
+  *skip-reason histogram*. These are reported (dedup stays observable as files vs
+  refs, and the counts are useful for triage) but **not gated**: the walk's
+  replay/recovery loop reacts to the live target's runtime nondeterminism (an SPA
+  whose reset does not always land identically), so the capture counts, the call
+  counts, and which replay-failure message a skip carries legitimately vary between
+  runs even though the crawl converges on the same map. A check run caught
+  `image_refs` wobbling 151->152 with the map otherwise identical; gating any of
+  these would be flaky.
 - **Per-operation timing** — for every browser operation, the median, p95 and
   total wall-clock across all its calls in the run. Timing is noisy on GitHub's
   shared runners, so it is an **advisory trend** only (charted, alert-on-regression,
@@ -88,13 +91,16 @@ from spoor.exploration.screenshot_store import ImageRef
 # The scalar counters that must reproduce exactly for a pinned target and a
 # count-based budget; the per-operation call counts (see `BenchMetrics.timings`)
 # are gated too. Timing values are excluded — they are noisy and only advisory.
+# The gated counters: the pure graph shape only. These describe the *map* the crawl
+# builds and reproduce exactly run to run (confirmed across repeated CI runs). The
+# capture counts (image_files/image_refs) are deliberately excluded — they depend on
+# the walk, which the replay/recovery loop makes nondeterministic against a live SPA
+# (a check run caught image_refs wobbling 151->152), so they are advisory, not gated.
 _SCALAR_FIELDS = (
     "states",
     "transitions",
     "skipped",
     "discovered",
-    "image_files",
-    "image_refs",
 )
 
 # How many of the slowest individual transactions to surface for localisation.
@@ -139,9 +145,10 @@ class BenchMetrics:
     for a pinned target and a count-based budget. `discovered` is the total actionable
     elements found across all states — the coverage top-line that, read against
     `transitions` (actuated) and `skipped`, shows how much of what was found was
-    actually driven. The per-operation `count`s inside `timings` and `skip_reasons`
-    (the histogram of *why* actions were skipped) are **advisory, not gated** — the
-    replay/recovery loop makes them vary run to run (see `check_drift`).
+    actually driven. `image_files`/`image_refs`, the per-operation `count`s inside
+    `timings`, and `skip_reasons` (the histogram of *why* actions were skipped) are
+    **advisory, not gated** — the replay/recovery loop makes them vary run to run (see
+    `check_drift`).
     `elapsed_seconds` and the timing values inside `timings`, plus `slowest` (the
     slowest transactions, for localising a regression), are wall-clock and advisory.
     `image_files`/`image_refs` are 0 when screenshots were not captured.
@@ -357,15 +364,16 @@ def benchmark_entries(metrics: BenchMetrics, label: str) -> list[dict[str, objec
 
 
 def check_drift(metrics: BenchMetrics, baseline: Mapping[str, object]) -> list[str]:
-    """Gated structural/dedup counters in `metrics` that differ from `baseline`.
+    """Gated shape counters in `metrics` that differ from `baseline`.
 
-    Only the reproducible counters (`_SCALAR_FIELDS`: the graph shape and the dedup
-    file/ref counts) are compared — empty means the run reproduced the baseline
-    exactly. The per-operation call counts and the skip-reason histogram are **not**
-    gated here: the walk's replay/recovery loop reacts to the live target's runtime
-    nondeterminism, so they vary run to run even for the same map (two CI seeding runs
-    confirmed it); they are reported as advisory only. A baseline missing a scalar (an
-    older baseline) skips it rather than false-alarming.
+    Only the reproducible counters (`_SCALAR_FIELDS`: the graph shape — states,
+    transitions, skips, discovered) are compared — empty means the run reproduced the
+    baseline exactly. The capture counts (`image_files`/`image_refs`), per-operation
+    call counts, and skip-reason histogram are **not** gated here: the walk's
+    replay/recovery loop reacts to the live target's runtime nondeterminism, so they
+    vary run to run even for the same map (a check run caught `image_refs` wobbling by
+    one); they are reported as advisory only. A baseline missing a scalar (an older
+    baseline) skips it rather than false-alarming.
     """
     drift: list[str] = []
     for name in _SCALAR_FIELDS:
@@ -528,9 +536,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         screenshots=args.screenshots,
     )
     print(f"[perfbench] {args.label}: {json.dumps(_baseline_payload(metrics))}")
-    # Advisory (not gated): the execution counters that vary run to run.
-    calls = json.dumps(dict(sorted(metrics.call_counts().items())))
-    print(f"[perfbench] advisory call counts: {calls}")
+    # Advisory (not gated): capture counts and execution counters that vary with the
+    # walk. Dedup stays observable as image_files vs image_refs.
+    advisory = {
+        "image_files": metrics.image_files,
+        "image_refs": metrics.image_refs,
+        "calls": dict(sorted(metrics.call_counts().items())),
+    }
+    print(f"[perfbench] advisory: {json.dumps(advisory)}")
     if metrics.skip_reasons:
         skips = json.dumps(dict(sorted(metrics.skip_reasons.items())))
         print(f"[perfbench] advisory skip reasons: {skips}")

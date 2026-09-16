@@ -2,7 +2,5 @@
   "states": 6,
   "transitions": 10,
   "skipped": 3,
-  "discovered": 150,
-  "image_files": 19,
-  "image_refs": 151
+  "discovered": 150
 }

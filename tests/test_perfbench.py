@@ -2,8 +2,9 @@
 
 The bench's maths — reducing a finished run to metrics, timing each browser
 operation, emitting the per-operation timing trend, and gating on deterministic
-drift (scalar counters *and* per-operation call counts) — is pure, so it is
-unit-tested here with a hand-built graph, fake timing samples, and a fake driver;
+drift (the pure graph-shape counters only; call counts, capture counts and the
+skip histogram are advisory) — is pure, so it is unit-tested here with a
+hand-built graph, fake timing samples, and a fake driver;
 no browser is needed (that is the point of keeping `PlaywrightDriver` behind a lazy
 import in `run`).
 """
