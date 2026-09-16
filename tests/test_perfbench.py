@@ -2,8 +2,9 @@
 
 The bench's maths — reducing a finished run to metrics, timing each browser
 operation, emitting the per-operation timing trend, and gating on deterministic
-drift (scalar counters *and* per-operation call counts) — is pure, so it is
-unit-tested here with a hand-built graph, fake timing samples, and a fake driver;
+drift (the pure graph-shape counters only; call counts, capture counts and the
+skip histogram are advisory) — is pure, so it is unit-tested here with a
+hand-built graph, fake timing samples, and a fake driver;
 no browser is needed (that is the point of keeping `PlaywrightDriver` behind a lazy
 import in `run`).
 """
@@ -242,7 +243,7 @@ def _baseline_from(metrics: Any) -> dict[str, Any]:
     return json.loads(json.dumps(perfbench._baseline_payload(metrics)))
 
 
-def test_check_drift_empty_when_counters_and_calls_match() -> None:
+def test_check_drift_empty_when_structural_counters_match() -> None:
     m = _measure(_graph(5, 4, 1), samples={"perform": [0.1], "reset": [0.2, 0.3]})
     assert perfbench.check_drift(m, _baseline_from(m)) == []
 
@@ -255,37 +256,24 @@ def test_check_drift_flags_a_changed_scalar_counter() -> None:
     assert len(drift) == 1 and "states" in drift[0]
 
 
-def test_check_drift_flags_a_changed_call_count() -> None:
-    m = _measure(_graph(5, 4, 0), samples={"perform": [0.1, 0.2, 0.3]})
-    baseline = _baseline_from(m)
-    baseline["calls"]["perform"] = 99  # the run made 3, baseline expects 99
-    drift = perfbench.check_drift(m, baseline)
-    assert drift == ["calls.perform: baseline 99 -> now 3"]
-
-
-def test_check_drift_flags_a_vanished_operation() -> None:
-    m = _measure(_graph(2, 1, 0), samples={"reset": [0.1]})
-    baseline = _baseline_from(m)
-    baseline["calls"]["screenshot"] = 6  # baseline had screenshots; run made none
-    drift = perfbench.check_drift(m, baseline)
-    assert drift == ["calls.screenshot: baseline 6 -> now 0"]
-
-
-def test_check_drift_flags_a_changed_skip_reason() -> None:
+def test_check_drift_ignores_call_counts_and_skip_reasons() -> None:
+    # The replay/recovery loop makes these vary run to run, so they are advisory
+    # only: a baseline whose call counts and skip reasons differ from the run must
+    # NOT drift (only the structural/dedup scalars gate).
     graph = ExplorationGraph()
     graph.add_state("s0", [])
     graph.record_skip("s0", _action("d"), "destructive")
-    m = _measure(graph)
+    m = _measure(graph, samples={"perform": [0.1, 0.2, 0.3]})
     baseline = _baseline_from(m)
-    baseline["skip_reasons"]["destructive"] = 5  # run skipped 1, baseline expects 5
-    drift = perfbench.check_drift(m, baseline)
-    assert drift == ["skip_reasons.destructive: baseline 5 -> now 1"]
+    baseline["calls"] = {"perform": 99, "screenshot": 6}  # nothing like the run
+    baseline["skip_reasons"] = {"destructive": 5, "gated": 2}
+    assert perfbench.check_drift(m, baseline) == []
 
 
 def test_check_drift_ignores_timing_and_missing_fields() -> None:
     m = _measure(_graph(5, 4, 1), samples={"perform": [0.1]})
     # A baseline with only one scalar and a bogus timing key: timing is never
-    # compared, missing scalars/calls are skipped.
+    # compared, missing scalars are skipped.
     assert perfbench.check_drift(m, {"states": m.states, "elapsed_seconds": 999}) == []
 
 
@@ -307,8 +295,10 @@ def test_main_writes_baseline_then_passes_and_detects_drift(
         [*common, "--baseline", str(baseline), "--update-baseline"]
     ) == 0
     seeded = json.loads(baseline.read_text(encoding="utf-8"))
-    assert set(seeded) == {*perfbench._SCALAR_FIELDS, "calls", "skip_reasons"}
-    assert seeded["calls"] == {"perform": 2}
+    # Only the gated structural/dedup scalars are committed — no call counts or
+    # skip reasons (those are advisory, not reproducible run to run).
+    assert set(seeded) == set(perfbench._SCALAR_FIELDS)
+    assert seeded["states"] == 3  # from _graph(3, 2, 1)
 
     # Re-run against the seeded baseline: matches, exits 0, writes the chart JSON.
     assert perfbench.main(
