@@ -36,10 +36,8 @@ writing the raw name. Nothing here is site-specific (§0): one emitter for every
 
 from __future__ import annotations
 
-from collections import deque
-
 from spoor.exploration.discovery import ActionableElement
-from spoor.exploration.graph import ExplorationGraph, Transition
+from spoor.exploration.graph import ExplorationGraph, Transition, paths_from_root
 from spoor.security.redaction import redact
 
 # The stable filenames of the two fixed support modules the suite always carries.
@@ -134,7 +132,7 @@ def build_tests(graph: ExplorationGraph, *, target: str) -> dict[str, str]:
     transitions = graph.transitions
     if not transitions:
         return {}
-    paths = _paths_from_root(graph)
+    paths = paths_from_root(graph)
     files = {
         _TESTKIT: _TESTKIT_SOURCE.format(target=redact(target)),
         _CONFTEST: _CONFTEST_SOURCE,
@@ -143,46 +141,6 @@ def build_tests(graph: ExplorationGraph, *, target: str) -> dict[str, str]:
         path = paths.get(transition.from_state, [])
         files[f"test_transition_{index}.py"] = _render_test(index, transition, path)
     return files
-
-
-def _paths_from_root(
-    graph: ExplorationGraph,
-) -> dict[str, list[ActionableElement]]:
-    """The reset-and-replay action path from the root to every reachable state (§2g).
-
-    The root is the first state added (the state the explorer started from). A
-    breadth-first walk over the recorded transitions gives the shortest edge path to
-    each state; the actions along it are what a test replays to reach that state. A
-    state not reachable from the root (should not arise from an explorer run) simply
-    has no entry, and its tests start from the target with an empty path.
-    """
-    states = graph.states
-    if not states:
-        return {}
-    root = states[0]
-    predecessor: dict[str, tuple[str, ActionableElement] | None] = {root: None}
-    adjacency: dict[str, list[tuple[str, ActionableElement]]] = {}
-    for transition in graph.transitions:
-        adjacency.setdefault(transition.from_state, []).append(
-            (transition.to_state, transition.action)
-        )
-    queue: deque[str] = deque([root])
-    while queue:
-        state = queue.popleft()
-        for to_state, action in adjacency.get(state, []):
-            if to_state not in predecessor:
-                predecessor[to_state] = (state, action)
-                queue.append(to_state)
-    paths: dict[str, list[ActionableElement]] = {}
-    for state in predecessor:
-        sequence: list[ActionableElement] = []
-        cursor: str | None = state
-        while cursor is not None and predecessor[cursor] is not None:
-            previous, action = predecessor[cursor]  # type: ignore[misc]
-            sequence.append(action)
-            cursor = previous
-        paths[state] = list(reversed(sequence))
-    return paths
 
 
 def _locator_args(action: ActionableElement) -> str:

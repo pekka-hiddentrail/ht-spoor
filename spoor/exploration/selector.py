@@ -17,9 +17,11 @@ CLI for the three single-value kinds; a path constraint is built structurally
 Resolution never guesses (parity with the serving layer's stance on an unmapped
 URL): exactly one match resolves; zero is *unmatched*; several is *ambiguous* with
 the candidates carried back so the caller can list them and the user can narrow.
-This is over an in-memory candidate set — building candidates from the persisted
-map (and which kinds are wireable there yet) is a separate slice. Nothing here is
-site-specific (§0): one grammar resolves for every target.
+`graph_candidates` builds the candidate set from an in-memory `ExplorationGraph`
+(id, redacted title, and root-relative path; `url:` awaits a per-state-URL
+decision — see the resume design note); building it from the persisted on-disk map
+is a further slice. Nothing here is site-specific (§0): one grammar resolves for
+every target.
 """
 
 from __future__ import annotations
@@ -27,6 +29,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
+
+from spoor.exploration.graph import ExplorationGraph, paths_from_root
+from spoor.security.redaction import redact
 
 
 class SelectorError(ValueError):
@@ -195,3 +200,37 @@ def resolve_anchor(
         if all(constraint.matches(candidate) for constraint in constraints)
     )
     return AnchorResolution(matches=matched)
+
+
+def graph_candidates(graph: ExplorationGraph) -> list[AnchorCandidate]:
+    """Turn every state in an exploration graph into a resolvable anchor candidate.
+
+    The adapter feeding `resolve_anchor` from a real run (§2e resume). One candidate
+    per state, in the graph's state (insertion) order so the root comes first:
+
+    - `state_id` is the state id (always present).
+    - `title` is the state's captured page title, redacted with the same primitive
+      the wiki uses before sharing anything (§2h) — so a token that leaked into a
+      title never reaches a selector or an error listing. A state with no captured
+      signals, or an empty title, yields `None` (anchorable by id or path only).
+    - `path` is the shortest reset-and-replay action sequence from the root, as
+      (role, name) steps (the root's is empty), via `paths_from_root`.
+    - `url` is left `None`: a state is DOM-identity only and records no route, so
+      `url:` cannot resolve against a graph. Populating it is a separate decision
+      slice (see the resume design note), not a silent omission here.
+
+    Nothing is site-specific (§0): every graph is read the same way.
+    """
+    paths = paths_from_root(graph)
+    candidates: list[AnchorCandidate] = []
+    for state_id in graph.states:
+        node = graph.node(state_id)
+        raw_title = node.signals.title if node.signals else ""
+        title = redact(raw_title) if raw_title else None
+        path = tuple(
+            (action.role, action.name) for action in paths.get(state_id, [])
+        )
+        candidates.append(
+            AnchorCandidate(state_id=state_id, title=title, url=None, path=path)
+        )
+    return candidates

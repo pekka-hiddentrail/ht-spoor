@@ -64,6 +64,7 @@ are authored when their phase begins, not up front.
 | `exploration_traversal.feature` | Breadth-first, depth-bounded, URL-forked traversal: the walk peels the site layer by layer (shallow, high-value pages before deep tendrils), a `--max-depth` reach bound maps only the first N layers, and — when the driver reports URLs — the frontier forks on the URL path so a distinct page rendering an already-seen DOM is still explored; graph identity stays the DOM state id (slice 9) | §2e | `spoor/exploration`, CLI | 5 |
 | `exploration_traversal_live.feature` | Live URL reporting for the frontier fork: the real driver's `current_url` reports the URL of the page actually loaded and tracks a real navigation from one page to the next (slice 9) | §2e | `spoor/exploration` | 5 |
 | `exploration_state_selector.feature` | Anchor selection for a resume run: a state-selector (`id:` prefix, `title:` exact, `url:` exact, or a role+name action `path`, combinable AND) resolves an in-memory candidate set to exactly one state, deterministically and never guessing — zero matches reported unmatched, several reported ambiguous with the candidates listed; the pure resolution core of the anchored, depth-relative resume capability (§2e v2), no browser or disk | §2e | `spoor/exploration` | 5 |
+| `exploration_graph_candidates.feature` | Building anchor candidates from an exploration graph: each mapped state becomes a resolvable `AnchorCandidate` (id, redacted page title, root-relative action path) so a resume selector resolves against a real run; `url:` is unpopulated by design (a state records no route) and reported unmatched, not guessed; the graph→candidate adapter of the resume capability (§2e v2), pure logic | §2e | `spoor/exploration`, `spoor/security` | 5 |
 | `testgen.feature` | Test-automation run generation: the pure generator turns a §2e exploration graph into a pytest suite (one Playwright-driven regression test per mapped transition) — replay the path, fire the action, assert the recorded signals, with every captured value and the live observations redacted like-for-like (sub-slice 2g-i) | §2g | `spoor/testgen`, `spoor/security` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -715,6 +716,27 @@ works over an in-memory candidate set here — wiring each kind to the persisted
 separate slice gated on the field being available there (`id:`/path today; `title:` once
 the projection carries the redacted title; `url:` after the per-state-URL decision — see
 the resume design note). One selector grammar resolves for every target (§0).
+
+`exploration_graph_candidates.feature` (§2e) is the **second resume slice** — the
+adapter that turns a real run into what slice 1 resolves over, still pure logic.
+`spoor/exploration/selector.py:graph_candidates(graph)` walks an in-memory
+`ExplorationGraph` and emits one `AnchorCandidate` per state, in state order (root
+first): the state id (always), the state's captured page title run through the same
+§2h redaction the wiki applies before sharing (so a token leaked into a title never
+reaches a selector or an error listing) or `None` when the state carries no signals,
+and the shortest reset-and-replay action path from the root as (role, name) steps.
+That path walk was lifted from the test generator into a shared graph primitive
+`spoor/exploration/graph.py:paths_from_root` — the graph is its natural home, and
+both testgen (replaying to a from-state) and resume (the `path` selector and this
+adapter) now build on the one implementation rather than a copy each. One kind is
+deliberately left `None`: a per-state **URL**. Neither the state node nor its signal
+bundle records a route — a state is DOM-identity only, and one state can render at
+several URLs — so `url:` cannot resolve against a graph, and the scenario pins that
+honestly (a url selector reports unmatched, never a guess). Populating it is its own
+decision slice (see the resume design note). The scenarios pin every state becoming
+a candidate, title carried and redacted, a signal-less state having no title, the
+root's empty path and a two-step path reconstructed, and a title and a path selector
+resolving end to end through the built candidates. Nothing is site-specific (§0).
 
 `testgen.feature` (§2g) is **sub-slice 2g-i** — the pure test generator, built
 logic-first like the wiki renderer (6a): `build_tests(graph, target)` maps a §2e
