@@ -7,14 +7,20 @@ the **same number of each kind of browser operation**. That makes performance
 measurable as a trend rather than a one-off number, and it splits the metrics in
 two along the axis of what is reproducible:
 
-- **Deterministic counters** — states, transitions (actuated actions), skips, the
-  total actions *discovered* (coverage), image files/refs, the per-operation *call
-  counts* (how many `perform`s, `screenshot`s, `reset`s … the run made), and the
-  *skip-reason histogram* (why the gate left actions alone). For a pinned target and
-  a count-based budget these are runner-independent, so a change in any of them is
-  real behavioural drift, never CI noise. They are checked against a committed
-  baseline and **fail** the run on any drift — the golden-master model of §5.4
-  applied to the crawl shape.
+- **Gated structural counters** — states, transitions (actuated actions), skips, the
+  total actions *discovered* (coverage), and the slice-8g image files/refs dedup
+  counts. For a pinned target and a count-based budget these reproduce exactly run to
+  run (two CI seeding runs confirmed it), so a change is real behavioural drift, never
+  CI noise. They are checked against a committed baseline and **fail** the run on any
+  drift — the golden-master model of §5.4 applied to the crawl shape.
+- **Advisory execution counters** — the per-operation *call counts* (how many
+  `perform`s, `reset`s … the run made) and the *skip-reason histogram* (why the gate
+  left actions alone). These are reported (and useful for triage), but **not gated**:
+  the walk's replay/recovery loop reacts to the live target's runtime nondeterminism
+  (an SPA whose reset does not always land identically), so the count of
+  `reset`/`state_html`/`probe`/`perform` calls — and which replay-failure message a
+  skip carries — legitimately varies between runs even though the crawl converges on
+  the same map. Gating them would be flaky.
 - **Per-operation timing** — for every browser operation, the median, p95 and
   total wall-clock across all its calls in the run. Timing is noisy on GitHub's
   shared runners, so it is an **advisory trend** only (charted, alert-on-regression,
@@ -129,16 +135,16 @@ class OpStat:
 class BenchMetrics:
     """One bench run's metrics: deterministic counters plus advisory timing.
 
-    The scalar fields (`_SCALAR_FIELDS`) and each op's `count` in `timings` are
-    runner-independent for a pinned target and a count-based budget. `discovered` is
-    the total actionable elements found across all states — the coverage top-line
-    that, read against `transitions` (actuated) and `skipped`, shows how much of what
-    was found was actually driven. `skip_reasons` is the histogram of *why* actions
-    were skipped (gate reason -> count); a shift in it is a real behaviour change, so
-    it is gated too. `elapsed_seconds` and the timing values inside `timings`, plus
-    `slowest` (the slowest individual transactions, for localising a regression), are
-    wall-clock and advisory only. `image_files`/`image_refs` are 0 when screenshots
-    were not captured.
+    The scalar fields (`_SCALAR_FIELDS`) are the gated, runner-independent counters
+    for a pinned target and a count-based budget. `discovered` is the total actionable
+    elements found across all states — the coverage top-line that, read against
+    `transitions` (actuated) and `skipped`, shows how much of what was found was
+    actually driven. The per-operation `count`s inside `timings` and `skip_reasons`
+    (the histogram of *why* actions were skipped) are **advisory, not gated** — the
+    replay/recovery loop makes them vary run to run (see `check_drift`).
+    `elapsed_seconds` and the timing values inside `timings`, plus `slowest` (the
+    slowest transactions, for localising a regression), are wall-clock and advisory.
+    `image_files`/`image_refs` are 0 when screenshots were not captured.
     """
 
     states: int
@@ -350,30 +356,16 @@ def benchmark_entries(metrics: BenchMetrics, label: str) -> list[dict[str, objec
     return rows
 
 
-def _map_drift(
-    prefix: str, baseline_map: Mapping[str, object], current: Mapping[str, int]
-) -> list[str]:
-    """Per-key drift between a baseline histogram and the run's, keyed by `prefix`.
-
-    Iterates the baseline's keys: a key the baseline *had* but the run no longer
-    produces drops to 0 and is flagged (a vanished operation/skip-reason is real
-    drift); a key absent from the baseline (an older baseline) is not invented.
-    """
-    drift: list[str] = []
-    for key in sorted(baseline_map):
-        expected = baseline_map[key]
-        now = current.get(key, 0)
-        if now != expected:
-            drift.append(f"{prefix}.{key}: baseline {expected} -> now {now}")
-    return drift
-
-
 def check_drift(metrics: BenchMetrics, baseline: Mapping[str, object]) -> list[str]:
-    """Deterministic counters in `metrics` that differ from `baseline`.
+    """Gated structural/dedup counters in `metrics` that differ from `baseline`.
 
-    Compares the scalar counters, every per-operation call count, and the skip-reason
-    histogram. Empty means the run reproduced the baseline exactly. A baseline missing
-    a scalar or a histogram key (an older baseline) skips it rather than false-alarming.
+    Only the reproducible counters (`_SCALAR_FIELDS`: the graph shape and the dedup
+    file/ref counts) are compared — empty means the run reproduced the baseline
+    exactly. The per-operation call counts and the skip-reason histogram are **not**
+    gated here: the walk's replay/recovery loop reacts to the live target's runtime
+    nondeterminism, so they vary run to run even for the same map (two CI seeding runs
+    confirmed it); they are reported as advisory only. A baseline missing a scalar (an
+    older baseline) skips it rather than false-alarming.
     """
     drift: list[str] = []
     for name in _SCALAR_FIELDS:
@@ -381,25 +373,17 @@ def check_drift(metrics: BenchMetrics, baseline: Mapping[str, object]) -> list[s
         current = getattr(metrics, name)
         if expected is not None and current != expected:
             drift.append(f"{name}: baseline {expected} -> now {current}")
-
-    base_calls = baseline.get("calls")
-    if isinstance(base_calls, Mapping):
-        drift += _map_drift("calls", base_calls, metrics.call_counts())
-
-    base_skips = baseline.get("skip_reasons")
-    if isinstance(base_skips, Mapping):
-        drift += _map_drift("skip_reasons", base_skips, metrics.skip_reasons)
     return drift
 
 
 def _baseline_payload(metrics: BenchMetrics) -> dict[str, object]:
-    """The committed baseline: the deterministic counters only (no timing)."""
-    payload: dict[str, object] = {
-        name: getattr(metrics, name) for name in _SCALAR_FIELDS
-    }
-    payload["calls"] = dict(sorted(metrics.call_counts().items()))
-    payload["skip_reasons"] = dict(sorted(metrics.skip_reasons.items()))
-    return payload
+    """The committed baseline: the gated structural/dedup counters only.
+
+    Deliberately excludes the per-operation call counts and skip-reason histogram —
+    they are advisory (reported by `main`), not gated, because they are not
+    reproducible run to run (see `check_drift`).
+    """
+    return {name: getattr(metrics, name) for name in _SCALAR_FIELDS}
 
 
 def _explore_target(
@@ -544,6 +528,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         screenshots=args.screenshots,
     )
     print(f"[perfbench] {args.label}: {json.dumps(_baseline_payload(metrics))}")
+    # Advisory (not gated): the execution counters that vary run to run.
+    calls = json.dumps(dict(sorted(metrics.call_counts().items())))
+    print(f"[perfbench] advisory call counts: {calls}")
+    if metrics.skip_reasons:
+        skips = json.dumps(dict(sorted(metrics.skip_reasons.items())))
+        print(f"[perfbench] advisory skip reasons: {skips}")
 
     if args.bench_out is not None:
         args.bench_out.parent.mkdir(parents=True, exist_ok=True)
