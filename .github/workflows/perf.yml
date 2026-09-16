@@ -11,8 +11,10 @@ name: Performance bench
 #     reproduce a committed baseline exactly; any change fails the run. Capture
 #     (dedup) counts, call counts and the skip histogram are advisory — the walk's
 #     replay/recovery loop makes them wobble run to run (§5.5).
-#   - trends WALL-CLOCK timing on a dashboard (github-action-benchmark on the
-#     gh-pages branch), which is advisory only — runner noise never fails a build.
+#   - trends WALL-CLOCK timing and peak memory on a dashboard (github-action-
+#     benchmark on the gh-pages branch), advisory only — runner noise never fails a
+#     build — and uploads an event-anchored resource trace (RSS per transaction) as
+#     a per-run artifact for post-mortem (§5.5).
 #
 # The mid (Juice Shop, larger budget) and large (PrestaShop) sets land next and
 # run on a nightly schedule; this file starts with the small set (§5.5 decision).
@@ -86,7 +88,18 @@ jobs:
             --max-states 6 --max-depth 2 --screenshots \
             --baseline scripts/perf_baselines/juice-shop-small.json \
             --bench-out perf-out/juice-shop-small.json \
+            --trace-out perf-out/juice-shop-small-trace.json \
             $extra
+      - name: Upload resource trace (advisory timeline)
+        # The event-anchored RSS-per-transaction timeline (§5.5). A within-run
+        # diagnostic — nondeterministic run to run, so it is an artifact to inspect,
+        # never a gated metric. Kept even on a failing drift gate for post-mortem.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: juice-shop-small-trace
+          path: perf-out/juice-shop-small-trace.json
+          if-no-files-found: warn
       - name: Upload seeded baseline for inspection
         # Only on a seeding run: the baseline is a deterministic artefact to review
         # and commit by hand (§5.5), never auto-committed to main by the workflow.
