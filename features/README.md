@@ -60,6 +60,7 @@ are authored when their phase begins, not up front.
 | `exploration_recovery.feature` | Layer recovery: deal with a blocking layer as its own state and interact past it, safety-gated and progress-bounded, flagging when unresolved (sub-slice 7c) | §2e | `spoor/exploration` | 5 |
 | `exploration_replay.feature` | Replay resilience: verify each reset-and-replay against the state ids it first reached and retry a transient bad render, flagging a persistently unreachable or divergent step honestly (sub-slice 7d) | §2e | `spoor/exploration` | 5 |
 | `exploration_settling_network.feature` | Settling also waits for the network: treat the page as busy while a request is in flight so a late response can't render a different page after a read, bounded so a never-ending request is flagged unsettled not hung (sub-slice 7e) | §2e | `spoor/exploration` | 5 |
+| `exploration_settling_announcements.feature` | Settling also waits out an urgent live-region announcement: treat an on-screen `aria-live="assertive"`/`role="alert"` toast as page activity so a transient notification that auto-dismisses can't leave two captures of one screen on different state ids, bounded so a never-clearing announcement is flagged unsettled not hung; durable `polite`/`status` regions are ignored (sub-slice 7f) | §2e | `spoor/exploration` | 5 |
 | `exploration_traversal.feature` | Breadth-first, depth-bounded, URL-forked traversal: the walk peels the site layer by layer (shallow, high-value pages before deep tendrils), a `--max-depth` reach bound maps only the first N layers, and — when the driver reports URLs — the frontier forks on the URL path so a distinct page rendering an already-seen DOM is still explored; graph identity stays the DOM state id (slice 9) | §2e | `spoor/exploration`, CLI | 5 |
 | `exploration_traversal_live.feature` | Live URL reporting for the frontier fork: the real driver's `current_url` reports the URL of the page actually loaded and tracks a real navigation from one page to the next (slice 9) | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation: the pure generator turns a §2e exploration graph into a pytest suite (one Playwright-driven regression test per mapped transition) — replay the path, fire the action, assert the recorded signals, with every captured value and the live observations redacted like-for-like (sub-slice 2g-i) | §2g | `spoor/testgen`, `spoor/security` | 6 |
@@ -668,6 +669,30 @@ timeout; the live scenario serves a page that fetches a fragment the server dela
 the quiet window and asserts the fetched button is discovered (DOM-quiet alone would miss
 it). Re-running against PrestaShop with 7e gave 7 states, 40 transitions, and 0 skips —
 the 17 divergences gone and coverage up. Nothing is site-specific (§0).
+
+`exploration_settling_announcements.feature` (§2e) is **sub-slice 7f** — settling also
+waits out an urgent live-region announcement. Standing up the performance bench (§5.5)
+against the Juice Shop bench exposed a third capture-timing race neither 7b nor 7e
+catches: the entry page goes DOM-quiet *and* network-idle for several seconds and only
+then removes a transient toast it showed on load (an `aria-live="assertive"` region that
+auto-dismisses on a timer, no network involved). Both existing quiet signals fire during
+that long lull, so one capture includes the toast and a later one does not — the same
+spurious-divergence race as 7e but timer-driven, seen as a graph shape that reproduced
+for several runs then drifted (`reset did not return to the start state`) when the
+runner's timing straddled the dismissal. 7f widens the quiet signal once more:
+`wait_for_quiescence` gained an optional `announcing` predicate, and the page counts as
+quiet only while nothing is busy *or* announcing. The live driver probes for an on-screen
+`aria-live="assertive"`/`role="alert"` region holding text and passes it as `announcing`,
+so the wait reads only the page left behind once the toast clears. The signal is
+deliberately narrow: `assertive`/`alert` mark an interrupting, transient announcement,
+whereas durable `polite`/`status` regions (Juice Shop's persistent cookie banner is
+`aria-live="polite"`) are ignored so they can't hold the page unsettled forever. The
+bound is unchanged and symmetric with 7b/7e: an announcement that never clears flags the
+page unsettled at the timeout, never hangs. The pure scenarios pin an announcement
+holding the page unsettled until it clears and a never-clearing one reported unsettled at
+the timeout; the live scenario serves a page whose assertive toast carries a button and
+auto-dismisses past the quiet window, asserting the button is *not* discovered (settling
+on DOM-quiet alone would read it). Nothing is site-specific (§0).
 
 `testgen.feature` (§2g) is **sub-slice 2g-i** — the pure test generator, built
 logic-first like the wiki renderer (6a): `build_tests(graph, target)` maps a §2e

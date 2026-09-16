@@ -27,6 +27,22 @@ is unchanged: a request that never completes (a long-poll, a hung fetch) makes t
 fatal. When no `busy` predicate is given the decision is exactly 7b's DOM-only quiet, so
 targets and tests that don't supply a network signal are unaffected.
 
+7f widens it once more, for an activity neither DOM-mutation-count nor network catches:
+an *urgent* live-region announcement in progress. A live diagnostic on the Juice Shop
+bench (§5.1) showed the entry page goes DOM-quiet and network-idle for several seconds
+and only then removes a transient toast it showed on load (an `aria-live="assertive"`
+region that auto-dismisses on a timer, no network) — so the wait settled during the lull
+and one capture included the toast while a later one did not, the same spurious-
+divergence race as 7e but timer-driven. So an optional `announcing` predicate reports
+whether such an urgent announcement is on screen; while it is, the page counts as
+active, so the wait reads only the page left behind once it clears. It is narrow —
+`assertive`/`alert` mark an interrupting, transient announcement, whereas `polite`/
+`status` regions are commonly durable status that must not hold the page unsettled
+forever. The bound is unchanged: an announcement that never clears is *unsettled* at the
+timeout, like a page that mutates or fetches forever. `busy` and `announcing` are
+independent optional signals; omit either (the default) and it never contributes
+activity.
+
 This is the decision alone, over a monotonic mutation-count signal and injectable
 `clock`/`sleep` (the `RunController` clock seam), so it is exercised deterministically
 with no browser. The real `MutationObserver` that feeds `observe` and the reset that
@@ -66,33 +82,43 @@ def wait_for_quiescence(
     timeout: float,
     poll_interval: float,
     busy: Callable[[], bool] | None = None,
+    announcing: Callable[[], bool] | None = None,
 ) -> SettleResult:
     """Wait until the page goes quiet for `quiet_window`, bounded by `timeout`.
 
     `observe` returns the cumulative mutation count so far (monotonic non-decreasing);
     the page is quiet while that count stops rising. `busy`, when given, reports whether
     any request is still in flight — while it is true the page is treated as active, so
-    a late network response that will mutate the DOM cannot be settled past (7e); omit
-    it (the default) for 7b's DOM-only quiet. Polls every `poll_interval`, reading time
-    through `clock` and waiting through `sleep` so the whole decision is deterministic
-    under a fake clock. Returns settled once mutations have held steady *and* no request
-    has been in flight for `quiet_window`; returns unsettled once `timeout` elapses
-    without that happening — so a request that never completes is bounded exactly like a
-    page that mutates forever. All three time arguments must share one unit and
-    `poll_interval` must be positive.
+    a late network response that will mutate the DOM cannot be settled past (7e).
+    `announcing`, when given, reports whether an urgent live-region announcement is on
+    screen — while it is true the page is likewise treated as active, so a transient
+    toast that auto-dismisses cannot be settled past (7f). Either predicate omitted (the
+    default) simply never contributes activity, so 7b's DOM-only quiet is the base case.
+    Polls every `poll_interval`, reading time through `clock` and waiting via `sleep` so
+    the whole decision is deterministic under a fake clock. Returns settled once
+    mutations have held steady *and* nothing is busy or announcing for `quiet_window`;
+    returns unsettled once `timeout` elapses without that happening — so a request or an
+    announcement that never clears is bounded exactly like a page that mutates forever.
+    All three time arguments must share one unit and `poll_interval` must be positive.
     """
     if poll_interval <= 0:
         raise ValueError(f"poll_interval must be positive, got {poll_interval!r}")
 
-    is_busy = busy if busy is not None else _never_busy
+    is_busy = busy if busy is not None else _never_active
+    is_announcing = announcing if announcing is not None else _never_active
+
+    def active() -> bool:
+        return is_busy() or is_announcing()
+
     start = clock()
     last_count = observe()
-    # The last instant the page was active — a mutation or a request in flight. Quiet is
-    # measured from here; either kind of activity pushes it forward.
+    # The last instant the page was active — a mutation, a request in flight, or an
+    # announcement on screen. Quiet is measured from here; any kind of activity pushes
+    # it forward.
     last_active = start
     while True:
         now = clock()
-        if not is_busy() and now - last_active >= quiet_window:
+        if not active() and now - last_active >= quiet_window:
             return SettleResult(settled=True, elapsed=now - start, mutations=last_count)
         if now - start >= timeout:
             return SettleResult(
@@ -100,11 +126,15 @@ def wait_for_quiescence(
             )
         sleep(poll_interval)
         count = observe()
-        if count != last_count or is_busy():
+        if count != last_count or active():
             last_count = count
             last_active = clock()
 
 
-def _never_busy() -> bool:
-    """The default network signal: nothing is ever in flight (7b DOM-only quiet)."""
+def _never_active() -> bool:
+    """The default for an omitted activity signal: never contributes activity.
+
+    Used for both `busy` (7e) and `announcing` (7f) when the caller supplies neither, so
+    the decision reduces to 7b's DOM-only quiet.
+    """
     return False
