@@ -65,6 +65,7 @@ are authored when their phase begins, not up front.
 | `exploration_traversal_live.feature` | Live URL reporting for the frontier fork: the real driver's `current_url` reports the URL of the page actually loaded and tracks a real navigation from one page to the next (slice 9) | §2e | `spoor/exploration` | 5 |
 | `exploration_state_selector.feature` | Anchor selection for a resume run: a state-selector (`id:` prefix, `title:` exact, `url:` exact, or a role+name action `path`, combinable AND) resolves an in-memory candidate set to exactly one state, deterministically and never guessing — zero matches reported unmatched, several reported ambiguous with the candidates listed; the pure resolution core of the anchored, depth-relative resume capability (§2e v2), no browser or disk | §2e | `spoor/exploration` | 5 |
 | `exploration_graph_candidates.feature` | Building anchor candidates from an exploration graph: each mapped state becomes a resolvable `AnchorCandidate` (id, redacted page title, root-relative action path) so a resume selector resolves against a real run; `url:` is unpopulated by design (a state records no route) and reported unmatched, not guessed; the graph→candidate adapter of the resume capability (§2e v2), pure logic | §2e | `spoor/exploration`, `spoor/security` | 5 |
+| `exploration_persisted_map.feature` | Loading a persisted exploration map back into a graph: the inverse of the §2h-shareable map projection rebuilds an `ExplorationGraph` (states in order, action inventories, transition topology) so a later run can anchor a resume by `id:`/`path` against a crawl no longer in memory; signals/titles aren't stored so `title:` finds nothing (its own slice), validated by a project→load round-trip; the cross-run half of the resume capability (§2e v2), pure logic | §2e | `spoor/exploration` | 5 |
 | `testgen.feature` | Test-automation run generation: the pure generator turns a §2e exploration graph into a pytest suite (one Playwright-driven regression test per mapped transition) — replay the path, fire the action, assert the recorded signals, with every captured value and the live observations redacted like-for-like (sub-slice 2g-i) | §2g | `spoor/testgen`, `spoor/security` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -737,6 +738,26 @@ decision slice (see the resume design note). The scenarios pin every state becom
 a candidate, title carried and redacted, a signal-less state having no title, the
 root's empty path and a two-step path reconstructed, and a title and a path selector
 resolving end to end through the built candidates. Nothing is site-specific (§0).
+
+`exploration_persisted_map.feature` (§2e) is the **third resume slice** — and the one
+that makes the first two testable across a real save/load boundary rather than only in
+one process. A run persists its graph to `maps/<domain>.json` as the §2h-shareable
+projection the serving layer produces (`shareable_exploration_map`);
+`spoor/exploration/persisted_map.py:load_exploration_map(data)` is that projection's
+inverse, rebuilding an `ExplorationGraph` from the stored dict so a *later* invocation
+can build candidates and resolve a selector against a crawl it no longer holds in
+memory. The reconstruction matches what the projection carries: state ids (in order,
+root first), each state's action inventory (role + name), and the transition topology —
+exactly what `id:` and `path` anchoring need, so both resolve against a loaded map. What
+the projection does not carry cannot come back: signals are stored as counts without a
+title, so a loaded state has `signals=None` and no title, and the scenario pins that a
+`title:` selector finds nothing against a saved map (extending the projection to carry a
+redacted title is its own slice). The loader parses a plain mapping, so it depends only
+on the documented projection shape, never on the serving layer — no import cycle. The
+core scenario is a **round-trip**: project a known graph, load it back, and assert an
+`id:` anchor resolves to the same state in memory and after reload — which is how the
+resume machinery is validated end to end, and would fail loudly if the two ends of the
+contract ever drift. Nothing is site-specific (§0).
 
 `testgen.feature` (§2g) is **sub-slice 2g-i** — the pure test generator, built
 logic-first like the wiki renderer (6a): `build_tests(graph, target)` maps a §2e
