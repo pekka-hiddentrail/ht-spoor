@@ -149,6 +149,24 @@ _CLEAR_STORAGE_JS = "() => { localStorage.clear(); sessionStorage.clear(); }"
 # before the init script ran) reads as 0, i.e. quiet.
 _MUTATION_COUNT_JS = "() => window.__spoorMutations || 0"
 
+# True while an *urgent* ARIA live-region announcement is on screen (§2e, 7f): an
+# element with `aria-live="assertive"` or `role="alert"` holding non-whitespace text.
+# These mark an interrupting, by-nature transient announcement (e.g. a toast that
+# auto-dismisses on a timer), so the settle wait treats one in progress as page activity
+# and reads only the page left behind once it clears. Deliberately excludes `polite`/
+# `status` regions, which are commonly durable status (a persistent cookie/consent
+# banner) and must not hold the page unsettled forever. Any read failure counts as not
+# announcing (quiet), matching the mutation counter's fail-quiet stance.
+_ANNOUNCING_JS = """
+() => {
+  const sel = '[aria-live="assertive"], [role="alert"]';
+  for (const el of document.querySelectorAll(sel)) {
+    if ((el.textContent || '').trim()) return true;
+  }
+  return false;
+}
+"""
+
 # A fixed viewport at device-scale 1: CSS pixels equal device pixels equal the
 # coordinate space `elementFromPoint` and the mouse both use, so every computed click
 # centre is reproducible run to run — the reproducibility robust actuation needs (7a).
@@ -502,12 +520,15 @@ class PlaywrightDriver:
         )
 
     def _wait_for_settle(self) -> SettleResult:
-        """Wait for DOM mutations to go quiet, recording whether the page settled (7b).
+        """Wait for the page to go quiet, recording whether it settled (7b/7e/7f).
 
         Feeds the live mutation counter into the pure quiescence decision
-        (`wait_for_quiescence`) through this driver's clock/sleep seams. A read that
-        fails because the execution context was torn down mid-navigation reuses the
-        last count rather than crashing, so the wait tolerates a full-page navigation in
+        (`wait_for_quiescence`) through this driver's clock/sleep seams, along with the
+        in-flight request count (the `busy` signal, 7e) and an on-screen urgent-
+        announcement probe (the `announcing` signal, 7f) so a late network response or a
+        transient toast cannot be settled past. A read that fails because the execution
+        context was torn down mid-navigation reuses the last count / reads as not
+        announcing rather than crashing, so the wait tolerates a full-page navigation in
         flight. Stores the settled verdict for the next captured bundle.
         """
         page = self._live_page
@@ -520,6 +541,14 @@ class PlaywrightDriver:
             self._last_mutations = int(value) if isinstance(value, (int, float)) else 0
             return self._last_mutations
 
+        def announcing() -> bool:
+            try:
+                return bool(page.evaluate(_ANNOUNCING_JS))
+            except PlaywrightError:
+                # Context torn down mid-navigation: treat as not announcing (quiet),
+                # the same fail-quiet stance the mutation read takes above.
+                return False
+
         result = wait_for_quiescence(
             observe=observe,
             clock=self._clock,
@@ -528,6 +557,7 @@ class PlaywrightDriver:
             timeout=self._settle_timeout,
             poll_interval=self._poll_interval,
             busy=lambda: self._inflight > 0,
+            announcing=announcing,
         )
         self._last_settled = result.settled
         return result
