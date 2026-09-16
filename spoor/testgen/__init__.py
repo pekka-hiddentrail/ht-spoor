@@ -5,6 +5,6 @@ assertion-style regression tests or human-readable test plans — never
 hand-written. Consumes the map; produces no new capture.
 """
 
-from spoor.testgen.pytest_gen import build_tests
+from spoor.testgen.pytest_gen import build_tests, render_suite
 
-__all__ = ["build_tests"]
+__all__ = ["build_tests", "render_suite"]

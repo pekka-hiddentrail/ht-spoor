@@ -36,6 +36,8 @@ writing the raw name. Nothing here is site-specific (§0): one emitter for every
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from spoor.exploration.discovery import ActionableElement
 from spoor.exploration.graph import ExplorationGraph, Transition, paths_from_root
 from spoor.security.redaction import redact
@@ -141,6 +143,30 @@ def build_tests(graph: ExplorationGraph, *, target: str) -> dict[str, str]:
         path = paths.get(transition.from_state, [])
         files[f"test_transition_{index}.py"] = _render_test(index, transition, path)
     return files
+
+
+def render_suite(
+    graph: ExplorationGraph, out_dir: Path, *, target: str
+) -> list[Path]:
+    """Write the generated pytest suite for `graph` under `out_dir` (§2g, 2g-ii).
+
+    The thin on-disk counterpart to `build_tests`, mirroring the wiki writer (6a):
+    render the sources purely, then write each `filename -> source` as UTF-8, creating
+    `out_dir` (and parents) if needed. Returns the written paths sorted, for a stable,
+    testable result. A graph with no transitions renders nothing, so nothing is written
+    and the returned list is empty — no empty shell of a suite. Every value baked into
+    the sources was already §2h-redacted by `build_tests`; this writer adds no new
+    captured value, so it introduces no redaction surface of its own. Nothing here is
+    site-specific (§0).
+    """
+    files = build_tests(graph, target=target)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for name in sorted(files):
+        path = out_dir / name
+        path.write_text(files[name], encoding="utf-8")
+        written.append(path)
+    return written
 
 
 def _locator_args(action: ActionableElement) -> str:

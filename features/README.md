@@ -68,6 +68,7 @@ are authored when their phase begins, not up front.
 | `exploration_persisted_map.feature` | Loading a persisted exploration map back into a graph: the inverse of the §2h-shareable map projection rebuilds an `ExplorationGraph` (states in order, action inventories, transition topology) so a later run can anchor a resume by `id:`/`path` against a crawl no longer in memory; signals/titles aren't stored so `title:` finds nothing (its own slice), validated by a project→load round-trip; the cross-run half of the resume capability (§2e v2), pure logic | §2e | `spoor/exploration` | 5 |
 | `exploration_resume_traversal.feature` | Resuming exploration from a mapped anchor: `resume_exploration` loads a saved map, resolves a selector to one anchor state, and continues the breadth-first walk *outward from it* — depth re-origined at the anchor (`--max-depth` counts clicks from the anchor, not the site root) and new states/transitions merged additively into the loaded map; refuses to guess (no/many matches, or a start page that no longer matches the saved map); the traversal slice that ties the three pure resume slices to the crawl and the CLI (`--resume-from`). Fast-tier scenarios drive the real load→resolve→resume chain against a fake site; a `@browser` scenario proves it end to end in real Chromium | §2e | `spoor/exploration`, CLI | 5 |
 | `testgen.feature` | Test-automation run generation: the pure generator turns a §2e exploration graph into a pytest suite (one Playwright-driven regression test per mapped transition) — replay the path, fire the action, assert the recorded signals, with every captured value and the live observations redacted like-for-like (sub-slice 2g-i) | §2g | `spoor/testgen`, `spoor/security` | 6 |
+| `testgen_writer.feature` | Writing the generated suite to disk and running it: `render_suite` writes the pure generator's `filename → source` under a directory (created if absent, contents byte-for-byte the generator's), wired to `spoor explore --gen-tests <dir>`; a `@browser` scenario crawls a fixture, writes its suite, runs pytest on it against the same live fixture in a subprocess, and asserts it passes green — the end-to-end proof of sub-slice 2g-ii | §2g | `spoor/testgen`, CLI | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
 the machine-readable table above carries any planned-vs-built distinction via its
@@ -800,6 +801,16 @@ values it observes with Spoor's own primitive before comparing, so both sides ma
 like-for-like and no raw secret is ever the expected literal (which is why running the
 generated suite depends on `ht-spoor` and `playwright`). Only the additive string
 signals are asserted; the a11y-node delta and screenshot hash are deferred, and a graph
-with no transitions generates no tests. Nothing is site-specific (§0). Wiring the suite
-to a command and proving it runs green against a live fixture is sub-slice 2g-ii (see
-the Phase column).
+with no transitions generates no tests. Nothing is site-specific (§0).
+
+`testgen_writer.feature` (§2g) is **sub-slice 2g-ii** — the thin on-disk writer and the
+live proof the 2g-i note named as the follow-on: `render_suite(graph, out_dir, target)`
+renders the sources purely (2g-i) and writes each `filename → source` under a directory,
+creating it if absent and returning the written paths sorted; `spoor explore --gen-tests
+<dir>` wires it to the command beside `--wiki`. The fast-tier scenarios pin the writer
+(every file on disk, directory created, an empty graph writes nothing, contents match
+the generator byte-for-byte); the `@browser` scenario closes the loop end to end — crawl
+a real fixture, write its suite, run pytest on that suite against the same live fixture
+in a subprocess, and see it pass green, proving the emitted tests replay, fire, and
+assert correctly against a running target, not merely that they are valid Python. Nothing
+is site-specific (§0).
