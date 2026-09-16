@@ -259,6 +259,27 @@ def test_measure_reports_peak_rss_and_ordered_trace() -> None:
     assert trace[1]["detail"] == "button Add"
 
 
+def test_resource_report_html_is_self_contained_and_embeds_the_trace() -> None:
+    # An action name can itself be a URL (e.g. "link https://…"); that is embedded
+    # data, not an external asset, so it must not trip the self-containment check.
+    txns = [
+        perfbench.Transaction(
+            "perform", 0.2, "link https://owasp-juice.shop", start_offset=0.05,
+            rss_before=10, rss_after=900_000,
+        )
+    ]
+    metrics = _measure(_graph(1, 0, 0), transactions=txns)
+    html = perfbench.resource_report_html(metrics, "juice-shop-small")
+    assert html.startswith("<!doctype html>") and "<canvas id=c>" in html
+    # Loads nothing external — renders offline, nothing to be blocked. (A URL inside
+    # the embedded JSON is fine; what matters is no external script/style/img fetch.)
+    for external_load in ("<script src", "<link ", 'src="http', "href=http"):
+        assert external_load not in html
+    # The run's data is embedded (op + action label, URL and all) and label shown.
+    assert "link https://owasp-juice.shop" in html and "juice-shop-small" in html
+    assert '"rss_after": 900000' in html
+
+
 def test_measure_peak_rss_is_zero_without_samples() -> None:
     # No RSS readings (psutil absent, or timing-only): peak is a clean 0, not an error.
     assert _measure(_graph(1, 0, 0), samples={"reset": [0.1]}).peak_rss_bytes == 0
@@ -407,6 +428,21 @@ def test_main_writes_resource_trace_when_requested(
             "rss_after": 20,
         }
     ]
+
+
+def test_main_writes_html_report_when_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_out = tmp_path / "trace.html"
+    txns = [perfbench.Transaction("reset", 0.1, "", rss_before=1, rss_after=2)]
+    fixed = _measure(_graph(1, 0, 0), transactions=txns)
+    monkeypatch.setattr(perfbench, "run", lambda *a, **k: fixed)
+    assert perfbench.main(
+        ["--target", "http://127.0.0.1:3000", "--label", "s",
+         "--report-out", str(report_out)]
+    ) == 0
+    html = report_out.read_text(encoding="utf-8")
+    assert "<canvas id=c>" in html and "const DATA = " in html
 
 
 def test_main_without_baseline_is_advisory_and_passes(

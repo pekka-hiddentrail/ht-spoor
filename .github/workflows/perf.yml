@@ -89,16 +89,18 @@ jobs:
             --baseline scripts/perf_baselines/juice-shop-small.json \
             --bench-out perf-out/juice-shop-small.json \
             --trace-out perf-out/juice-shop-small-trace.json \
+            --report-out perf-out/juice-shop-small-trace.html \
             $extra
-      - name: Upload resource trace (advisory timeline)
-        # The event-anchored RSS-per-transaction timeline (§5.5). A within-run
-        # diagnostic — nondeterministic run to run, so it is an artifact to inspect,
-        # never a gated metric. Kept even on a failing drift gate for post-mortem.
+      - name: Upload resource trace (advisory timeline + report)
+        # The event-anchored RSS-per-transaction timeline and its interactive HTML
+        # report (§5.5). A within-run diagnostic — nondeterministic run to run, so it
+        # is an artifact to inspect, never a gated metric. Kept even on a failing
+        # drift gate for post-mortem.
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: juice-shop-small-trace
-          path: perf-out/juice-shop-small-trace.json
+          path: perf-out/juice-shop-small-trace.*
           if-no-files-found: warn
       - name: Upload seeded baseline for inspection
         # Only on a seeding run: the baseline is a deterministic artefact to review
@@ -131,3 +133,28 @@ jobs:
           alert-threshold: "150%"
           comment-on-alert: true
           fail-on-alert: false
+      - name: Publish resource trace report (advisory)
+        # Runs *after* the trend step above, which pushed gh-pages: we fetch that
+        # commit and add the interactive memory-over-time report under dev/trace/, so
+        # the two never race (steps are sequential, single runner). Main only, and not
+        # on a seeding run — same reasoning as the trend step. A within-run diagnostic,
+        # so it is overwritten each run (latest only); the per-run copy lives in the
+        # uploaded artifact for history.
+        if: github.ref == 'refs/heads/main' && inputs.update_baseline != true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages
+          git worktree add -B gh-pages gh-pages-wt origin/gh-pages
+          mkdir -p gh-pages-wt/dev/trace
+          cp perf-out/juice-shop-small-trace.html \
+            gh-pages-wt/dev/trace/juice-shop-small.html
+          cp perf-out/juice-shop-small-trace.html gh-pages-wt/dev/trace/index.html
+          cd gh-pages-wt
+          git add dev/trace
+          if git diff --cached --quiet; then
+            echo "resource trace report unchanged"
+          else
+            git commit -m "perf: refresh resource trace report (${GITHUB_SHA::7})"
+            git push origin gh-pages
+          fi
