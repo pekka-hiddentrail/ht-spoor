@@ -127,19 +127,21 @@ class ExplorationGraph:
         return list(self._skipped)
 
 
-def paths_from_root(graph: ExplorationGraph) -> dict[str, list[ActionableElement]]:
-    """The reset-and-replay action path from the root to every reachable state (§2e).
+def path_steps_from_root(
+    graph: ExplorationGraph,
+) -> dict[str, list[tuple[ActionableElement, str]]]:
+    """The reset-and-replay path to every reachable state, as (action, landed) steps.
 
     The root is the first state added (the state the explorer started from). A
     breadth-first walk over the recorded transitions gives the shortest edge path to
-    each state; the actions along it are what a run replays to reach that state. A
-    state not reachable from the root (which should not arise from an explorer run)
-    simply has no entry. The root maps to an empty path.
+    each state; each step is the action fired and the state it led to — exactly the
+    pair reset-and-replay carries so it can *verify* each landing. A state not
+    reachable from the root (which should not arise from an explorer run) simply has
+    no entry. The root maps to an empty path.
 
-    This is the graph-level primitive both the test generator (§2g, replaying to a
-    transition's from-state) and anchor resolution (§2e resume, the `path` selector
-    and the candidate adapter) build on, so the walk lives with the graph rather than
-    being duplicated per consumer.
+    The richer sibling of `paths_from_root`: it keeps the landed state per step, which
+    resume (§2e) needs to seed and verify a replay to an anchor, while `paths_from_root`
+    projects away the landings for callers that only need the action sequence.
     """
     states = graph.states
     if not states:
@@ -158,13 +160,31 @@ def paths_from_root(graph: ExplorationGraph) -> dict[str, list[ActionableElement
             if to_state not in predecessor:
                 predecessor[to_state] = (state, action)
                 queue.append(to_state)
-    paths: dict[str, list[ActionableElement]] = {}
+    paths: dict[str, list[tuple[ActionableElement, str]]] = {}
     for state in predecessor:
-        sequence: list[ActionableElement] = []
+        sequence: list[tuple[ActionableElement, str]] = []
         cursor: str | None = state
         while cursor is not None and predecessor[cursor] is not None:
             previous, action = predecessor[cursor]  # type: ignore[misc]
-            sequence.append(action)
+            sequence.append((action, cursor))
             cursor = previous
         paths[state] = list(reversed(sequence))
     return paths
+
+
+def paths_from_root(graph: ExplorationGraph) -> dict[str, list[ActionableElement]]:
+    """The reset-and-replay action path from the root to every reachable state (§2e).
+
+    The action-only projection of `path_steps_from_root`: the shortest edge path to
+    each state, as the actions a run replays to reach it (the root maps to an empty
+    path, an unreachable state has no entry).
+
+    This is the graph-level primitive both the test generator (§2g, replaying to a
+    transition's from-state) and anchor resolution (§2e resume, the `path` selector
+    and the candidate adapter) build on, so the walk lives with the graph rather than
+    being duplicated per consumer.
+    """
+    return {
+        state: [action for action, _landed in steps]
+        for state, steps in path_steps_from_root(graph).items()
+    }

@@ -64,7 +64,7 @@ from spoor.exploration.capture import StateSignals, diff_signals
 from spoor.exploration.control import RunController
 from spoor.exploration.dedup import UndecodableImage, decode, find_subimage
 from spoor.exploration.discovery import ActionableElement, discover_actions
-from spoor.exploration.graph import ExplorationGraph
+from spoor.exploration.graph import ExplorationGraph, path_steps_from_root
 from spoor.exploration.safety import evaluate_action
 from spoor.exploration.screenshot_store import ImageRef, ScreenshotStore
 from spoor.exploration.state import state_id
@@ -514,6 +514,8 @@ def explore(
     screenshots: MutableMapping[str, ImageRef] | None = None,
     element_screenshots: MutableMapping[str, list[ElementShot]] | None = None,
     screenshot_dir: Path | None = None,
+    resume_from: ExplorationGraph | None = None,
+    resume_anchor: str | None = None,
 ) -> ExplorationGraph:
     """Explore `target` through `driver`, returning the state-action graph (§2e).
 
@@ -567,6 +569,21 @@ def explore(
     query/fragment variants of an already-expanded path are not. Reset-and-replay,
     verification (7d), and layer recovery (7c) are unchanged — only the order and the
     frontier's dedup key differ from the original depth-first walk.
+
+    `resume_from`/`resume_anchor` continue an earlier run (§2e resume). Passed together,
+    `resume_from` is a previously mapped graph — the loaded persisted map — this run
+    **mutates additively** and returns, and `resume_anchor` is a state id within it to
+    begin the outward walk from. The walk seeds its frontier at the anchor with the
+    root-relative reset-and-replay path that reaches it (reconstructed from the loaded
+    topology) and **re-origins depth there**: `max_depth` then counts clicks from the
+    anchor, not from the site root, so a small budget still reaches states far from the
+    start once resumed nearby. Newly discovered states and transitions merge into the
+    loaded graph; states it already held keep their recorded action inventory. Because
+    replay depends on the saved paths still being walkable, resume is refused up front
+    (`ValueError`) when the target's start page no longer matches the saved map's root,
+    when the anchor is not a state reachable from that root, or when it cannot replay to
+    the anchor within the retry bound — never a silent remap. Both must be given at once
+    (`resume_anchor` alone, or an anchor absent from `resume_from`, is a `ValueError`).
     """
     if (
         screenshots is not None or element_screenshots is not None
@@ -576,11 +593,18 @@ def explore(
             "capture is written to disk as it is taken (§2e slice 8f), so a directory "
             "to write it under must be given."
         )
+    if (resume_from is None) != (resume_anchor is None):
+        raise ValueError(
+            "resume_from and resume_anchor must be given together: a resume needs both "
+            "the earlier map to continue and the anchor state within it to start from."
+        )
     # One deduplicating writer for the whole run, so an identical or near-identical
     # picture reuses a file already written for an earlier state (§2e slice 8g). None
     # when no sink was given — a default run writes nothing.
     store = ScreenshotStore(screenshot_dir) if screenshot_dir is not None else None
-    graph = ExplorationGraph()
+    # A resume continues an earlier map in place (additive merge); a fresh run starts
+    # from an empty graph (§2e resume).
+    graph = resume_from if resume_from is not None else ExplorationGraph()
 
     def capture(signals: StateSignals | None = None) -> tuple[str, bool]:
         """Record the driver's current state; return its id and whether it's new.
@@ -820,8 +844,13 @@ def explore(
             return _url_path(driver.current_url())
         return None
 
-    def walk(root_id: str, root_path: str | None) -> None:
-        """Breadth-first walk from the root, forking the frontier on the URL path (9).
+    def walk(
+        root_id: str,
+        seed_state: str,
+        seed_path: list[_PathStep],
+        seed_url_path: str | None,
+    ) -> None:
+        """Breadth-first walk from a seed state, forking the frontier on the URL (9).
 
         A FIFO frontier holds `(state, path)`; `expanded` guards each
         `(state, url_path)` from being walked twice. Popping a state expands it —
@@ -829,22 +858,38 @@ def explore(
         where it led — then enqueues each landing whose `(state, url_path)` is new, so
         the graph fills layer by layer. Within a state, actions are fired
         shallowest-destination-first (§2e slice 9b) so a budget-limited run reaches the
-        structural, top-level links before the deep ones. `max_depth`, when set, stops a
-        state from being expanded once its depth (its path length) reaches the bound:
-        the state is still reached and recorded, the walk simply does not descend past
-        it.
+        structural, top-level links before the deep ones.
+
+        The walk starts at `seed_state` with `seed_path` — the reset-and-replay steps
+        from `root_id` (the reset target) to it, which is empty for a fresh run seeded
+        at the root and the root-to-anchor path for a resume (§2e resume). `max_depth`,
+        when set, stops a state from being expanded once its depth *relative to the
+        seed* reaches the bound: depth is `len(path) - len(seed_path)`, so it counts
+        from the seed, not the reset target — the anchor is depth 0 on a resume. The
+        state at the bound is still reached and recorded; the walk simply descends no
+        further.
         """
         max_depth = controller.max_depth
+        origin = len(seed_path)
+        # Edges already in the graph, so a resume that re-fires one (its anchor subtree
+        # may overlap what the earlier run mapped) merges additively rather than adding
+        # a duplicate. Empty for a fresh run — its walk fires each edge exactly once, so
+        # this never suppresses anything there.
+        recorded: set[tuple[str, str, str, str]] = {
+            (t.from_state, t.action.role, t.action.name, t.to_state)
+            for t in graph.transitions
+        }
         frontier: deque[tuple[str, list[_PathStep]]] = deque()
-        frontier.append((root_id, []))
-        expanded: set[tuple[str, str | None]] = {(root_id, root_path)}
+        frontier.append((seed_state, list(seed_path)))
+        expanded: set[tuple[str, str | None]] = {(seed_state, seed_url_path)}
         while frontier:
             if controller.check().should_stop:
                 return
             state, path = frontier.popleft()
             # Reach bound (not a stop bound): expand only while below the depth limit,
-            # so states up to `max_depth` are mapped but the walk descends no further.
-            if max_depth is not None and len(path) >= max_depth:
+            # measured from the seed (so the anchor is depth 0 on a resume), states up
+            # to `max_depth` are mapped but the walk descends no further.
+            if max_depth is not None and len(path) - origin >= max_depth:
                 continue
             # Snapshot the action list, ordered shallowest-destination-first (9b) so a
             # budget-limited run fires the structural, top-level links before the deep
@@ -897,13 +942,16 @@ def explore(
                 # state id capture computes first, so read it here, not after.
                 to_path = current_path()
                 to_state, _first_seen = capture(after)
-                graph.add_transition(
-                    state,
-                    action,
-                    to_state,
-                    diff_signals(before, after),
-                    recovered_via=outcome.recovered_via,
-                )
+                edge = (state, action.role, action.name, to_state)
+                if edge not in recorded:
+                    recorded.add(edge)
+                    graph.add_transition(
+                        state,
+                        action,
+                        to_state,
+                        diff_signals(before, after),
+                        recovered_via=outcome.recovered_via,
+                    )
                 # Enqueue a landing the frontier hasn't expanded under this URL path.
                 # Keyed on `(state, url_path)`, not first-seen: a known DOM reached at a
                 # new path is still walked (the fork), while a repeat of an
@@ -914,9 +962,63 @@ def explore(
                     expanded.add(key)
                     frontier.append((to_state, path + [_PathStep(action, to_state)]))
 
+    def seed_steps_to(anchor: str) -> list[_PathStep]:
+        """The reset-and-replay steps from the loaded map's root to `anchor` (resume).
+
+        Reconstructed from the loaded topology, so replay drives the same edges the
+        earlier run recorded. Raises `ValueError` if the anchor is not a state reachable
+        from the root — there is no faithful path to seed the walk with, so resume is
+        refused rather than started from nowhere.
+        """
+        steps = path_steps_from_root(graph)
+        if anchor not in steps:
+            raise ValueError(
+                f"cannot resume from anchor {anchor!r}: it is not a state reachable "
+                "from the saved map's start page"
+            )
+        return [_PathStep(action, landed) for action, landed in steps[anchor]]
+
+    def position_at(path: Sequence[_PathStep], root_id: str) -> None:
+        """Reset-and-replay to the end of `path`, retrying a transient bad render.
+
+        Positions the driver at the anchor before the walk seeds there (resume), so the
+        anchor's URL for the frontier key is read from the live page. A replay left
+        divergent across the retry bound refuses the resume with `ValueError` — the
+        saved paths are no longer walkable, so continuing would map the wrong place.
+        """
+        last: _ReplayFailure | None = None
+        for _ in range(_MAX_REPLAY_ATTEMPTS):
+            try:
+                replay_once(path, root_id)
+                return
+            except _ReplayFailure as failure:
+                last = failure
+        assert last is not None  # the loop ran at least once, so a failure was recorded
+        raise ValueError(f"cannot resume: {last.reason(_MAX_REPLAY_ATTEMPTS)}")
+
     driver.reset()
     # From the clean start page, before capture may mutate it (opened screenshots, 8e).
     root_path = current_path()
+    if resume_from is not None:
+        assert resume_anchor is not None  # paired by the validation above
+        # The saved map's start state; the whole replay is relative to it. An empty map
+        # has no root to replay from, so there is nothing to resume.
+        map_root = resume_from.states[0] if resume_from.states else None
+        if map_root is None:
+            raise ValueError("cannot resume: the saved map has no start state")
+        # Refuse up front if the live start page is not the map's root: the saved paths
+        # replay from that root, so a changed start page cannot be continued faithfully.
+        if state_id(driver.state_html()) != map_root:
+            raise ValueError(
+                "cannot resume: the target's start page no longer matches the saved "
+                "map's start state, so the saved paths cannot be replayed"
+            )
+        root, _ = capture()  # no-op record: the root already lives in the loaded map
+        seed_path = seed_steps_to(resume_anchor)
+        if seed_path:  # the anchor is not the root itself
+            position_at(seed_path, root)
+        walk(root, resume_anchor, seed_path, current_path())
+        return graph
     root, _ = capture()
-    walk(root, root_path)
+    walk(root, root, [], root_path)
     return graph

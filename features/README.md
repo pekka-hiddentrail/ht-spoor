@@ -66,6 +66,7 @@ are authored when their phase begins, not up front.
 | `exploration_state_selector.feature` | Anchor selection for a resume run: a state-selector (`id:` prefix, `title:` exact, `url:` exact, or a role+name action `path`, combinable AND) resolves an in-memory candidate set to exactly one state, deterministically and never guessing — zero matches reported unmatched, several reported ambiguous with the candidates listed; the pure resolution core of the anchored, depth-relative resume capability (§2e v2), no browser or disk | §2e | `spoor/exploration` | 5 |
 | `exploration_graph_candidates.feature` | Building anchor candidates from an exploration graph: each mapped state becomes a resolvable `AnchorCandidate` (id, redacted page title, root-relative action path) so a resume selector resolves against a real run; `url:` is unpopulated by design (a state records no route) and reported unmatched, not guessed; the graph→candidate adapter of the resume capability (§2e v2), pure logic | §2e | `spoor/exploration`, `spoor/security` | 5 |
 | `exploration_persisted_map.feature` | Loading a persisted exploration map back into a graph: the inverse of the §2h-shareable map projection rebuilds an `ExplorationGraph` (states in order, action inventories, transition topology) so a later run can anchor a resume by `id:`/`path` against a crawl no longer in memory; signals/titles aren't stored so `title:` finds nothing (its own slice), validated by a project→load round-trip; the cross-run half of the resume capability (§2e v2), pure logic | §2e | `spoor/exploration` | 5 |
+| `exploration_resume_traversal.feature` | Resuming exploration from a mapped anchor: `resume_exploration` loads a saved map, resolves a selector to one anchor state, and continues the breadth-first walk *outward from it* — depth re-origined at the anchor (`--max-depth` counts clicks from the anchor, not the site root) and new states/transitions merged additively into the loaded map; refuses to guess (no/many matches, or a start page that no longer matches the saved map); the traversal slice that ties the three pure resume slices to the crawl and the CLI (`--resume-from`). Fast-tier scenarios drive the real load→resolve→resume chain against a fake site; a `@browser` scenario proves it end to end in real Chromium | §2e | `spoor/exploration`, CLI | 5 |
 | `testgen.feature` | Test-automation run generation: the pure generator turns a §2e exploration graph into a pytest suite (one Playwright-driven regression test per mapped transition) — replay the path, fire the action, assert the recorded signals, with every captured value and the live observations redacted like-for-like (sub-slice 2g-i) | §2g | `spoor/testgen`, `spoor/security` | 6 |
 
 The prose below describes what each feature file covers, in the present tense —
@@ -758,6 +759,30 @@ core scenario is a **round-trip**: project a known graph, load it back, and asse
 `id:` anchor resolves to the same state in memory and after reload — which is how the
 resume machinery is validated end to end, and would fail loudly if the two ends of the
 contract ever drift. Nothing is site-specific (§0).
+
+`exploration_resume_traversal.feature` (§2e) is the **fourth resume slice** — the
+payoff that ties the three pure slices to the crawl itself.
+`spoor/exploration/resume.py:resume_exploration(driver, …, saved_map, selector)` loads
+the saved map (`load_exploration_map`), builds candidates (`graph_candidates`), and
+resolves the selector (`resolve_anchor`) to one anchor — raising `ResumeError` when it
+matches none or several (listing candidates) — then hands the anchor to
+`explorer.explore`, which gained a `resume_from`/`resume_anchor` mode. The explorer
+starts from the loaded graph and seeds the breadth-first walk at the anchor with the
+root-relative reset-and-replay path that reaches it (reconstructed by the new
+`graph.path_steps_from_root`, which keeps each step's landed state so replay can verify
+it), **re-origins depth at the anchor** (depth is `len(path) - len(seed_path)`, so the
+anchor is depth 0 and `--max-depth` counts clicks from it), and **merges additively** —
+a transition-existence guard keeps a re-fired edge from being duplicated, and a fresh
+crawl (each edge fired once) is unaffected. It **fails loud** rather than remap
+silently: a start page whose id no longer matches the saved map's root, an anchor
+unreachable from that root, or a path that will not replay refuses with a `ValueError`.
+The CLI exposes it as `spoor explore <url> --resume-from <selector>`. The fast-tier
+scenarios drive the real load→resolve→resume chain in-process against a fake site
+(discovers states beyond the anchor, preserves the earlier map, measures depth from the
+anchor, resumes from the root, and both fail-loud paths); the `@browser` scenario proves
+the whole cycle end to end in real Chromium over an A→B→C fixture. From a *saved* map the
+CLI anchors by `id:` today (titles/URLs are not stored — their projection extensions are
+still deferred, see the resume design note). Nothing is site-specific (§0).
 
 `testgen.feature` (§2g) is **sub-slice 2g-i** — the pure test generator, built
 logic-first like the wiki renderer (6a): `build_tests(graph, target)` maps a §2e
