@@ -59,6 +59,9 @@ dev = [
     "pytest-bdd",
     "pytest-cov",
     "hypothesis",
+    # Resident-memory sampling for the performance bench's resource trace (§5.5).
+    # Bench-only; when absent the bench degrades to timing-only (RSS reads 0).
+    "psutil",
     # Serving extras are needed to run the serving features in the gate.
     "fastapi>=0.110",
     "uvicorn>=0.29",

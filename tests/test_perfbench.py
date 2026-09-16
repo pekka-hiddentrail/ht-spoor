@@ -1,10 +1,11 @@
 """Tests for the exploration performance bench (scripts/perfbench.py, §5.5).
 
 The bench's maths — reducing a finished run to metrics, timing each browser
-operation, emitting the per-operation timing trend, and gating on deterministic
-drift (the pure graph-shape counters only; call counts, capture counts and the
-skip histogram are advisory) — is pure, so it is unit-tested here with a
-hand-built graph, fake timing samples, and a fake driver;
+operation, bracketing each call with a resident-memory reading, emitting the
+per-operation timing trend and the resource timeline, and gating on deterministic
+drift (the pure graph-shape counters only; call counts, capture counts, memory and
+the skip histogram are advisory) — is pure, so it is unit-tested here with a
+hand-built graph, fake timing samples, an injected RSS sampler, and a fake driver;
 no browser is needed (that is the point of keeping `PlaywrightDriver` behind a lazy
 import in `run`).
 """
@@ -146,6 +147,28 @@ def test_timing_driver_labels_transactions_with_the_action() -> None:
     assert ("state_html", "") in labels  # context-free core method
 
 
+def test_timing_driver_brackets_each_call_with_rss_samples() -> None:
+    # RSS is read once before and once after each call, so an injected sampler that
+    # yields 100,200,300,400 pairs up as (before,after) per transaction in order.
+    readings = iter([100, 200, 300, 400])
+    driver = perfbench._TimingDriver(_FakeInner(), rss_sampler=lambda: next(readings))
+    driver.perform(_action("a"))
+    driver.state_html()
+    txns = driver.transactions
+    assert (txns[0].rss_before, txns[0].rss_after) == (100, 200)
+    assert (txns[1].rss_before, txns[1].rss_after) == (300, 400)
+    # Anchored on the run's time axis: non-negative and non-decreasing.
+    assert 0 <= txns[0].start_offset <= txns[1].start_offset
+
+
+def test_default_rss_sampler_returns_a_nonnegative_int() -> None:
+    # With psutil present it reads the process tree; absent, it degrades to 0. Either
+    # way the contract is a non-negative int, so the trace never carries garbage.
+    sample = perfbench._default_rss_sampler()
+    value = sample()
+    assert isinstance(value, int) and value >= 0
+
+
 def test_timing_driver_records_duration_even_when_a_call_raises() -> None:
     class _Boom:
         def perform(self, action: Any) -> None:
@@ -216,6 +239,31 @@ def test_measure_ranks_slowest_transactions_with_context() -> None:
     ]
 
 
+def test_measure_reports_peak_rss_and_ordered_trace() -> None:
+    txns = [
+        perfbench.Transaction(
+            "reset", 0.1, "", start_offset=0.0, rss_before=100, rss_after=150
+        ),
+        perfbench.Transaction(
+            "perform", 0.2, "button Add", start_offset=0.1, rss_before=150,
+            rss_after=900,
+        ),
+    ]
+    metrics = _measure(_graph(1, 0, 0), transactions=txns)
+    assert metrics.peak_rss_bytes == 900  # largest bracket across the whole trace
+    trace = perfbench.resource_trace(metrics)
+    assert [(r["op"], r["t_start"], r["rss_after"]) for r in trace] == [
+        ("reset", 0.0, 150),
+        ("perform", 0.1, 900),  # preserves run order and the action label below
+    ]
+    assert trace[1]["detail"] == "button Add"
+
+
+def test_measure_peak_rss_is_zero_without_samples() -> None:
+    # No RSS readings (psutil absent, or timing-only): peak is a clean 0, not an error.
+    assert _measure(_graph(1, 0, 0), samples={"reset": [0.1]}).peak_rss_bytes == 0
+
+
 # --- benchmark_entries ---------------------------------------------------
 
 
@@ -234,6 +282,26 @@ def test_benchmark_entries_are_timing_only_per_operation() -> None:
     }
     # No deterministic scalar counter leaks onto the (noisy) timing chart.
     assert all("states" not in str(e["name"]) for e in entries)
+
+
+def test_benchmark_entries_include_peak_rss_when_measured() -> None:
+    txns = [
+        perfbench.Transaction(
+            "reset", 0.1, "", rss_before=1_000_000, rss_after=2_500_000
+        )
+    ]
+    metrics = _measure(_graph(1, 0, 0), transactions=txns)
+    peak = [e for e in perfbench.benchmark_entries(metrics, "small")
+            if e["name"] == "small / peak RSS"]
+    assert len(peak) == 1
+    assert peak[0]["unit"] == "MB" and peak[0]["value"] == 2.5  # bytes -> MB
+
+
+def test_benchmark_entries_omit_peak_rss_when_unmeasured() -> None:
+    # psutil absent => peak 0 => no row, so a zero never flatlines the memory chart.
+    metrics = _measure(_graph(1, 0, 0), samples={"reset": [0.1]})
+    entries = perfbench.benchmark_entries(metrics, "small")
+    assert all("peak RSS" not in str(e["name"]) for e in entries)
 
 
 # --- check_drift ---------------------------------------------------------
@@ -310,6 +378,35 @@ def test_main_writes_baseline_then_passes_and_detects_drift(
     drifted = _measure(_graph(9, 2, 1), samples={"perform": [0.1, 0.2]})
     monkeypatch.setattr(perfbench, "run", lambda *a, **k: drifted)
     assert perfbench.main([*common, "--baseline", str(baseline)]) == 1
+
+
+def test_main_writes_resource_trace_when_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trace_out = tmp_path / "trace.json"
+    txns = [
+        perfbench.Transaction(
+            "perform", 0.2, "button Add", start_offset=0.05, rss_before=10,
+            rss_after=20,
+        )
+    ]
+    fixed = _measure(_graph(1, 0, 0), transactions=txns)
+    monkeypatch.setattr(perfbench, "run", lambda *a, **k: fixed)
+    assert perfbench.main(
+        ["--target", "http://127.0.0.1:3000", "--label", "s",
+         "--trace-out", str(trace_out)]
+    ) == 0
+    rows = json.loads(trace_out.read_text(encoding="utf-8"))
+    assert rows == [
+        {
+            "t_start": 0.05,
+            "duration_s": 0.2,
+            "op": "perform",
+            "detail": "button Add",
+            "rss_before": 10,
+            "rss_after": 20,
+        }
+    ]
 
 
 def test_main_without_baseline_is_advisory_and_passes(
