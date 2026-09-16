@@ -122,6 +122,22 @@ def explore(
             )
         ),
     ] = None,
+    resume_from: Annotated[
+        str | None,
+        typer.Option(
+            "--resume-from",
+            help=(
+                "Continue an earlier exploration of this URL instead of starting over. "
+                "Give a selector naming the screen to pick up from, as it was mapped "
+                "before: 'id:<prefix>' matches a screen's id (see an earlier run's map "
+                "or wiki for ids). The crawl continues outward from there, and any "
+                "--max-depth is counted in clicks from that screen, not the start. "
+                "Newly found screens are added to the saved map. Refused if the "
+                "selector names no screen or several, or if the start page has changed "
+                "since the map was saved."
+            ),
+        ),
+    ] = None,
     wiki: Annotated[
         Path | None,
         typer.Option(
@@ -158,7 +174,10 @@ def explore(
     skipped and never fired. An element that can't actually be clicked (gone, hidden,
     or covered by the time it's reached) is recorded as skipped and the run continues.
     Bound the run with the budget options, and press Ctrl-C to stop it early at any
-    time. Pass --wiki to also write a browsable wiki of the result, and --screenshots
+    time. Pass --resume-from to continue an earlier exploration of this URL from a
+    named screen instead of starting over: the crawl picks up there, any --max-depth is
+    counted from that screen, and the newly found screens are merged into the saved map.
+    Pass --wiki to also write a browsable wiki of the result, and --screenshots
     to include pictures in that wiki — a full-page shot of each screen, a clip of
     each interactive element, and a shot of what a dropdown or list reveals when opened
     (off by default, because a picture can't have secrets
@@ -172,11 +191,24 @@ def explore(
     from spoor.exploration.driver import PlaywrightDriver
     from spoor.exploration.explorer import ElementShot
     from spoor.exploration.explorer import explore as explore_target
+    from spoor.exploration.resume import ResumeError, resume_exploration
     from spoor.exploration.screenshot_store import ImageRef
 
     if screenshots and wiki is None:
         raise typer.BadParameter("--screenshots needs --wiki: there is no wiki to put "
                                  "the images in without it.")
+    # The saved map to continue, when resuming: the §2h-shareable projection an earlier
+    # explore of this exact URL stored (§2f). Loaded up front so a missing map fails
+    # before a browser is launched.
+    saved_map: dict[str, object] | None = None
+    if resume_from is not None:
+        entry = MapStore().get(url)
+        if entry is None or entry.exploration is None:
+            raise typer.BadParameter(
+                f"there is no saved exploration map for {url} to resume from — run "
+                "`spoor explore <url>` first to map it, then resume."
+            )
+        saved_map = entry.exploration
     try:
         budget = RunBudget(
             max_states=max_states,
@@ -208,15 +240,32 @@ def explore(
     signal.signal(signal.SIGINT, lambda *_: controller.kill())
     try:
         with PlaywrightDriver(url) as driver:
-            graph = explore_target(
-                driver,
-                target=url,
-                controller=controller,
-                declared_sandbox=sandbox,
-                screenshots=shots,
-                element_screenshots=element_shots,
-                screenshot_dir=screenshot_dir,
-            )
+            if saved_map is not None:
+                assert resume_from is not None  # saved_map is set only when resuming
+                try:
+                    graph = resume_exploration(
+                        driver,
+                        target=url,
+                        controller=controller,
+                        saved_map=saved_map,
+                        selector=resume_from,
+                        declared_sandbox=sandbox,
+                        screenshots=shots,
+                        element_screenshots=element_shots,
+                        screenshot_dir=screenshot_dir,
+                    )
+                except (ResumeError, ValueError) as exc:
+                    raise typer.BadParameter(str(exc)) from exc
+            else:
+                graph = explore_target(
+                    driver,
+                    target=url,
+                    controller=controller,
+                    declared_sandbox=sandbox,
+                    screenshots=shots,
+                    element_screenshots=element_shots,
+                    screenshot_dir=screenshot_dir,
+                )
     finally:
         signal.signal(signal.SIGINT, previous_handler)
 
@@ -230,7 +279,7 @@ def explore(
         exploration=shareable_exploration_map(graph),
     )
 
-    typer.echo(f"Explored {url}")
+    typer.echo(f"{'Resumed' if saved_map is not None else 'Explored'} {url}")
     typer.echo(f"  states discovered: {len(graph.states)}")
     typer.echo(f"  transitions:       {len(graph.transitions)}")
     typer.echo(f"  actions skipped:   {len(graph.skipped)}")

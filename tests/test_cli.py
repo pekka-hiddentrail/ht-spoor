@@ -119,3 +119,28 @@ def test_explore_screenshots_requires_wiki(monkeypatch: pytest.MonkeyPatch) -> N
     # The error must name --wiki so the user knows what to add; assert on the flattened
     # message so a Rich panel line-wrap (differs across environments) can't hide it.
     assert "--wiki" in _flatten_cli_error(result.output)
+
+
+def test_explore_resume_without_saved_map_aborts_before_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # --resume-from on a URL that was never mapped is rejected before any browser is
+    # launched: there is no saved map to continue (§2e resume). An empty cache root
+    # guarantees the URL is unmapped whatever else is on the machine.
+    from spoor.exploration import driver as driver_mod
+    from spoor.security import storage
+
+    monkeypatch.setattr(storage, "CACHE_ROOT", tmp_path)
+
+    def _boom(*_a: object, **_k: object) -> object:
+        raise AssertionError("a browser must not be launched with no map to resume")
+
+    monkeypatch.setattr(driver_mod, "PlaywrightDriver", _boom)
+    result = runner.invoke(
+        cli.app,
+        ["explore", "http://localhost:8000/", "--resume-from", "id:abc123"],
+    )
+    assert result.exit_code != 0
+    # The message must point the user at mapping the URL first. Assert on the flattened
+    # (whitespace-stripped) message so a Rich panel line-wrap can't hide the token.
+    assert "nosavedexplorationmap" in _flatten_cli_error(result.output)

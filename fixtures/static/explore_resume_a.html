@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<!--
+  Resume-traversal fixture (ROADMAP.md §2e resume). The first of a three-page chain,
+  A -> B -> C, each page a distinct abstract state linking one step deeper. A shallow
+  first crawl (depth 1 from A) maps A and B but stops before C; resuming from B then
+  reaches C, proving the depth budget is re-origined at the resume anchor. Nothing
+  here is site-specific (§0): the chain merely stands in for any deeper-than-budget site.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Resume A</title>
+  </head>
+  <body>
+    <h1>Resume A</h1>
+    <p>The start of the resume chain.</p>
+    <a href="/explore_resume_b.html">To B</a>
+  </body>
+</html>
