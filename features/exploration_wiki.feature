@@ -48,6 +48,16 @@ Feature: Exploration wiki generation — the browsable map (ROADMAP.md §2e, sli
   for every element for now: Spoor captures no per-element screenshot yet, so the column
   is honest about there being nothing to show rather than implying one exists.
 
+  Slice 6g groups the page set into subfolders so the wiki directory stays readable as
+  the map grows. State pages move under a "states/" subfolder and transition pages under
+  a "transitions/" subfolder; the index and help pages stay at the root as the entry
+  points, and screenshots keep the "screenshots/" subfolder they already have. Grouping
+  the pages turns the links between them into relative paths that climb out of a
+  subfolder and back into another, so every navigation — index to a state, a state's
+  screenshot and destination, a transition back to its states, and the shared nav to the
+  index and help — must still resolve. Purely a layout change: the pages' content and
+  their redaction (§2h) are untouched, and it stays generic across every target (§0).
+
   Background:
     Given an explored graph of a small app:
       | state | title     | ax_nodes | console     | storage        | network            |
@@ -190,3 +200,24 @@ Feature: Exploration wiki generation — the browsable map (ROADMAP.md §2e, sli
     And the state page for "shop" groups the network request "api/cart" under "Data"
     And the state page for "shop" groups the network request "account" under "Documents"
     And the state page for "shop" shows the network category "Images" with 2 requests
+
+  Scenario: State and transition pages are grouped into their own subfolders
+    # The wiki root keeps only the entry points; each kind of page gets its own subfolder.
+    When I render the wiki for "https://shop.example"
+    Then every state page is under the "states/" subfolder
+    And every transition page is under the "transitions/" subfolder
+    And the index and help pages stay at the wiki root
+
+  Scenario: Links between the subfolders resolve
+    # Grouping pages into subfolders turns their links into relative paths that climb out
+    # and back in; every navigation must still resolve — the index into a subfolder, a
+    # transition back up to its states, a state's screenshot and destination, and the nav.
+    Given a captured screenshot for state "home"
+    When I render the wiki for "https://shop.example"
+    Then the index links to the state page for "home" under "states/"
+    And the transition page links up to the state page for "home"
+    And the transition page links up to the state page for "menu"
+    And the state page for "home" references its screenshot one level up
+    And the destination link on the "home" state page points into "transitions/"
+    And the state page for "home" links up to the index page
+    And the state page for "home" links up to the help page

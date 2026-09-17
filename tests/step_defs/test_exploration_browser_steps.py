@@ -102,9 +102,9 @@ def wiki_is_complete(context: dict[str, Any]) -> None:
     states = _summary_count(context, "states discovered")
     transitions = _summary_count(context, "transitions")
     for i in range(states):
-        assert (wiki_dir / f"state-{i}.html").is_file()
+        assert (wiki_dir / "states" / f"state-{i}.html").is_file()
     for j in range(transitions):
-        assert (wiki_dir / f"transition-{j}.html").is_file()
+        assert (wiki_dir / "transitions" / f"transition-{j}.html").is_file()
 
 
 @then(

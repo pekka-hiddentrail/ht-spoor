@@ -176,7 +176,9 @@ def _element_index(context: dict[str, Any], name: str) -> int:
 
 
 def _home_page(context: dict[str, Any]) -> str:
-    return (context["out_dir"] / "state-0.html").read_text(encoding="utf-8")
+    return (
+        context["out_dir"] / "states" / "state-0.html"
+    ).read_text(encoding="utf-8")
 
 
 # --- Then: capture sink --------------------------------------------------
@@ -223,7 +225,8 @@ def clips_are_references_on_disk(context: dict[str, Any]) -> None:
 @then(parsers.parse('the Actions row for "{name}" embeds its element screenshot'))
 def row_embeds(context: dict[str, Any], name: str) -> None:
     index = _element_index(context, name)
-    src = f'src="screenshots/state-0-el-{index}.png"'
+    # A state page sits in states/, so its element clip src climbs one level (slice 6g).
+    src = f'src="../screenshots/state-0-el-{index}.png"'
     assert src in _home_page(context), f"{name} row does not embed {src}"
 
 

@@ -45,9 +45,11 @@ def _is_embedded(ref: ImageRef, page: str) -> bool:
 
     Dedup (§2e slice 8g) means a clip may be a crop of a bigger picture rather than its
     own file: the wiki then references the shared `src` inside a CSS `url(...)` crop box
-    rather than an `<img src>`. Either shape counts as embedded.
+    rather than an `<img src>`. Either shape counts as embedded. State pages sit under
+    `states/` (slice 6g), so their references climb one level with a `../` prefix.
     """
-    return f'src="{ref.src}"' in page or f"url('{ref.src}')" in page
+    src = f"../{ref.src}"
+    return f'src="{src}"' in page or f"url('{src}')" in page
 
 _JUICE_SHOP_BASE = "http://127.0.0.1:3000"
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -96,10 +98,11 @@ def test_wiki_is_reliably_created(base: str, name: str) -> None:
     #    faithful view of the graph.
     expected = (
         {"index.html", "help.html"}
-        | {f"state-{i}.html" for i in range(len(states))}
-        | {f"transition-{j}.html" for j in range(len(transitions))}
+        | {f"states/state-{i}.html" for i in range(len(states))}
+        | {f"transitions/transition-{j}.html" for j in range(len(transitions))}
     )
-    assert {p.name for p in written} == expected
+    # Pages sit in subfolders (slice 6g), so compare paths relative to the wiki root.
+    assert {p.relative_to(out_dir).as_posix() for p in written} == expected
 
     # 2) Every page is well-formed, non-empty HTML.
     for path in written:
@@ -116,7 +119,10 @@ def test_wiki_is_reliably_created(base: str, name: str) -> None:
 
     # 4) Every state/transition link in the index resolves to a written file — no
     #    dangling navigation in the generated site.
-    for target_name in re.findall(r'href="((?:state|transition)-\d+\.html)"', index):
+    # Index links point into the subfolders (slice 6g): states/state-N.html and
+    # transitions/transition-N.html, with no `../` prefix (the index sits at the root).
+    links = re.findall(r'href="((?:states|transitions)/[a-z]+-\d+\.html)"', index)
+    for target_name in links:
         assert (out_dir / target_name).is_file(), f"index links missing {target_name}"
 
 
@@ -160,7 +166,9 @@ def test_screenshots_are_captured_and_embedded_when_opted_in() -> None:
     assert not [p for p in written if p.suffix == ".png"], "render writes no images"
     for index, sid in enumerate(graph.states):
         if sid in shots:
-            page = (out_dir / f"state-{index}.html").read_text(encoding="utf-8")
+            page = (out_dir / "states" / f"state-{index}.html").read_text(
+                encoding="utf-8"
+            )
             # Each captured state embeds *its own* reference — which dedup (§2e slice
             # 8g) may point at a file first written for an earlier, identical-looking
             # state rather than this state's own index, so assert the ref it holds.
@@ -209,7 +217,7 @@ def test_element_screenshots_are_clipped_and_embedded_when_opted_in() -> None:
     )
     assert not [p for p in written if p.suffix == ".png"], "render writes no images"
     pages = {
-        i: (out_dir / f"state-{i}.html").read_text(encoding="utf-8")
+        i: (out_dir / "states" / f"state-{i}.html").read_text(encoding="utf-8")
         for i in range(len(graph.states))
     }
     for ref in clips:
@@ -260,7 +268,7 @@ def test_opened_contents_are_captured_and_embedded_when_opted_in() -> None:
     )
     assert not [p for p in written if p.suffix == ".png"], "render writes no images"
     pages = {
-        i: (out_dir / f"state-{i}.html").read_text(encoding="utf-8")
+        i: (out_dir / "states" / f"state-{i}.html").read_text(encoding="utf-8")
         for i in range(len(graph.states))
     }
     for ref in opened:

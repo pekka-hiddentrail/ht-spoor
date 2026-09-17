@@ -244,7 +244,9 @@ def _pngs(out: Path) -> list[Path]:
 
 def _page(context: dict[str, Any], name: str) -> str:
     index = context["graph"].states.index(context["app"].state_id_of(name))
-    return (context["out_dir"] / f"state-{index}.html").read_text(encoding="utf-8")
+    return (
+        context["out_dir"] / "states" / f"state-{index}.html"
+    ).read_text(encoding="utf-8")
 
 
 # --- Given ---------------------------------------------------------------
@@ -371,8 +373,11 @@ def both_embed_same(context: dict[str, Any]) -> None:
     assert refs <= srcs
     for name in shots:
         index = context["graph"].states.index(name)
-        page = (context["out_dir"] / f"state-{index}.html").read_text(encoding="utf-8")
-        assert f'src="{shared}"' in page, f"state-{index} does not embed {shared}"
+        page = (
+            context["out_dir"] / "states" / f"state-{index}.html"
+        ).read_text(encoding="utf-8")
+        # A state page sits in states/, so its embedded src climbs one level (slice 6g).
+        assert f'src="../{shared}"' in page, f"state-{index} does not embed {shared}"
 
 
 @then("a separate screenshot file is written for each of the two screens")
@@ -395,7 +400,8 @@ def no_clip_file(context: dict[str, Any]) -> None:
 def row_embeds_crop(context: dict[str, Any]) -> None:
     page = _page(context, "home")
     assert "screenshot-crop" in page, "no crop reference on the page"
-    assert "background-image:url('screenshots/state-0.png')" in page, page
+    # A state page sits in states/, so the crop background-image climbs a level (6g).
+    assert "background-image:url('../screenshots/state-0.png')" in page, page
 
 
 @then("a clip file is written for that element")
