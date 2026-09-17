@@ -176,7 +176,7 @@ def _state_index(context: dict[str, Any], name: str) -> int:
 
 
 def _state_page(context: dict[str, Any], name: str) -> str:
-    path = context["out_dir"] / f"state-{_state_index(context, name)}.html"
+    path = context["out_dir"] / "states" / f"state-{_state_index(context, name)}.html"
     return path.read_text(encoding="utf-8")
 
 
@@ -238,12 +238,14 @@ def dir_has_no_images(context: dict[str, Any]) -> None:
 @then(parsers.parse('the state page for "{name}" embeds its screenshot image'))
 def page_embeds(context: dict[str, Any], name: str) -> None:
     index = _state_index(context, name)
-    assert f'src="screenshots/state-{index}.png"' in _state_page(context, name)
+    # A state page sits in states/, so its screenshot src climbs one level (slice 6g).
+    assert f'src="../screenshots/state-{index}.png"' in _state_page(context, name)
 
 
 @then("no wiki page embeds a screenshot image")
 def no_page_embeds(context: dict[str, Any]) -> None:
-    for path in context["out_dir"].glob("*.html"):
+    # Pages live in subfolders now (slice 6g), so walk the tree, not just the root.
+    for path in context["out_dir"].rglob("*.html"):
         assert "<img" not in path.read_text(encoding="utf-8"), f"image in {path.name}"
 
 

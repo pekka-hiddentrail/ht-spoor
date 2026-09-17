@@ -65,6 +65,16 @@ accessibility nodes, storage keys added, network requests, screenshot hash, the
 redaction placeholder, and so on). It carries no captured values, so nothing on it needs
 redaction, and being identical for every target it holds nothing site-specific (§0).
 
+Slice 6g groups the page set into subfolders so the wiki directory stays readable as
+the map grows: state pages are written under `states/`, transition pages under
+`transitions/`, while `index.html` and `help.html` stay at the root as entry points
+and screenshots keep their existing `screenshots/` subfolder. A page's stored filename
+is its root-relative path (`states/state-0.html`), and each page is rendered with a
+`root` prefix — `""` for a root page, `"../"` for one in a subfolder — that every link
+and image `src` is written through, so a nav link, a cross-page link, and a screenshot
+reference all resolve from wherever the page sits. Purely a layout change; page content
+and redaction are untouched and it stays generic across every target (§0).
+
 (The console/network buffers are also now *scoped per visit*: the driver clears them on
 each reset, so a state reached late in the run reflects only the walk that reached it,
 not the whole session's cumulative output — see `driver.reset`. That is a capture-layer
@@ -98,6 +108,16 @@ from spoor.security.redaction import REDACTED, redact
 # 12-char prefix is enough to tell states apart in links and the overview diagram.
 _SHORT_ID = 12
 _UNNAMED = "(unnamed)"
+
+# The page set is grouped into subfolders so the wiki root stays readable (slice 6g):
+# state pages under `states/`, transition pages under `transitions/`. `index.html` and
+# `help.html` stay at the root as entry points, and screenshots keep their own
+# `screenshots/` subfolder (written by the explorer). A page's filename is its
+# root-relative path; `_ROOT_UP` is the prefix a page one level down prepends to every
+# link and image `src` to climb back to the root, so references resolve from anywhere.
+_STATES_SUBDIR = "states"
+_TRANSITIONS_SUBDIR = "transitions"
+_ROOT_UP = "../"
 
 
 # Network-request categories (§2e slice 6d). A flat list of every request seen at a
@@ -262,7 +282,7 @@ def _state_view(
         "id": sid,
         "short_id": sid[:_SHORT_ID],
         "label": label,
-        "filename": f"state-{index}.html",
+        "filename": f"{_STATES_SUBDIR}/state-{index}.html",
         "has_signals": signals is not None,
         "settled": True if signals is None else signals.settled,
         "ax_node_count": None if signals is None else signals.ax_node_count,
@@ -289,9 +309,10 @@ def _image_view(ref: ImageRef | None) -> dict[str, object] | None:
     A whole-file reference (`box` None) renders as an `<img>`; a crop reference — a clip
     that is a region of a bigger picture (§2e slice 8g) — carries the `crop` rectangle,
     so the template shows just that region of the shared `src` (a CSS-cropped box)
-    instead of embedding a separate image. `src` is the subfolder-relative filename
-    either way — the same path the image sits at beside the pages. Holds only a filename
-    and integers, so it adds nothing to redact (§2h).
+    instead of embedding a separate image. `src` is the root-relative filename either
+    way (e.g. `screenshots/state-0.png`); the template prepends the page's `root` prefix
+    so it resolves from a page one level down in `states/` (slice 6g). Holds only a
+    filename and integers, so it adds nothing to redact (§2h).
     """
     if ref is None:
         return None
@@ -375,7 +396,7 @@ def _transition_view(
     signals = transition.signals
     return {
         "index": index,
-        "filename": f"transition-{index}.html",
+        "filename": f"{_TRANSITIONS_SUBDIR}/transition-{index}.html",
         "from_id": transition.from_state,
         "from_short": transition.from_state[:_SHORT_ID],
         "from_label": labels[transition.from_state],
@@ -481,6 +502,9 @@ def build_pages(
 
     env = _environment()
     safe_target = redact(target)
+    # `root` is the path from a page back to the wiki root, prepended to every link and
+    # image `src` (slice 6g). Root pages ("") sit at the top; state/transition pages
+    # live one level down, so they climb out with `_ROOT_UP`.
     pages: dict[str, str] = {
         "index.html": env.get_template("index.html").render(
             target=safe_target,
@@ -488,17 +512,18 @@ def build_pages(
             transitions=transition_views,
             skipped=skip_views,
             mermaid=_mermaid(graph, state_index, labels),
+            root="",
         ),
         # A fixed, target-independent glossary of every term the pages use (6f).
-        "help.html": env.get_template("help.html").render(target=safe_target),
+        "help.html": env.get_template("help.html").render(target=safe_target, root=""),
     }
     for view in state_views:
         pages[str(view["filename"])] = env.get_template("state.html").render(
-            state=view, target=safe_target
+            state=view, target=safe_target, root=_ROOT_UP
         )
     for view in transition_views:
         pages[str(view["filename"])] = env.get_template("transition.html").render(
-            transition=view, target=safe_target
+            transition=view, target=safe_target, root=_ROOT_UP
         )
     return pages
 
@@ -561,7 +586,10 @@ def render_wiki(
         element_screenshots=clip_files,
         element_opened=opened_files,
     ).items():
+        # A filename is a root-relative path (e.g. states/state-0.html, slice 6g), so
+        # create its subfolder before writing; index/help sit at the root.
         path = out_dir / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(html, encoding="utf-8")
         written.append(path)
     return sorted(written)
@@ -594,8 +622,8 @@ _LAYOUT = """<!DOCTYPE html>
     </style>
   </head>
   <body>
-    <nav><a href="index.html">&larr; Overview</a> &middot;
-      <a href="help.html">Help / glossary</a> &middot;
+    <nav><a href="{{ root }}index.html">&larr; Overview</a> &middot;
+      <a href="{{ root }}help.html">Help / glossary</a> &middot;
       <span>Explored target: <code>{{ target }}</code></span></nav>
     {% block body %}{% endblock %}
   </body>
@@ -656,15 +684,18 @@ _STATE = """{% extends "layout.html" %}
    (a clip that is a region of a bigger image, §2e slice 8g) as a CSS-cropped box that
    shows just that rectangle of `src`. Both keep the `screenshot` class so existing
    styling and assertions hold; the crop adds `screenshot-crop`. #}
-{% macro shot(image, alt) %}
+{# `root` is passed in because a Jinja macro cannot see the template's render context;
+   it prefixes the image src so a screenshot in `screenshots/` resolves from a page that
+   sits one level down in `states/` (slice 6g). #}
+{% macro shot(image, alt, root) %}
 {% if image.crop %}
 <span class="screenshot screenshot-crop" role="img" aria-label="{{ alt }}"
   style="display:inline-block;width:{{ image.crop.width }}px;
-  height:{{ image.crop.height }}px;background-image:url('{{ image.src }}');
+  height:{{ image.crop.height }}px;background-image:url('{{ root }}{{ image.src }}');
   background-position:-{{ image.crop.x }}px -{{ image.crop.y }}px;
   background-repeat:no-repeat;"></span>
 {% else %}
-<img class="screenshot" src="{{ image.src }}" alt="{{ alt }}" />
+<img class="screenshot" src="{{ root }}{{ image.src }}" alt="{{ alt }}" />
 {% endif %}
 {% endmacro %}
 {% block body %}
@@ -676,7 +707,7 @@ so this snapshot is best-effort and may be incomplete.</p>
 {% endif %}
 {% if state.screenshot_image %}
 <h2>Screenshot</h2>
-{{ shot(state.screenshot_image, "Full-page screenshot of " ~ state.label) }}
+{{ shot(state.screenshot_image, "Full-page screenshot of " ~ state.label, root) }}
 {% endif %}
 
 <h2>Actions</h2>
@@ -688,12 +719,15 @@ so this snapshot is best-effort and may be incomplete.</p>
   <tr>
     <td>{{ el.label }}</td>
     <td><em>{{ el.type }}</em></td>
-    <td>{% if el.screenshot %}{{ shot(el.screenshot, "Screenshot of " ~ el.label) }}
+    <td>{% if el.screenshot %}
+      {{ shot(el.screenshot, "Screenshot of " ~ el.label, root) }}
       {% else %}<em>none</em>{% endif %}</td>
-    <td>{% if el.opened %}{{ shot(el.opened, "Opened contents of " ~ el.label) }}
+    <td>{% if el.opened %}
+      {{ shot(el.opened, "Opened contents of " ~ el.label, root) }}
       {% else %}<em>none</em>{% endif %}</td>
     <td>
-      {% if el.dest_filename %}<a href="{{ el.dest_filename }}">{{ el.dest_label }}</a>
+      {% if el.dest_filename %}
+      <a href="{{ root }}{{ el.dest_filename }}">{{ el.dest_label }}</a>
       {% else %}<em>none</em>{% endif %}</td>
   </tr>
   {% endfor %}
@@ -732,10 +766,12 @@ _TRANSITION = """{% extends "layout.html" %}
 {% endblock %}
 {% block body %}
 <h1>Transition</h1>
-<p><a href="state-{{ transition.from_index }}.html">{{ transition.from_label }}</a>
+<p><a href="{{ root }}states/state-{{ transition.from_index }}.html">
+    {{ transition.from_label }}</a>
   &mdash;<strong>{{ transition.action_name }}</strong>
   <em>({{ transition.action_role }})</em>&rarr;
-  <a href="state-{{ transition.to_index }}.html">{{ transition.to_label }}</a></p>
+  <a href="{{ root }}states/state-{{ transition.to_index }}.html">
+    {{ transition.to_label }}</a></p>
 {% if transition.recovered_via %}
 <p><strong>Reached from behind a blocker:</strong> a covering layer
   (<code>{{ transition.recovered_via }}</code>) was cleared before this action could be
@@ -778,7 +814,8 @@ _HELP = """{% extends "layout.html" %}
 {% block body %}
 <h1>Help &amp; glossary</h1>
 <p>This wiki is a map of a site that Spoor explored automatically. It has an
-  <a href="index.html">overview</a> with a diagram of the whole map, one page per
+  <a href="{{ root }}index.html">overview</a> with a diagram of the whole map, one page
+  per
   <strong>state</strong> (a distinct screen), and one page per
   <strong>transition</strong> (what happened when Spoor activated one element on a
   screen). The terms each page uses are defined below.</p>

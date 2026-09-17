@@ -160,11 +160,15 @@ def _pages(context: dict[str, Any]) -> dict[str, str]:
 def _state_page(context: dict[str, Any], name: str) -> str:
     """The rendered page for the state named `name` (name == its id here)."""
     index = context["graph"].states.index(name)
-    return _pages(context)[f"state-{index}.html"]
+    return _pages(context)[f"states/state-{index}.html"]
 
 
 def _only_transition_page(context: dict[str, Any]) -> str:
-    pages = [html for name, html in _pages(context).items() if name.startswith("trans")]
+    pages = [
+        html
+        for name, html in _pages(context).items()
+        if name.startswith("transitions/")
+    ]
     assert len(pages) == 1, f"expected exactly one transition page, got {len(pages)}"
     return pages[0]
 
@@ -181,8 +185,8 @@ def has_index(context: dict[str, Any]) -> None:
 def page_per_state(context: dict[str, Any]) -> None:
     states = context["graph"].states
     for i in range(len(states)):
-        assert f"state-{i}.html" in _pages(context)
-    pages = [name for name in _pages(context) if name.startswith("state-")]
+        assert f"states/state-{i}.html" in _pages(context)
+    pages = [name for name in _pages(context) if name.startswith("states/")]
     assert len(pages) == len(states)
 
 
@@ -190,8 +194,8 @@ def page_per_state(context: dict[str, Any]) -> None:
 def page_per_transition(context: dict[str, Any]) -> None:
     transitions = context["graph"].transitions
     for j in range(len(transitions)):
-        assert f"transition-{j}.html" in _pages(context)
-    pages = [name for name in _pages(context) if name.startswith("transition-")]
+        assert f"transitions/transition-{j}.html" in _pages(context)
+    pages = [name for name in _pages(context) if name.startswith("transitions/")]
     assert len(pages) == len(transitions)
 
 
@@ -208,7 +212,7 @@ def index_counts(context: dict[str, Any], states: int, transitions: int) -> None
 def index_links_states(context: dict[str, Any]) -> None:
     index = _pages(context)["index.html"]
     for i in range(len(context["graph"].states)):
-        assert f'href="state-{i}.html"' in index
+        assert f'href="states/state-{i}.html"' in index
 
 
 @then("the index includes a graph overview")
@@ -316,7 +320,9 @@ def help_defines(context: dict[str, Any], term: str) -> None:
 @then("every wiki page links to the help page")
 def every_page_links_help(context: dict[str, Any]) -> None:
     for name, html in _pages(context).items():
-        assert 'href="help.html"' in html, f"{name} does not link to the help page"
+        # Root pages link to "help.html"; subfolder pages to "../help.html" — the
+        # trailing-quote substring matches either, so nav resolves from anywhere (6g).
+        assert 'help.html"' in html, f"{name} does not link to the help page"
 
 
 # --- Then: actions table (slice 6e) --------------------------------------
@@ -376,7 +382,9 @@ def element_destination(
     context: dict[str, Any], label: str, name: str, dest: str
 ) -> None:
     row = _element_row(_state_page(context, name), label)
-    assert 'href="transition-' in row, f"destination is not a transition link: {row!r}"
+    assert 'href="../transitions/transition-' in row, (
+        f"destination is not a transition link: {row!r}"
+    )
     assert f">{dest}</a>" in row, f"destination not labelled {dest!r}: {row!r}"
 
 
@@ -394,8 +402,9 @@ def element_no_destination(context: dict[str, Any], label: str, name: str) -> No
 
 
 def _screenshot_src(context: dict[str, Any], name: str) -> str:
+    # A state page sits in states/, so its screenshot src climbs one level (slice 6g).
     index = context["graph"].states.index(name)
-    return f'src="screenshots/state-{index}.png"'
+    return f'src="../screenshots/state-{index}.png"'
 
 
 @then(parsers.parse('the state page for "{name}" embeds its screenshot image'))
@@ -510,3 +519,68 @@ def no_raw_secret(context: dict[str, Any], secret: str) -> None:
 @then("some wiki page shows the redaction placeholder")
 def shows_placeholder(context: dict[str, Any]) -> None:
     assert any(REDACTED in html for html in _pages(context).values())
+
+
+# --- Then: subfolder layout (slice 6g) -----------------------------------
+
+
+@then(parsers.parse('every state page is under the "{sub}" subfolder'))
+def state_pages_under(context: dict[str, Any], sub: str) -> None:
+    names = [n for n in _pages(context) if "state-" in n and n.endswith(".html")]
+    assert names, "no state pages found"
+    for name in names:
+        assert name.startswith(sub), f"{name} is not under {sub}"
+
+
+@then(parsers.parse('every transition page is under the "{sub}" subfolder'))
+def transition_pages_under(context: dict[str, Any], sub: str) -> None:
+    names = [n for n in _pages(context) if "transition-" in n]
+    assert names, "no transition pages found"
+    for name in names:
+        assert name.startswith(sub), f"{name} is not under {sub}"
+
+
+@then("the index and help pages stay at the wiki root")
+def entry_pages_at_root(context: dict[str, Any]) -> None:
+    # A root page's filename has no subfolder separator.
+    assert "index.html" in _pages(context)
+    assert "help.html" in _pages(context)
+
+
+@then(parsers.parse('the index links to the state page for "{name}" under "{sub}"'))
+def index_links_state_under(context: dict[str, Any], name: str, sub: str) -> None:
+    index = _pages(context)["index.html"]
+    idx = context["graph"].states.index(name)
+    assert f'href="{sub}state-{idx}.html"' in index
+
+
+@then(parsers.parse('the transition page links up to the state page for "{name}"'))
+def transition_links_up_to_state(context: dict[str, Any], name: str) -> None:
+    idx = context["graph"].states.index(name)
+    assert f'href="../states/state-{idx}.html"' in _only_transition_page(context)
+
+
+@then(
+    parsers.parse('the state page for "{name}" references its screenshot one level up')
+)
+def screenshot_one_level_up(context: dict[str, Any], name: str) -> None:
+    assert _screenshot_src(context, name) in _state_page(context, name)
+
+
+@then(
+    parsers.parse(
+        'the destination link on the "{name}" state page points into "{sub}"'
+    )
+)
+def destination_points_into(context: dict[str, Any], name: str, sub: str) -> None:
+    assert f'href="../{sub}transition-' in _state_page(context, name)
+
+
+@then(parsers.parse('the state page for "{name}" links up to the index page'))
+def state_links_up_to_index(context: dict[str, Any], name: str) -> None:
+    assert 'href="../index.html"' in _state_page(context, name)
+
+
+@then(parsers.parse('the state page for "{name}" links up to the help page'))
+def state_links_up_to_help(context: dict[str, Any], name: str) -> None:
+    assert 'href="../help.html"' in _state_page(context, name)

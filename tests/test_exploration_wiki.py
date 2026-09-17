@@ -50,7 +50,7 @@ def test_empty_graph_renders_index_and_help() -> None:
 def test_state_without_signals_reads_honestly() -> None:
     graph = ExplorationGraph()
     graph.add_state(_ID_A, [])  # signals default None
-    page = build_pages(graph, target="t")["state-0.html"]
+    page = build_pages(graph, target="t")["states/state-0.html"]
     assert "No signal bundle was captured" in page
 
 
@@ -70,15 +70,16 @@ def test_two_state_graph_links_are_navigable() -> None:
     assert set(pages) == {
         "help.html",
         "index.html",
-        "state-0.html",
-        "state-1.html",
-        "transition-0.html",
+        "states/state-0.html",
+        "states/state-1.html",
+        "transitions/transition-0.html",
     }
-    # The transition page links both endpoints, and the from-state links onward.
-    transition = pages["transition-0.html"]
-    assert 'href="state-0.html"' in transition
-    assert 'href="state-1.html"' in transition
-    assert 'href="transition-0.html"' in pages["state-0.html"]
+    # The transition page links both endpoints (climbing back up to states/), and the
+    # from-state links onward into transitions/ (slice 6g).
+    transition = pages["transitions/transition-0.html"]
+    assert 'href="../states/state-0.html"' in transition
+    assert 'href="../states/state-1.html"' in transition
+    assert 'href="../transitions/transition-0.html"' in pages["states/state-0.html"]
     # The screenshot delta and node delta are surfaced.
     assert "Accessibility node delta: <strong>3</strong>" in transition
     assert "Screenshot changed: <strong>yes</strong>" in transition
@@ -91,20 +92,21 @@ def test_captured_html_is_escaped_not_executed() -> None:
         [],
         StateSignals(console_messages=("<script>alert(1)</script>",)),
     )
-    page = build_pages(graph, target="t")["state-0.html"]
+    page = build_pages(graph, target="t")["states/state-0.html"]
     assert "<script>alert(1)</script>" not in page
     assert "&lt;script&gt;" in page
 
 
 def test_render_wiki_writes_every_page(tmp_path: Path) -> None:
     written = render_wiki(_two_state_graph(), tmp_path, target="https://example.test")
-    assert [p.name for p in written] == sorted(p.name for p in written)
-    assert {p.name for p in written} == {
+    assert written == sorted(written)  # returned in a stable, sorted order
+    # Pages now sit in subfolders (slice 6g), so compare the paths relative to out_dir.
+    assert {p.relative_to(tmp_path).as_posix() for p in written} == {
         "help.html",
         "index.html",
-        "state-0.html",
-        "state-1.html",
-        "transition-0.html",
+        "states/state-0.html",
+        "states/state-1.html",
+        "transitions/transition-0.html",
     }
     for path in written:
         assert path.read_text(encoding="utf-8").startswith("<!DOCTYPE html>")
@@ -125,9 +127,9 @@ def test_render_wiki_embeds_only_referenced_screenshots(
         screenshots={_ID_A: ImageRef("screenshots/state-0.png")},
     )
     assert not [p for p in written if p.suffix == ".png"]  # render writes no images
-    page_a = (tmp_path / "state-0.html").read_text(encoding="utf-8")
-    page_b = (tmp_path / "state-1.html").read_text(encoding="utf-8")
-    assert 'src="screenshots/state-0.png"' in page_a
+    page_a = (tmp_path / "states" / "state-0.html").read_text(encoding="utf-8")
+    page_b = (tmp_path / "states" / "state-1.html").read_text(encoding="utf-8")
+    assert 'src="../screenshots/state-0.png"' in page_a
     assert "<img" not in page_b
 
 
@@ -168,8 +170,8 @@ def test_render_wiki_embeds_element_clip_references_by_position(
         },
     )
     assert not [p for p in written if p.suffix == ".png"]  # render writes no images
-    page = (tmp_path / "state-0.html").read_text(encoding="utf-8")
-    assert 'src="screenshots/state-0-el-0.png"' in page  # the "Next" row
+    page = (tmp_path / "states" / "state-0.html").read_text(encoding="utf-8")
+    assert 'src="../screenshots/state-0-el-0.png"' in page  # the "Next" row
     assert "state-0-el-1.png" not in page  # the uncaptured "Currency" row
 
 
@@ -198,9 +200,9 @@ def test_render_wiki_embeds_opened_references_independently(
         },
     )
     assert not [p for p in written if p.suffix == ".png"]  # render writes no images
-    page = (tmp_path / "state-0.html").read_text(encoding="utf-8")
-    assert 'src="screenshots/state-0-el-1.png"' in page  # Currency closed clip
-    assert 'src="screenshots/state-0-el-1-opened.png"' in page  # Currency opened
+    page = (tmp_path / "states" / "state-0.html").read_text(encoding="utf-8")
+    assert 'src="../screenshots/state-0-el-1.png"' in page  # Currency closed clip
+    assert 'src="../screenshots/state-0-el-1-opened.png"' in page  # Currency opened
     assert "state-0-el-0-opened.png" not in page  # Next has no opened image
 
 
@@ -209,4 +211,6 @@ def test_render_wiki_default_leaves_element_cells_pixel_free(tmp_path: Path) -> 
         _two_element_graph(), tmp_path, target="https://example.test"
     )
     assert not [p for p in written if p.suffix == ".png"]
-    assert "<img" not in (tmp_path / "state-0.html").read_text(encoding="utf-8")
+    assert "<img" not in (
+        tmp_path / "states" / "state-0.html"
+    ).read_text(encoding="utf-8")

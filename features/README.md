@@ -437,6 +437,22 @@ no captured values, so nothing on it needs redaction, and being identical for ev
 target it holds nothing site-specific (§0). The scenarios pin that the page exists,
 defines its terms as glossary entries, and is reachable from every page.
 
+**Slice 6g** groups the page set into **subfolders** so the wiki directory stays
+readable as the map grows — the transition-pages move 8c deferred (8c tidied the images
+into `screenshots/` but backlogged the pages, since it "would mean rewriting every
+cross-page link"). State pages now live under `states/`, transition pages under
+`transitions/`, while `index.html` and `help.html` stay at the root as entry points and
+`screenshots/` is unchanged. The link rewrite is one uniform scheme, not per-link
+special-casing: a page's stored filename is its root-relative path
+(`states/state-0.html`), and each page renders with a `root` prefix — `""` at the root,
+`"../"` in a subfolder — that every nav link, cross-page link, and image `src` passes
+through, so a reference resolves from wherever its page sits (a shared `shot` macro takes
+`root` explicitly, since a Jinja macro can't see the render context). Purely a layout
+change — the graph, capture path, and §2h redaction posture are untouched, generic
+across every target (§0). The scenarios pin that every state page lands under `states/`
+and every transition page under `transitions/` (index/help at root), and that the
+cross-subfolder links all resolve with the right `../` depth.
+
 **Slice 8a** begins embedding **screenshots** in the wiki (the "Visual capture" backlog
 item), staged and opt-in. The pure renderer learns to embed a per-state **full-page
 screenshot** as an `<img>` referenced by the relative path `screenshots/state-{index}.png`,
